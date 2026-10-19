@@ -16,7 +16,7 @@ export class GithubError extends Error {
       case 'auth':
         return '🔑 GitHub не принял токен (401). Проверь секрет GH_PAT: токен мог истечь или быть отозван.';
       case 'forbidden':
-        return '🚫 GitHub отказал в доступе (403): у токена нет нужных прав на этот репозиторий. Нужны Contents и Pull requests: Read and write.';
+        return '🚫 GitHub отказал в доступе (403): у токена нет нужных прав на этот репозиторий. Нужны Contents и Pull requests: Read and write (для GitHub Actions — ещё Actions: Read and write).';
       case 'rate':
         return '⏳ GitHub просит подождать: исчерпан лимит запросов.';
       case 'notfound':
@@ -102,6 +102,22 @@ export function createGithub({ fetch, token, base = 'https://api.github.com' }) 
     createRef: (full, branch, sha) => req('POST', `${repoPath(full)}/git/refs`, { ref: 'refs/heads/' + branch, sha }),
     updateRef: (full, branch, sha) => req('PATCH', `${repoPath(full)}/git/refs/heads/${seg(branch)}`, { sha, force: false }),
     createPr: (full, { title, head, base, body }) => req('POST', `${repoPath(full)}/pulls`, { title, head, base, body }),
+
+    // ── GitHub Actions
+    listWorkflows: (full) => req('GET', `${repoPath(full)}/actions/workflows?per_page=30`),
+    /** Запуск workflow_dispatch («Run workflow»). Ответ 204 без тела. */
+    dispatch: (full, workflowId, ref, inputs) =>
+      req('POST', `${repoPath(full)}/actions/workflows/${encodeURIComponent(workflowId)}/dispatches`, { ref, ...(inputs && Object.keys(inputs).length ? { inputs } : {}) }),
+    listRuns: (full, perPage = 6) => req('GET', `${repoPath(full)}/actions/runs?per_page=${perPage}`),
+    listWorkflowRuns: (full, workflowId, { event, branch } = {}) =>
+      req(
+        'GET',
+        `${repoPath(full)}/actions/workflows/${encodeURIComponent(workflowId)}/runs?per_page=1` +
+          (event ? '&event=' + encodeURIComponent(event) : '') +
+          (branch ? '&branch=' + encodeURIComponent(branch) : ''),
+      ),
+    getJobs: (full, runId) => req('GET', `${repoPath(full)}/actions/runs/${encodeURIComponent(runId)}/jobs?per_page=30`),
+    rerunFailed: (full, runId) => req('POST', `${repoPath(full)}/actions/runs/${encodeURIComponent(runId)}/rerun-failed-jobs`),
 
     /** Создание файла через Contents API (единственный способ в пустом репозитории). */
     putFile: (full, path, content, message, branch) =>

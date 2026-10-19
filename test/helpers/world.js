@@ -50,9 +50,9 @@ export async function resetDb() {
 
 // ───────── ClaudeHub ─────────
 export const MODELS = [
-  { id: 'claude-sonnet-5-5', display_name: 'Claude Sonnet 5.5', uptime_status: 'up', pricing: { billing_mode: 'token', price_input_per_1m_usd: 3, price_output_per_1m_usd: 15 } },
-  { id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5', uptime_status: 'up', pricing: { billing_mode: 'token', price_input_per_1m_usd: 15, price_output_per_1m_usd: 75 } },
-  { id: 'gpt-5', display_name: 'GPT-5', uptime_status: 'up', pricing: { billing_mode: 'token', price_input_per_1m_usd: 1.25, price_output_per_1m_usd: 10 } },
+  { id: 'claude-sonnet-5-5', display_name: 'Claude Sonnet 5.5', uptime_status: 'up', max_output_tokens: 128000, supports_thinking: true, pricing: { billing_mode: 'token', price_input_per_1m_usd: 3, price_output_per_1m_usd: 15 } },
+  { id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5', uptime_status: 'up', max_output_tokens: 128000, supports_thinking: true, pricing: { billing_mode: 'token', price_input_per_1m_usd: 15, price_output_per_1m_usd: 75 } },
+  { id: 'gpt-5', display_name: 'GPT-5', uptime_status: 'up', max_output_tokens: 32000, supports_thinking: true, pricing: { billing_mode: 'token', price_input_per_1m_usd: 1.25, price_output_per_1m_usd: 10 } },
   { id: 'gemini-banana-image', display_name: 'Image', pricing: { billing_mode: 'request' } },
 ];
 
@@ -67,6 +67,27 @@ function sseBody(text, usage) {
     },
   };
 }
+// Поток в формате Anthropic (/v1/messages): сначала «размышления», потом текст.
+function sseAnthropic(text, usage, { thinking = false, stop = 'end_turn' } = {}) {
+  const ev = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+  const half = Math.ceil(text.length / 2);
+  const lines = [ev('message_start', { message: { usage: { input_tokens: usage.prompt_tokens, output_tokens: 1 } } })];
+  let idx = 0;
+  if (thinking) {
+    lines.push(ev('content_block_start', { index: idx, content_block: { type: 'thinking' } }));
+    lines.push(ev('content_block_delta', { index: idx, delta: { type: 'thinking_delta', thinking: 'Хм, сначала подумаю над задачей…' } }));
+    lines.push(ev('content_block_stop', { index: idx++ }));
+  }
+  lines.push(ev('content_block_start', { index: idx, content_block: { type: 'text', text: '' } }));
+  for (const part of text.length > 8 ? [text.slice(0, half), text.slice(half)] : [text]) lines.push(ev('content_block_delta', { index: idx, delta: { type: 'text_delta', text: part } }));
+  lines.push(ev('content_block_stop', { index: idx }));
+  lines.push(ev('message_delta', { delta: { stop_reason: stop }, usage: { output_tokens: usage.completion_tokens } }), ev('message_stop', {}));
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const l of lines) yield enc.encode(l);
+    },
+  };
+}
 const jsonRes = (status, obj) => ({ ok: status < 400, status, headers: { get: () => null }, json: async () => obj, text: async () => JSON.stringify(obj) });
 
 export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true } = {}) {
@@ -75,12 +96,13 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
     now: 1_800_000_000, // 2027-01-15, фиксированное «сейчас»
     tg: [], // все вызовы Bot API: { method, params }
     llmCalls: [], // тела запросов к ClaudeHub
+    llmPaths: [], // путь каждого запроса (/v1/chat/completions или /v1/messages)
     llmReplies: [], // очередь ответов: строка или функция (body) => строка | { status, body }
     llmDefault: (body) => `Ответ на: ${[...body.messages].reverse().find((m) => m.role === 'user')?.content ?? ''}`.slice(0, 200),
     failures: new Map(), // method → очередь ошибок BotApiError
     nextMessageId: 100,
     modelFetches: 0,
-    gh: { calls: [], repos: {}, prs: [], refs: [], commits: [], blobs: [], putFiles: [] }, // заглушка GitHub (см. ниже)
+    gh: { calls: [], repos: {}, prs: [], refs: [], commits: [], blobs: [], putFiles: [], dispatches: [], reruns: [] }, // заглушка GitHub (см. ниже)
     balance: { balance: 1234.5, currency: 'RUB' },
   };
   w.advance = (s) => (w.now += s);
@@ -117,12 +139,24 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
     if (path === '/v1/chat/completions') {
       const body = JSON.parse(opts.body);
       w.llmCalls.push(body);
+      w.llmPaths.push(path);
       let r = w.llmReplies.length ? w.llmReplies.shift() : w.llmDefault;
       if (typeof r === 'function') r = r(body);
       if (r && typeof r === 'object') return jsonRes(r.status, r.body ?? { error: { message: 'err' } });
       const usage = { prompt_tokens: 100, completion_tokens: Math.max(1, Math.ceil(String(r).length / 4)) };
       if (!body.stream) return { ...jsonRes(200, { choices: [{ message: { content: r }, finish_reason: 'stop' }], usage }) };
       return { ok: true, status: 200, headers: { get: () => null }, body: sseBody(String(r), usage) };
+    }
+    if (path === '/v1/messages') {
+      const body = JSON.parse(opts.body);
+      w.llmCalls.push(body);
+      w.llmPaths.push(path);
+      let r = w.llmReplies.length ? w.llmReplies.shift() : w.llmDefault;
+      if (typeof r === 'function') r = r(body);
+      if (r && typeof r === 'object') return jsonRes(r.status, r.body ?? { error: { message: 'err' } });
+      const usage = { prompt_tokens: 100, completion_tokens: Math.max(1, Math.ceil(String(r).length / 4)) };
+      if (!body.stream) return jsonRes(200, { content: [{ type: 'text', text: r }], stop_reason: 'end_turn', usage: { input_tokens: 100, output_tokens: usage.completion_tokens } });
+      return { ok: true, status: 200, headers: { get: () => null }, body: sseAnthropic(String(r), usage, { thinking: !!body.thinking }) };
     }
     return jsonRes(404, {});
   };
@@ -173,6 +207,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
   w.clear = () => {
     w.tg.length = 0;
     w.llmCalls.length = 0;
+    w.llmPaths.length = 0;
   };
   w.fail = (method, code, description, parameters) => {
     const q = w.failures.get(method) ?? [];
@@ -240,6 +275,25 @@ function fakeGithub(w, path, opts) {
   if (rest.startsWith('/git/refs/heads/') && method === 'PATCH') {
     g.refs.push({ repo: key, ref: 'refs/heads/' + rest.slice('/git/refs/heads/'.length), sha: body.sha, kind: 'update' });
     return res(200, {});
+  }
+  // ── Actions
+  if (rest.startsWith('/actions/workflows') && method === 'GET' && rest.includes('/runs')) {
+    const id = Number(/workflows\/(\d+)\/runs/.exec(rest)[1]);
+    const r = (repo.runs ?? []).filter((x) => x.workflow_id === id);
+    return res(200, { workflow_runs: g.dispatches.length ? r : [] });
+  }
+  if (rest.startsWith('/actions/workflows') && method === 'GET') return repo.actionsDenied ? res(403, { message: 'Resource not accessible by personal access token' }) : res(200, { workflows: repo.workflows ?? [] });
+  if ((m = /^\/actions\/workflows\/(\d+)\/dispatches$/.exec(rest))) {
+    if (repo.actionsDenied) return res(403, { message: 'Resource not accessible by personal access token' });
+    if (repo.dispatchFails) return res(422, { message: repo.dispatchFails });
+    g.dispatches.push({ repo: key, workflow: Number(m[1]), ref: body.ref, inputs: body.inputs });
+    return res(204, null);
+  }
+  if (rest.startsWith('/actions/runs') && method === 'GET' && rest.endsWith('/jobs')) return res(200, { jobs: repo.jobs ?? [] });
+  if (rest.startsWith('/actions/runs') && method === 'GET') return repo.actionsDenied ? res(403, { message: 'Resource not accessible by personal access token' }) : res(200, { workflow_runs: repo.runs ?? [] });
+  if ((m = /^\/actions\/runs\/(\d+)\/rerun-failed-jobs$/.exec(rest))) {
+    g.reruns.push({ repo: key, run: Number(m[1]) });
+    return res(201, {});
   }
   if (rest === '/pulls') {
     if (repo.prFails) return res(422, { message: 'PR failed' });

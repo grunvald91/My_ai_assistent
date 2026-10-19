@@ -260,6 +260,7 @@ export function createApp(base) {
       switch (parts[0]) {
         case 'm':
         case 'g':
+        case 't':
         case 'mem':
         case 'fa':
           return await commands.callback(cq, parts);

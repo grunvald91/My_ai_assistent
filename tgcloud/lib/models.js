@@ -46,6 +46,8 @@ export function normalizeModels(list) {
       priceOut: m.pricing?.price_output_per_1m_usd ?? null,
       ctx: m.context_length ?? m.context_window ?? null,
       vision: !!m.supports_vision,
+      maxOut: m.max_output_tokens ?? m.max_completion_tokens ?? null,
+      thinking: !!(m.supports_thinking ?? m.capabilities?.thinking),
     });
   }
   out.sort((a, b) => {

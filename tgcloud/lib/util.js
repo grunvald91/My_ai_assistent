@@ -53,6 +53,12 @@ const MONTHS = [
   'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
 ];
 
+/** «20.10 00:36» — короткая дата и время в часовом поясе владельца. */
+export function shortTime(sec, tzHours = 3) {
+  const d = new Date((sec + tzHours * 3600) * 1000);
+  return `${pad2(d.getUTCDate())}.${pad2(d.getUTCMonth() + 1)} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+}
+
 /** «понедельник, 19 октября 2026, 22:29 (UTC+3)» */
 export function formatNow(sec, tzHours = 3) {
   const d = new Date((sec + tzHours * 3600) * 1000);

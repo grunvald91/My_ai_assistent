@@ -116,7 +116,7 @@ test('/code → предпросмотр без записи → «Ветка + 
   assert.match(user, /СОДЕРЖИМОЕ index\.html/);
   assert.match(user, /<h1>Привет<\/h1>/);
   assert.match(w.llmCalls[1].messages[0].content, /me\/site/);
-  assert.equal(w.llmCalls[1].max_tokens, 32000);
+  assert.equal(w.llmCalls[1].max_tokens, 128000, "лимит ответа = максимум модели из каталога");
 
   const card = w.last(OWNER);
   assert.match(card.text, /Add contact form/);

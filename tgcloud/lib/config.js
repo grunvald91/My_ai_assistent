@@ -23,11 +23,13 @@ export const DEFAULTS = {
   proposalTtlSec: 7 * 86400,
 
   // ИИ
-  maxTokensChat: 4096,
+  maxTokensChat: 'max', // 'max' = максимум выдачи модели из каталога ClaudeHub (платишь только за реально сгенерированное)
   maxTokensGroup: 1200,
   maxTokensPost: 1500,
   maxTokensSummary: 900,
-  maxTokensCode: 32000, // /code: изменения файлов целиком (лимит ответа модели; у Claude до 128k)
+  maxTokensCode: 'max', // /code: изменения файлов целиком — тоже максимум модели (у Claude 5.x это 128 000)
+  maxTokensFallback: 16000, // если в каталоге нет данных о модели
+  thinkBudgets: { low: 4000, medium: 12000, high: 32000 }, // токены на размышление (/think)
   retries: 2, // повторы при сбоях ClaudeHub (FR-5)
   modelsTtlSec: 24 * 3600, // кеш списка моделей (FR-8)
 
@@ -50,10 +52,11 @@ export const DEFAULTS = {
 };
 
 // Меню команд владельца. Менять список — поднимай COMMANDS_VERSION: бот сам обновит меню.
-export const COMMANDS_VERSION = 6;
+export const COMMANDS_VERSION = 7;
 export const OWNER_COMMANDS = [
   ['start', 'Начало и справка'],
   ['model', 'Выбрать модель ИИ'],
+  ['think', 'Уровень размышлений ИИ'],
   ['post', 'Подготовить пост в канал'],
   ['channels', 'Мои каналы и их стиль'],
   ['memory', 'Что я помню'],
@@ -69,6 +72,7 @@ export const OWNER_COMMANDS = [
   ['gh', 'GitHub: подключение и репозитории'],
   ['repo', 'Выбрать репозиторий для кода'],
   ['code', 'Написать код и запушить в репозиторий'],
+  ['runs', 'GitHub Actions: запуски и Run workflow'],
   ['usage', 'Расход и баланс'],
   ['limit', 'Дневной лимит токенов'],
   ['stop', 'Остановить все ответы'],
@@ -83,6 +87,7 @@ export const PUBLIC_COMMANDS = [
 // Меню в группах: спросить ИИ работает в режиме «по запросу» даже при включённом режиме приватности бота.
 export const GROUP_COMMANDS = [['ask', 'Спросить ИИ']];
 
+export const THINK_LEVELS = ['off', 'low', 'medium', 'high'];
 export const GROUP_MODES = ['off', 'mention', 'all'];
 export const BIZ_MODES = ['off', 'confirm', 'auto'];
 

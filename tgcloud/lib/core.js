@@ -1,7 +1,7 @@
 // core.js — общее ядро: список моделей (кеш 24 ч), лимиты расходов, вызов ИИ с учётом расхода,
 // сжатие истории в сводку (память ур. 2). Зависимости приходят в объекте D (см. app.js).
 
-import { MODEL_PREFERENCE } from './config.js';
+import { MODEL_PREFERENCE, THINK_LEVELS } from './config.js';
 import { normalizeModels, pickDefault, providerOf, costUsd } from './models.js';
 import { buildMessages, promptTokens } from './context.js';
 import { summarySystem } from './persona.js';
@@ -36,7 +36,8 @@ export function createCore(D) {
     const s = await store.getSettings(['models_cache', 'models_ts']);
     const age = D.now() - Number(s.models_ts || 0);
     const cached = safeJson(s.models_cache, []);
-    if (!force && cached.length && age < cfg.modelsTtlSec) return cached;
+    const oldShape = cached.length && cached[0].maxOut === undefined; // кеш до появления maxOut/thinking
+    if (!force && cached.length && !oldShape && age < cfg.modelsTtlSec) return cached;
     try {
       const fresh = normalizeModels(await llm.listModels());
       if (fresh.length) {
@@ -49,14 +50,16 @@ export function createCore(D) {
     }
     if (cached.length) return cached; // устаревший кеш лучше, чем ничего
     // аварийный список, чтобы бот работал, даже если каталог недоступен
-    return MODEL_PREFERENCE.map((id) => ({ id, name: id, provider: providerOf(id), down: false, priceIn: null, priceOut: null, ctx: null, vision: false }));
+    return MODEL_PREFERENCE.map(fallbackModel);
   }
+
+  const fallbackModel = (id) => ({ id, name: id, provider: providerOf(id), down: false, priceIn: null, priceOut: null, ctx: null, vision: false, maxOut: null, thinking: /^claude/i.test(id) });
 
   /** Модель чата: выбранная в чате → общая по умолчанию → первая «живая» из предпочтений. */
   async function resolveModel(chat) {
     const models = await getModels();
     const id = chat?.model || (await setting('default_model')) || pickDefault(models);
-    return models.find((m) => m.id === id) ?? { id, name: id, provider: providerOf(id), down: false, priceIn: null, priceOut: null, ctx: null, vision: false };
+    return models.find((m) => m.id === id) ?? fallbackModel(id);
   }
 
   /** Модель владельца (для постов, Business, сводок): та, что выбрана в его личном чате. */
@@ -96,13 +99,24 @@ export function createCore(D) {
    * @returns {{text, usage, finish, stopped, error?, tokensIn, tokensOut}}
    * Бросает LimitError (лимиты) или LlmError (сбой ClaudeHub).
    */
-  async function generate({ model, messages, maxTokens, stream = false, onProgress, retries }) {
+  async function generate({ model, messages, maxTokens, stream = false, onProgress, retries, think }) {
     await assertLimits();
-    const res = await llm.chat({ model: model.id, messages, maxTokens, stream, onProgress, retries });
+    const cap = maxTokens === 'max' ? model.maxOut || cfg.maxTokensFallback : maxTokens;
+    const level = think && think !== 'off' && model.thinking ? think : null;
+    const res = await llm.chat({
+      model: model.id,
+      messages,
+      maxTokens: cap,
+      stream,
+      onProgress,
+      retries,
+      think: level ? { level, budget: cfg.thinkBudgets[level] } : null,
+    });
     const tokensIn = res.usage?.in ?? promptTokens(messages);
     const tokensOut = res.usage?.out ?? estimateTokens(res.text);
     await store.addUsage(dayKey(D.now(), tz()), tokensIn, tokensOut, costUsd(model, tokensIn, tokensOut));
-    return { ...res, tokensIn, tokensOut };
+    // thinkAsked: размышления просили, но ClaudeHub/модель их не приняла (ответ дан без них)
+    return { ...res, tokensIn, tokensOut, thinkAsked: !!level, thinkDropped: !!level && !res.thinkUsed };
   }
 
   // ───────── память ─────────
@@ -149,6 +163,12 @@ export function createCore(D) {
 
   // ───────── прочее ─────────
 
+  /** Уровень размышлений (/think): off | low | medium | high. */
+  async function thinkLevel() {
+    const v = await setting('think');
+    return THINK_LEVELS.includes(v) ? v : 'off';
+  }
+
   async function paused() {
     return (await setting('paused')) === '1';
   }
@@ -159,6 +179,6 @@ export function createCore(D) {
 
   return {
     setting, getModels, resolveModel, ownerModel, dailyLimit, todayUsage, assertLimits,
-    generate, memoryTexts, maybeSummarize, contextFor, paused, ownerName, tz,
+    generate, thinkLevel, memoryTexts, maybeSummarize, contextFor, paused, ownerName, tz,
   };
 }

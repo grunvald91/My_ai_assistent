@@ -41,6 +41,7 @@ export function createChat(D) {
     let failed = false;
     let lastLen = 0;
     let lastAt = 0;
+    let lastPing = 0;
 
     const push = async (text) => {
       try {
@@ -56,10 +57,21 @@ export function createChat(D) {
         await push(''); // пустой текст = плашка «Думаю…»
       },
       /** Вызывается по мере прихода текста. true = пользователь нажал «Стоп». */
-      async onProgress({ text }) {
+      async onProgress({ text, thinking }) {
         if (failed) return false;
         const vis = visibleDraft(text);
-        if (!vis) return false;
+        if (!vis) {
+          // Модель размышляет: текста ещё нет. Раз в ~15 с обновляем плашку «Думаю…» (черновик живёт ~30 с)
+          // и заодно проверяем, не нажали ли «Стоп».
+          const n = Date.now();
+          if (thinking && n - lastPing >= 15000) {
+            lastPing = n;
+            await push('');
+            if (failed) return false;
+            return store.isStopped(stopKey);
+          }
+          return false;
+        }
         // Частота: каждые ~120 новых символов или раз в ~1.2 с (время может «стоять» — тогда работает правило длины).
         const t = Date.now();
         if (vis.length - lastLen >= 120 || (vis.length > lastLen && t - lastAt >= 1200)) {
@@ -95,7 +107,7 @@ export function createChat(D) {
 
     let res;
     try {
-      res = await core.generate({ model, messages, maxTokens: cfg.maxTokensChat, stream: true, onProgress: streamer.onProgress });
+      res = await core.generate({ model, messages, maxTokens: cfg.maxTokensChat, stream: true, onProgress: streamer.onProgress, think: await core.thinkLevel() });
     } catch (e) {
       return replyError(chatId, e);
     }
@@ -106,6 +118,7 @@ export function createChat(D) {
     if (res.stopped) body += '\n\n⏹ Остановлено.';
     else if (res.finish === 'length') body += '\n\n…(ответ обрезан лимитом длины)';
     if (res.error) body += '\n\n⚠️ Связь с моделью оборвалась — ответ может быть неполным.';
+    if (res.thinkDropped) body += '\n\nℹ️ Эта модель не приняла режим размышлений — ответила без него.';
 
     let markup;
     if (fact) {

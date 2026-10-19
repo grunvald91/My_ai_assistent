@@ -1,7 +1,7 @@
 // commands.js — команды владельца и их кнопки: /model, /memory, /group, /usage, /limit, /export и др.
 // Все команды доступны только владельцу (проверка в app.js). В группах работает короткий список.
 
-import { COMMANDS_VERSION, OWNER_COMMANDS, PUBLIC_COMMANDS, GROUP_COMMANDS, GROUP_MODES } from './config.js';
+import { COMMANDS_VERSION, OWNER_COMMANDS, PUBLIC_COMMANDS, GROUP_COMMANDS, GROUP_MODES, THINK_LEVELS } from './config.js';
 import { PROVIDER_ORDER, priceLabel } from './models.js';
 import { dayKey, monthKey, escapeHtml, truncate, utf8Encode } from './util.js';
 
@@ -12,6 +12,10 @@ const MODE_TEXT = {
   all: '🟢 на все сообщения — отвечаю на каждое',
 };
 const MODE_SHORT = { off: '⚫ Выкл', mention: '🟡 По запросу', all: '🟢 На все' };
+
+const THINK_TEXT = { off: '⚪ Выкл', low: '🟢 Низкий', medium: '🟡 Средний', high: '🔴 Высокий' };
+const THINK_LABEL = { off: 'Выкл', low: 'Низкий', medium: 'Средний', high: 'Высокий' };
+const THINK_ALIAS = { off: 'off', выкл: 'off', 'выключить': 'off', нет: 'off', low: 'low', низкий: 'low', medium: 'medium', средний: 'medium', high: 'high', высокий: 'high' };
 
 const kb = (rows) => ({ inline_keyboard: rows });
 const fmtInt = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -35,11 +39,13 @@ export function createCommands(D, mods) {
     '<b>Просто пиши</b> — отвечу. Ответ приходит «набегающим» текстом; кнопка «Стоп» останавливает его.\n\n' +
     '<b>Основное</b>\n' +
     '/model — выбрать модель ИИ\n' +
+    '/think — уровень размышлений: выкл / низкий / средний / высокий\n' +
     '/post — пост в канал (пришли фото и описание)\n' +
     '/channels — каналы и их стиль\n' +
     '/group — как отвечать в группах: выкл / по запросу / на все\n' +
     '/business — ответы от моего имени в личке (Telegram Business)\n' +
-    '/gh · /repo · /code — писать код и пушить в твои репозитории (кроме бота)\n\n' +
+    '/gh · /repo · /code — писать код и пушить в твои репозитории (кроме бота)\n' +
+    '/runs — GitHub Actions: последние запуски и кнопка Run workflow\n\n' +
     '<b>Память</b>\n' +
     '/memory — что я помню · /remember текст · /forget номер\n' +
     '/remember_biz текст — факт для ответов собеседникам (цены, условия)\n' +
@@ -93,6 +99,8 @@ export function createCommands(D, mods) {
         return true;
       case 'model':
         return model(msg, chat, arg);
+      case 'think':
+        return think(chatId, arg);
       case 'memory':
         return memory(msg);
       case 'remember':
@@ -125,6 +133,9 @@ export function createCommands(D, mods) {
       case 'repo':
         if (!arg) await code.showGh(chatId);
         else await code.setRepo(chatId, arg);
+        return true;
+      case 'runs':
+        await code.runsCommand(chatId, arg);
         return true;
       case 'code':
         await code.startTask(chat, arg);
@@ -217,6 +228,38 @@ export function createCommands(D, mods) {
     }
     await store.updateChat(chatId, { model: found.id });
     await out.sendHtml(chatId, `✅ Модель этого чата: <code>${escapeHtml(found.id)}</code>${found.down ? '\n⚠️ Сервис сообщает, что она сейчас недоступна.' : ''}`);
+    return true;
+  }
+
+  // ───────── /think ─────────
+
+  async function thinkPanel(chatId, editMsgId) {
+    const level = await core.thinkLevel();
+    const b = cfg.thinkBudgets;
+    const model = await core.resolveModel(await store.getChat(chatId));
+    const html =
+      `🧠 <b>Уровень размышлений</b>: ${THINK_TEXT[level]}\n\n` +
+      'Чем выше, тем дольше модель «думает» перед ответом: лучше для сложного кода и расчётов, но медленнее и дороже (размышления оплачиваются как обычные токены ответа).\n\n' +
+      `Низкий — до ${fmtInt(b.low)} токенов на раздумья, средний — до ${fmtInt(b.medium)}, высокий — до ${fmtInt(b.high)}.\n` +
+      'Действует в личном чате и в /code. В группах, постах и ответах за тебя размышления выключены — там важна скорость.\n\n' +
+      (model.thinking
+        ? `Текущая модель <code>${escapeHtml(model.id)}</code> размышления поддерживает.`
+        : `⚠️ Текущая модель <code>${escapeHtml(model.id)}</code> размышления не поддерживает — уровень сработает на другой (/model).`);
+    return show(chatId, editMsgId, html, kb([THINK_LEVELS.map((l) => ({ text: (l === level ? '● ' : '') + THINK_LABEL[l], callback_data: 't:' + l }))]));
+  }
+
+  async function think(chatId, arg) {
+    if (!arg) {
+      await thinkPanel(chatId);
+      return true;
+    }
+    const level = THINK_ALIAS[arg.trim().toLowerCase()];
+    if (!level) {
+      await out.sendHtml(chatId, 'Уровни: выкл, низкий, средний, высокий. Например: <code>/think высокий</code> — или нажми кнопки: /think');
+      return true;
+    }
+    await store.setSetting('think', level);
+    await out.sendHtml(chatId, `🧠 Уровень размышлений: ${THINK_TEXT[level]}`);
     return true;
   }
 
@@ -414,6 +457,13 @@ export function createCommands(D, mods) {
         return modelProvider(chatId, await store.getChat(chatId), PROVIDER_ORDER.indexOf(m.provider), msgId);
       }
       return;
+    }
+
+    if (kind === 't') {
+      if (!THINK_LEVELS.includes(a)) return out.answerCb(cq.id);
+      await store.setSetting('think', a);
+      await out.answerCb(cq.id, THINK_TEXT[a]);
+      return thinkPanel(chatId, msgId);
     }
 
     if (kind === 'g') {

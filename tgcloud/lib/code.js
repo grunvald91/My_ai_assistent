@@ -13,6 +13,7 @@ import { listCandidates, parseSelection, parseChanges, safePath, findSecrets, sl
 import { GithubError } from './github.js';
 import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
+import { createActions, ACTION_ACTS } from './actions.js';
 import { escapeHtml, truncate, uid, safeJson, utf8Encode } from './util.js';
 
 const kb = (rows) => ({ inline_keyboard: rows });
@@ -30,7 +31,7 @@ export function createCode(D) {
     '🔑 GitHub не подключён.\n\n' +
     '1. GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate.\n' +
     '2. Repository access: <b>All repositories</b> (или выбери нужные; репозиторий бота лучше исключить).\n' +
-    '3. Права: <b>Contents</b> — Read and write, <b>Pull requests</b> — Read and write, Metadata — Read; чтобы создавать GitHub Actions — ещё <b>Workflows</b> — Read and write.\n' +
+    '3. Права: <b>Contents</b> — Read and write, <b>Pull requests</b> — Read and write, Metadata — Read; для GitHub Actions ещё <b>Actions</b> — Read and write (запуск Run workflow и статусы) и <b>Workflows</b> — Read and write (создание файлов в .github/workflows).\n' +
     '4. Добавь токен в секреты репозитория бота под именем <code>GH_PAT</code> и перезапусти деплой.';
 
   /** Репозиторий бота трогать нельзя. fullName — каноническое имя из ответа GitHub. */
@@ -43,6 +44,8 @@ export function createCode(D) {
     }
     throw e;
   }
+
+  const actions = createActions(D, { gh, isSelf, noToken, fail });
 
   // ───────── /gh и /repo ─────────
 
@@ -154,6 +157,7 @@ export function createCode(D) {
         messages: [{ role: 'system', content: codeSystem({ repo: repo.full_name, branch, empty: tree.empty }) }, { role: 'user', content: user }],
         maxTokens: cfg.maxTokensCode,
         stream: true,
+        think: await core.thinkLevel(),
       });
       await prepareDraft(chatId, { task, repo, branch, tree, text: res.text, finish: res.finish });
     } catch (e) {
@@ -252,6 +256,8 @@ export function createCode(D) {
   async function callback(cq, parts) {
     const [act, id] = parts;
     const chatId = cq.message.chat.id;
+
+    if (ACTION_ACTS.has(act)) return actions.callback(cq, parts);
 
     if (act === 'r') {
       const names = safeJson(await store.getSetting('gh_repos'), []);
@@ -352,5 +358,5 @@ export function createCode(D) {
     }
   }
 
-  return { showGh, setRepo, startTask, onState, callback, runTask };
+  return { showGh, setRepo, startTask, onState, callback, runTask, runsCommand: actions.command };
 }
