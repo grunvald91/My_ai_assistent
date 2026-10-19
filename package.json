@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "deploy": "node scripts/write-secrets.mjs && tgcloud push && tgcloud migrate --safe",
+    "deploy": "node scripts/deploy.mjs",
     "status": "tgcloud status",
     "run": "tgcloud run",
     "test": "node --import ./test/loader/register.mjs --test \"test/**/*.test.js\""
