@@ -27,7 +27,7 @@ export const DEFAULTS = {
   maxTokensGroup: 1200,
   maxTokensPost: 1500,
   maxTokensSummary: 900,
-  maxTokensCode: 12000, // /code: изменения файлов целиком
+  maxTokensCode: 32000, // /code: изменения файлов целиком (лимит ответа модели; у Claude до 128k)
   retries: 2, // повторы при сбоях ClaudeHub (FR-5)
   modelsTtlSec: 24 * 3600, // кеш списка моделей (FR-8)
 

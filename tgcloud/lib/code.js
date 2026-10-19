@@ -30,7 +30,7 @@ export function createCode(D) {
     '🔑 GitHub не подключён.\n\n' +
     '1. GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate.\n' +
     '2. Repository access: <b>All repositories</b> (или выбери нужные; репозиторий бота лучше исключить).\n' +
-    '3. Права: <b>Contents</b> — Read and write, <b>Pull requests</b> — Read and write, Metadata — Read.\n' +
+    '3. Права: <b>Contents</b> — Read and write, <b>Pull requests</b> — Read and write, Metadata — Read; чтобы создавать GitHub Actions — ещё <b>Workflows</b> — Read and write.\n' +
     '4. Добавь токен в секреты репозитория бота под именем <code>GH_PAT</code> и перезапусти деплой.';
 
   /** Репозиторий бота трогать нельзя. fullName — каноническое имя из ответа GitHub. */

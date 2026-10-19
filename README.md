@@ -21,7 +21,7 @@
 
 Репозиторий уже связан с GitHub Actions: **каждый push в `main` прогоняет тесты и деплоит бота**.
 
-0. *(для `/code`)* секрет **`GH_PAT`** — fine-grained токен GitHub: все репозитории (репозиторий бота лучше исключить), права Contents и Pull requests: Read and write. Без него остальное работает, `/code` выключен.
+0. *(для `/code`)* секрет **`GH_PAT`** — fine-grained токен GitHub: все репозитории (репозиторий бота лучше исключить), права Contents и Pull requests: Read and write (для создания GitHub Actions — ещё Workflows). Без него остальное работает, `/code` выключен.
 1. **Секреты Actions** (Settings → Secrets and variables → Actions → *Secrets*): `CLAUDEHUB_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CLI_ACCESS` (токен CLI `tgcloud`) — у вас уже добавлены.
 2. **`OWNER_IDS`** (Secrets или Variables — подойдёт любое): ваш Telegram ID, несколько — через запятую. Не знаете ID — задеплойте без неё, напишите боту: он покажет ваш ID и подскажет, что делать.
 3. **BotFather:** включите Serverless для бота; для режима «на все сообщения» в группах отключите *Bot Settings → Group Privacy*. Для Business-ответов нужен Telegram Premium: *Настройки → Business → Чат-боты*.
