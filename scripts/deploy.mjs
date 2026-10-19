@@ -22,8 +22,8 @@ function run(args, { capture = false } = {}) {
 const w = spawnSync('node', ['scripts/write-secrets.mjs'], { stdio: 'inherit' });
 if (w.status !== 0) process.exit(w.status ?? 1);
 
-// 1. push
-const push = run(['push'], { capture: true });
+// 1. push --force: в CI нет локального снимка (свежий checkout), репозиторий — источник истины
+const push = run(['push', '--force'], { capture: true });
 if (push.status !== 0) {
   const out = (push.stdout ?? '') + (push.stderr ?? '');
   const uploaded = /Deploying \d+ changes/.test(out) && /✓ tgcloud\//.test(out);
