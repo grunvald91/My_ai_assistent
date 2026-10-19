@@ -1,0 +1,16 @@
+{
+  "name": "my_ai_assistent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "node scripts/write-secrets.mjs && tgcloud push && tgcloud migrate --safe",
+    "status": "tgcloud status",
+    "run": "tgcloud run",
+    "test": "node --import ./test/loader/register.mjs --test \"test/**/*.test.js\""
+  },
+  "devDependencies": {
+    "@libsql/client": "^0.18.0",
+    "@tgcloud/cli": "^0.2.0",
+    "drizzle-orm": "^0.45.4"
+  }
+}
