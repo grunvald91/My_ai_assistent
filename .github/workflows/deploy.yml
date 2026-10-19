@@ -28,6 +28,7 @@ jobs:
       TGCLOUD_TOKEN: ${{ secrets.TELEGRAM_CLI_ACCESS }}
       CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
       OWNER_IDS: ${{ secrets.OWNER_IDS || vars.OWNER_IDS }}
+      GH_PAT: ${{ secrets.GH_PAT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

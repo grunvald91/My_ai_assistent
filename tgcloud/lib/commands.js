@@ -28,7 +28,7 @@ export function parseAmount(s) {
 
 export function createCommands(D, mods) {
   const { store, out, core, cfg, llm } = D;
-  const { business, posts, replies } = mods;
+  const { business, posts, replies, code } = mods;
 
   const HELP =
     '🤖 <b>Я твой ИИ-помощник</b> — работаю на результат: чем больше зарабатываешь ты, тем лучше для нас обоих. Помогаю с деньгами, текстами, перепиской и всем остальным.\n\n' +
@@ -38,7 +38,8 @@ export function createCommands(D, mods) {
     '/post — пост в канал (пришли фото и описание)\n' +
     '/channels — каналы и их стиль\n' +
     '/group — как отвечать в группах: выкл / по запросу / на все\n' +
-    '/business — ответы от моего имени в личке (Telegram Business)\n\n' +
+    '/business — ответы от моего имени в личке (Telegram Business)\n' +
+    '/gh · /repo · /code — писать код и пушить в твои репозитории (кроме бота)\n\n' +
     '<b>Память</b>\n' +
     '/memory — что я помню · /remember текст · /forget номер\n' +
     '/remember_biz текст — факт для ответов собеседникам (цены, условия)\n' +
@@ -117,6 +118,16 @@ export function createCommands(D, mods) {
         return true;
       case 'business':
         await business.showSettings(chatId);
+        return true;
+      case 'gh':
+        await code.showGh(chatId);
+        return true;
+      case 'repo':
+        if (!arg) await code.showGh(chatId);
+        else await code.setRepo(chatId, arg);
+        return true;
+      case 'code':
+        await code.startTask(chat, arg);
         return true;
       case 'post':
         await posts.startPost(chat, arg);

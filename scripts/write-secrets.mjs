@@ -7,6 +7,9 @@ import { dirname, join } from 'node:path';
 
 const key = (process.env.CLAUDEHUB_API_KEY ?? '').trim();
 const owners = (process.env.OWNER_IDS ?? '').trim();
+const ghPat = (process.env.GH_PAT ?? '').trim();
+// Репозиторий бота: GitHub Actions сам задаёт GITHUB_REPOSITORY. Код в нём бот менять не вправе.
+const selfRepo = (process.env.GITHUB_REPOSITORY || 'grunvald91/my_ai_assistent').trim();
 
 if (!key) {
   console.error('Не задан CLAUDEHUB_API_KEY (переменная окружения / секрет GitHub Actions).');
@@ -23,6 +26,8 @@ writeFileSync(
   out,
   `// СГЕНЕРИРОВАНО scripts/write-secrets.mjs — не редактировать и не коммитить.\n` +
     `export const CLAUDEHUB_API_KEY = ${JSON.stringify(key)};\n` +
-    `export const OWNER_IDS = ${JSON.stringify(owners)};\n`,
+    `export const OWNER_IDS = ${JSON.stringify(owners)};\n` +
+    `export const GH_PAT = ${JSON.stringify(ghPat)};\n` +
+    `export const SELF_REPO = ${JSON.stringify(selfRepo)};\n`,
 );
-console.log('secrets.js записан (ключ и владельцы).');
+console.log('secrets.js записан (ключ, владельцы' + (ghPat ? ', GitHub-токен' : '; GH_PAT не задан — режим /code выключен') + ').');

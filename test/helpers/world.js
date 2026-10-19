@@ -69,7 +69,7 @@ function sseBody(text, usage) {
 }
 const jsonRes = (status, obj) => ({ ok: status < 400, status, headers: { get: () => null }, json: async () => obj, text: async () => JSON.stringify(obj) });
 
-export async function createWorld({ ownerIds = [OWNER], cfg = {} } = {}) {
+export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true } = {}) {
   await resetDb();
   const w = {
     now: 1_800_000_000, // 2027-01-15, фиксированное «сейчас»
@@ -80,6 +80,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {} } = {}) {
     failures: new Map(), // method → очередь ошибок BotApiError
     nextMessageId: 100,
     modelFetches: 0,
+    gh: { calls: [], repos: {}, prs: [], refs: [], commits: [], blobs: [], putFiles: [] }, // заглушка GitHub (см. ниже)
     balance: { balance: 1234.5, currency: 'RUB' },
   };
   w.advance = (s) => (w.now += s);
@@ -106,6 +107,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {} } = {}) {
   };
 
   globalThis.__fetch = async (url, opts = {}) => {
+    if (url.startsWith('https://api.github.com')) return fakeGithub(w, url.slice('https://api.github.com'.length), opts);
     const path = url.replace(API_BASE, '');
     if (path === '/v1/models') {
       w.modelFetches++;
@@ -134,6 +136,9 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {} } = {}) {
     now: () => w.now,
     sleep: async () => {},
     InputFile,
+    fetch: globalThis.__fetch,
+    ghToken: github ? 'ghp_testtoken' : '',
+    selfRepo: 'grunvald91/my_ai_assistent',
     ownerIds,
   });
   w.app = app;
@@ -182,3 +187,64 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {} } = {}) {
 }
 
 export { assert };
+
+
+// ───────── заглушка GitHub REST API ─────────
+// w.gh.repos[full] = { default_branch, private, empty, files: { path: text } }
+function fakeGithub(w, path, opts) {
+  const method = opts.method ?? 'GET';
+  const body = opts.body ? JSON.parse(opts.body) : undefined;
+  const g = w.gh;
+  g.calls.push({ method, path, body });
+  const res = (status, obj) => ({ ok: status < 400, status, headers: { get: () => null }, json: async () => obj, text: async () => (typeof obj === 'string' ? obj : JSON.stringify(obj)) });
+  const [p, qs] = path.split('?');
+  let m;
+  if (p === '/user') return res(200, { login: 'me' });
+  if (p === '/user/repos') return res(200, Object.entries(g.repos).map(([full_name, r]) => ({ full_name, private: !!r.private })));
+  if (!(m = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(p))) return res(404, { message: 'Not Found' });
+  const lookup = `${m[1]}/${m[2]}`.toLowerCase();
+  const key = Object.keys(g.repos).find((k) => k.toLowerCase() === lookup);
+  if (!key) return res(404, { message: 'Not Found' });
+  const repo = g.repos[key];
+  const rest = m[3] ?? '';
+  if (rest === '') return res(200, { full_name: repo.canonical ?? key, private: !!repo.private, default_branch: repo.default_branch ?? 'main' });
+  if (rest.startsWith('/git/trees/')) {
+    if (repo.empty) return res(409, { message: 'Git Repository is empty.' });
+    return res(200, { truncated: false, tree: Object.entries(repo.files).map(([path, c]) => ({ path, type: 'blob', size: c.length })) });
+  }
+  if ((m = /^\/contents\/(.+)$/.exec(rest))) {
+    const file = decodeURIComponent(m[1]);
+    if (method === 'PUT') {
+      g.putFiles.push({ repo: key, path: file, content: Buffer.from(body.content, 'base64').toString('utf8'), message: body.message });
+      repo.empty = false;
+      repo.files[file] = Buffer.from(body.content, 'base64').toString('utf8');
+      return res(201, {});
+    }
+    return repo.files[file] === undefined ? res(404, { message: 'Not Found' }) : res(200, repo.files[file]);
+  }
+  if (rest.startsWith('/git/ref/heads/')) return res(200, { object: { sha: 'base-sha' } });
+  if (rest.startsWith('/git/commits/base-sha')) return res(200, { tree: { sha: 'base-tree' } });
+  if (rest === '/git/blobs') {
+    g.blobs.push(body.content);
+    return res(201, { sha: 'blob-' + g.blobs.length });
+  }
+  if (rest === '/git/trees') return res(201, { sha: 'tree-1', _entries: body.tree });
+  if (rest === '/git/commits') {
+    g.commits.push({ repo: key, message: body.message, parents: body.parents, tree: body.tree });
+    return res(201, { sha: 'abcdef1234567' });
+  }
+  if (rest === '/git/refs' && method === 'POST') {
+    g.refs.push({ repo: key, ref: body.ref, sha: body.sha, kind: 'create' });
+    return res(201, {});
+  }
+  if (rest.startsWith('/git/refs/heads/') && method === 'PATCH') {
+    g.refs.push({ repo: key, ref: 'refs/heads/' + rest.slice('/git/refs/heads/'.length), sha: body.sha, kind: 'update' });
+    return res(200, {});
+  }
+  if (rest === '/pulls') {
+    if (repo.prFails) return res(422, { message: 'PR failed' });
+    g.prs.push({ repo: key, ...body });
+    return res(201, { html_url: `https://github.com/${key}/pull/${g.prs.length}` });
+  }
+  return res(404, { message: 'Not Found: ' + rest });
+}

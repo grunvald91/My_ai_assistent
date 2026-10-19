@@ -10,6 +10,8 @@ import { createPosts } from './posts.js';
 import { createBusiness } from './business.js';
 import { createReplies } from './replies.js';
 import { createCommands } from './commands.js';
+import { createCode } from './code.js';
+import { createGithub } from './github.js';
 import { displayName, escapeHtml, parseCommand } from './util.js';
 
 const OWN_STATE = /^(post_|style:|example:)/;
@@ -22,6 +24,8 @@ export function createApp(base) {
   D.isOwner = (id) => id != null && D.ownerIds.includes(id);
   D.log = (type, chatId, payload) => store.log(type, chatId, payload, D.now());
 
+  D.selfRepo = base.selfRepo ?? '';
+  D.github = base.ghToken ? createGithub({ fetch: base.fetch, token: base.ghToken }) : null;
   D.out = createOut(D);
   D.core = createCore(D);
   const { out, core } = D;
@@ -30,7 +34,8 @@ export function createApp(base) {
   const posts = createPosts(D);
   const business = createBusiness(D);
   const replies = createReplies(D);
-  const commands = createCommands(D, { posts, business, replies });
+  const code = createCode(D);
+  const commands = createCommands(D, { posts, business, replies, code });
 
   // ───────── кто я ─────────
 
@@ -129,7 +134,7 @@ export function createApp(base) {
     const bot = await ensureBot();
 
     if (!D.ownerIds.length) {
-      return stranger(msg, bot, `⚙️ Бот ещё не настроен: не указан владелец.\n\nТвой Telegram ID: <code>${fromId}</code>\nДобавь его в GitHub → Settings → Secrets and variables → Actions → Variables как <code>OWNER_IDS</code> и запусти деплой ещё раз.`);
+      return stranger(msg, bot, `⚙️ Бот ещё не настроен: не указан владелец.\n\nТвой Telegram ID: <code>${fromId}</code>\nДобавь его в GitHub → Settings → Secrets and variables → Actions (секрет или переменная) как <code>OWNER_IDS</code> и запусти деплой ещё раз.`);
     }
     if (!D.isOwner(fromId)) {
       return stranger(msg, bot, '🔒 Это личный бот, он отвечает только своему владельцу.');
@@ -176,6 +181,7 @@ export function createApp(base) {
     if (OWN_STATE.test(st)) return posts.onState(msg, chat);
     if (st.startsWith('biz_')) return business.onState(msg, chat);
     if (st.startsWith('draft_rev:')) return replies.onState(msg, chat);
+    if (st === 'code_task') return code.onState(msg, chat);
     await store.setState(chat.chatId, null); // неизвестное состояние — сбрасываем
     return false;
   }
@@ -265,6 +271,8 @@ export function createApp(base) {
           return await business.callback(cq, parts.slice(1));
         case 'd':
           return await replies.callback(cq, parts.slice(1));
+        case 'x':
+          return await code.callback(cq, parts.slice(1));
         case 'r': {
           const chatId = cq.message.chat.id;
           await out.answerCb(cq.id, 'Повторяю…');
@@ -332,5 +340,5 @@ export function createApp(base) {
     }
   }
 
-  return { handle, dispatch, commands, posts, business, replies, chat: chatMod, core, out, D };
+  return { handle, dispatch, commands, posts, business, replies, code, chat: chatMod, core, out, D };
 }

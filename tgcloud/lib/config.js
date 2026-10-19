@@ -27,6 +27,7 @@ export const DEFAULTS = {
   maxTokensGroup: 1200,
   maxTokensPost: 1500,
   maxTokensSummary: 900,
+  maxTokensCode: 12000, // /code: изменения файлов целиком
   retries: 2, // повторы при сбоях ClaudeHub (FR-5)
   modelsTtlSec: 24 * 3600, // кеш списка моделей (FR-8)
 
@@ -49,7 +50,7 @@ export const DEFAULTS = {
 };
 
 // Меню команд владельца. Менять список — поднимай COMMANDS_VERSION: бот сам обновит меню.
-export const COMMANDS_VERSION = 5;
+export const COMMANDS_VERSION = 6;
 export const OWNER_COMMANDS = [
   ['start', 'Начало и справка'],
   ['model', 'Выбрать модель ИИ'],
@@ -65,6 +66,9 @@ export const OWNER_COMMANDS = [
   ['group', 'Режим ответов в группе'],
   ['draft', 'Черновик ответа за меня (в группе)'],
   ['business', 'Ответы от моего имени (Business)'],
+  ['gh', 'GitHub: подключение и репозитории'],
+  ['repo', 'Выбрать репозиторий для кода'],
+  ['code', 'Написать код и запушить в репозиторий'],
   ['usage', 'Расход и баланс'],
   ['limit', 'Дневной лимит токенов'],
   ['stop', 'Остановить все ответы'],
