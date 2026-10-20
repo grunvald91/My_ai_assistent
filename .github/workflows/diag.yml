@@ -1,0 +1,26 @@
+name: Diagnostics
+
+# Ручной запуск (Actions → Diagnostics → Run workflow): заглядывает в бота на серверах Telegram и печатает отчёт
+# без текстов переписки: замеры доступа к ClaudeHub и GitHub, зависшие апдейты, ошибки и время вызовов ИИ из журнала.
+on: workflow_dispatch
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    env:
+      TGCLOUD_TOKEN: ${{ secrets.TELEGRAM_CLI_ACCESS }}
+      CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
+      OWNER_IDS: ${{ secrets.OWNER_IDS || vars.OWNER_IDS }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Report
+        run: |
+          node scripts/write-secrets.mjs
+          OWNER="${OWNER_IDS%%,*}"
+          npx tgcloud run endpoints/diag '{}' --ctx "{ initData: { user: { id: ${OWNER} } } }"

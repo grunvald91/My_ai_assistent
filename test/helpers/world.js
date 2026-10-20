@@ -1,6 +1,7 @@
 // Тестовый «мир»: настоящая БД (SQLite в памяти) со схемой из tgcloud/schema.js, заглушки Telegram Bot API
 // и ClaudeHub (с потоковым SSE), готовое приложение createApp и удобные «клиенты» для сценариев.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import { client, BotApiError, InputFile } from '../shim/sdk.js';
 import * as T from '../../tgcloud/schema.js';
@@ -247,7 +248,7 @@ function fakeGithub(w, path, opts) {
   if (rest.startsWith('/git/trees/')) {
     if (repo.empty) return res(409, { message: 'Git Repository is empty.' });
     const br = decodeURIComponent(rest.slice('/git/trees/'.length).split('?')[0]);
-    return res(200, { truncated: false, tree: Object.entries(filesOf(br)).map(([path, c]) => ({ path, type: 'blob', size: c.length })) });
+    return res(200, { truncated: false, tree: Object.entries(filesOf(br)).map(([path, c]) => ({ path, type: 'blob', size: c.length, sha: createHash('sha1').update(c).digest('hex') })) });
   }
   if (rest.startsWith('/branches')) return res(200, [{ name: 'main' }, ...Object.keys(repo.branchFiles ?? {}).map((name) => ({ name }))]);
   if ((m = /^\/contents\/(.+)$/.exec(rest))) {

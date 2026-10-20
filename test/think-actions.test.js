@@ -488,13 +488,33 @@ test('читаем ВСЮ ветку без урезаний: все файлы 
   assert.ok(w.gh.calls.some((c) => /git\/trees\/dev/.test(c.path)), 'дерево читалось из ветки dev');
 });
 
-test('в основной ветке пусто → модель получает список других веток', async () => {
+test('в основной ветке пусто → читаем и остальные ветки (только отличия от основной)', async () => {
   const w = await createWorld();
-  w.gh.repos['me/sushef'] = { default_branch: 'main', files: { 'README.md': '# Сушеф' }, branchFiles: { dev: { 'a.js': 'x' } } };
+  w.gh.repos['me/sushef'] = {
+    default_branch: 'main',
+    files: { 'README.md': '# Сушеф', 'LICENSE.txt': 'MIT' },
+    branchFiles: {
+      'feat/cards': { 'README.md': '# Сушеф', 'LICENSE.txt': 'MIT', 'cards.js': 'export const techCards = "техкарты";' },
+      'feat/timers': { 'README.md': '# Сушеф', 'LICENSE.txt': 'MIT', 'timers.js': 'export const timers = "таймеры приготовления";' },
+    },
+  };
   await w.say('/repo me/sushef');
   w.clear();
   await w.say('посмотри репозиторий и сделай пост');
-  assert.match(w.llmCalls[0].messages[0].content, /Другие ветки репозитория: dev/);
+  const sys = w.llmCalls[0].messages[0].content;
+  assert.match(sys, /=== ФАЙЛ feat\/cards:cards\.js ===/);
+  assert.match(sys, /техкарты/);
+  assert.match(sys, /=== ФАЙЛ feat\/timers:timers\.js ===/);
+  assert.match(sys, /таймеры приготовления/);
+  assert.doesNotMatch(sys, /feat\/cards:README/, 'одинаковые с основной файлы не дублируются');
+  assert.match(sys, /прочитаны и остальные ветки/);
+
+  // ветку назвали сами — остальные не трогаем
+  w.clear();
+  await w.say('посмотри репозиторий me/sushef, ветка feat/timers, и сделай пост');
+  const sys2 = w.llmCalls[0].messages[0].content;
+  assert.match(sys2, /таймеры приготовления/);
+  assert.doesNotMatch(sys2, /техкарты/);
 });
 
 test('не влезает в окно модели: ничего не отбрасываем молча — объясняем и предлагаем решение', async () => {
@@ -545,4 +565,39 @@ test('обычный ответ без репозитория кнопок сб�
   const w = await createWorld();
   await w.say('привет');
   assert.equal(w.last(OWNER).reply_markup, undefined);
+});
+
+// ───────── диагностика ─────────
+
+test('endpoints/diag: только владельцу; показывает зависшие апдейты, замеры ИИ из журнала, без текстов переписки', async () => {
+  const w = await createWorld();
+  const diag = (await import('../tgcloud/endpoints/diag.js')).default;
+  // в тестовых секретах владелец — id 1 (tgcloud/lib/secrets.js)
+  await assert.rejects(diag({}, { initData: { user: { id: 424242 } } }), /владельца/);
+
+  w.llmReplies.push('Секретный ответ про деньги');
+  await w.say('Секретный вопрос про деньги');
+  await w.store.beginUpdate(9999, Math.floor(Date.now() / 1000) - 600, 120); // начали и не закончили → «зависший»
+  const r = await diag({}, { initData: { user: { id: 1 } } });
+
+  assert.deepEqual(r.stuck_updates.map((u) => u.id), [9999]);
+  assert.ok(r.stuck_updates[0].age_s >= 0);
+  const llm = r.journal.find((j) => j.type === 'llm');
+  assert.ok(llm && typeof llm.data.ms === 'number' && llm.data.model === 'claude-sonnet-5-5');
+  assert.deepEqual(r.probes.map((p) => p.name), ['ClaudeHub /v1/models', 'ClaudeHub чат (1 токен)', 'GitHub API']);
+  assert.ok(r.probes.every((p) => 'ms' in p));
+  const s = JSON.stringify(r);
+  assert.doesNotMatch(s, /Секретн/, 'текстов переписки в отчёте нет');
+  assert.doesNotMatch(s, new RegExp(String(OWNER)), 'id чата владельца в отчёте нет');
+});
+
+test('журнал: неудачный вызов ИИ пишется с типом ошибки и временем', async () => {
+  const w = await createWorld();
+  w.llmReplies.push({ status: 402, body: { error: { message: 'no money' } } });
+  await w.say('привет');
+  const rows = await w.store.recentJournal(20);
+  const fail = rows.find((r) => r.type === 'llm_fail');
+  assert.ok(fail, 'запись llm_fail есть');
+  assert.equal(fail.payload.kind, 'balance');
+  assert.equal(typeof fail.payload.ms, 'number');
 });

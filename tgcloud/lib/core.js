@@ -103,15 +103,26 @@ export function createCore(D) {
     await assertLimits();
     const cap = maxTokens === 'max' ? model.maxOut || cfg.maxTokensFallback : maxTokens;
     const level = think && think !== 'off' && model.thinking ? think : null;
-    const res = await llm.chat({
-      model: model.id,
-      messages,
-      maxTokens: cap,
-      stream,
-      onProgress,
-      retries,
-      think: level ? { level, budget: cfg.thinkBudgets[level] } : null,
-    });
+
+    // время каждого вызова — в журнал: по нему видно, где ClaudeHub тормозит или рвёт соединение
+    const t0 = Date.now();
+    let res;
+    try {
+      res = await llm.chat({
+        model: model.id,
+        messages,
+        maxTokens: cap,
+        stream,
+        onProgress,
+        retries,
+        think: level ? { level, budget: cfg.thinkBudgets[level] } : null,
+      });
+    } catch (e) {
+      await D.log('llm_fail', null, { model: model.id, kind: e?.kind ?? 'error', status: e?.status ?? 0, ms: Date.now() - t0 });
+      throw e;
+    }
+    await D.log('llm', null, { model: model.id, ms: Date.now() - t0, think: level ?? 'off', finish: res.finish ?? null, stopped: !!res.stopped });
+
     const tokensIn = res.usage?.in ?? promptTokens(messages);
     const tokensOut = res.usage?.out ?? estimateTokens(res.text);
     await store.addUsage(dayKey(D.now(), tz()), tokensIn, tokensOut, costUsd(model, tokensIn, tokensOut));

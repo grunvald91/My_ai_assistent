@@ -92,7 +92,7 @@ export function createGithub({ fetch, token, base = 'https://api.github.com' }) 
     async getTree(full, branch) {
       try {
         const r = await req('GET', `${repoPath(full)}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
-        return { empty: false, truncated: !!r.truncated, files: (r.tree ?? []).filter((t) => t.type === 'blob').map((t) => ({ path: t.path, size: t.size ?? 0 })) };
+        return { empty: false, truncated: !!r.truncated, files: (r.tree ?? []).filter((t) => t.type === 'blob').map((t) => ({ path: t.path, size: t.size ?? 0, sha: t.sha })) };
       } catch (e) {
         if (e instanceof GithubError && e.kind === 'conflict') return { empty: true, truncated: false, files: [] }; // «Git Repository is empty»
         throw e;

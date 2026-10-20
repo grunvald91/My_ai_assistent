@@ -309,22 +309,48 @@ export function createCode(D) {
       const tree = await gh().getTree(repo.full_name, branch);
 
       const model = await core.ownerModel();
-      const cands = rankFiles(listCandidates(tree.files, Infinity).filter((f) => !SECRET_NAME.test(f.path)));
       const parts = [];
       let used = 0;
       let skipped = 0;
-      for (let i = 0; i < cands.length; i += 8) {
-        const batch = cands.slice(i, i + 8);
-        const raws = await Promise.all(batch.map((f) => gh().getFile(repo.full_name, f.path, branch).catch(() => null)));
-        batch.forEach((f, k) => {
-          const raw = raws[k];
-          if (raw == null || findSecrets(raw).length) {
-            skipped++;
-            return;
+
+      /** Читает файлы ветки целиком (пачками по 8 запросов); tag — метка ветки в заголовке файла. */
+      const readFiles = async (br, files, tag) => {
+        const cands = rankFiles(listCandidates(files, Infinity).filter((f) => !SECRET_NAME.test(f.path)));
+        for (let i = 0; i < cands.length; i += 8) {
+          const batch = cands.slice(i, i + 8);
+          const raws = await Promise.all(batch.map((f) => gh().getFile(repo.full_name, f.path, br).catch(() => null)));
+          batch.forEach((f, k) => {
+            const raw = raws[k];
+            if (raw == null || findSecrets(raw).length) {
+              skipped++;
+              return;
+            }
+            used += raw.length;
+            parts.push(`\n=== ФАЙЛ ${tag}${f.path} ===\n${raw}\n`);
+          });
+        }
+      };
+      await readFiles(branch, tree.files, '');
+
+      // В основной ветке почти пусто, а ветку владелец не называл → читаем и остальные ветки.
+      // Файлы, которые там такие же, как в основной (тот же sha), не дублируем.
+      let others = '';
+      const readBranches = [];
+      if ((parts.length <= 3 || used < 3000) && !BRANCH_REF.test(t)) {
+        try {
+          const names = ((await gh().listBranches(repo.full_name)) ?? []).map((b) => b.name).filter((n) => n !== branch);
+          const base = new Map(tree.files.map((f) => [f.path, f.sha]));
+          for (const n of names) {
+            const bt = await gh().getTree(repo.full_name, n);
+            const diff = bt.files.filter((f) => base.get(f.path) !== f.sha);
+            await readFiles(n, diff, n + ':');
+            readBranches.push(`${n} (отличающихся файлов: ${diff.length})`);
           }
-          used += raw.length;
-          parts.push(`\n=== ФАЙЛ ${f.path} ===\n${raw}\n`);
-        });
+          if (readBranches.length) others = `\nВ основной ветке почти пусто, поэтому прочитаны и остальные ветки — в них только отличия от основной. Заголовок файла вида «ветка:путь». Ветки: ${readBranches.join('; ')}.\n`;
+        } catch (e) {
+          if (!(e instanceof GithubError)) throw e;
+          others = '\n(не удалось прочитать остальные ветки: ' + e.message + ')\n';
+        }
       }
 
       // Единственный жёсткий предел — окно самой модели (≈3 символа на токен, запас под историю и ответ).
@@ -340,16 +366,6 @@ export function createCode(D) {
         };
       }
 
-      let others = '';
-      if (parts.length <= 3 || used < 3000) {
-        // в этой ветке почти пусто — подскажем, какие ещё есть
-        try {
-          const br = ((await gh().listBranches(repo.full_name)) ?? []).map((b) => b.name).filter((n) => n !== branch);
-          if (br.length) others = `\nВ этой ветке почти ничего нет. Другие ветки репозитория: ${br.join(', ')}. Код может лежать там — предложи владельцу назвать нужную («ветка имя»).\n`;
-        } catch {
-          /* список веток — подсказка, не обязательная часть */
-        }
-      }
       const head =
         `Репозиторий ${repo.full_name} (${repo.private ? 'приватный' : 'публичный'}), ветка ${branch}` +
         (repo.description ? `, описание на GitHub: ${repo.description}` : '') +
