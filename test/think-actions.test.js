@@ -389,3 +389,80 @@ test('GitHub: разовый сетевой сбой чтения повторя
   await assert.rejects(createGithub({ fetch: down, token: 't' }).dispatch('a/b', 1, 'main'), (e) => e instanceof GithubError && e.kind === 'network' && /ENOTFOUND/.test(e.userMessage));
   assert.equal(n, 1, 'POST не повторяется');
 });
+
+// ───────── «посмотри репозиторий и сделай пост» ─────────
+
+const SUSHEF = () => ({
+  default_branch: 'main',
+  private: true,
+  canonical: 'grunvald91/Sushef',
+  files: {
+    'README.md': '# Сушеф\nБот: техкарты, пошаговое приготовление, исправление блюда.',
+    'package.json': '{"name":"sushef"}',
+    '.env': 'TOKEN=very-secret',
+    'src/index.js': 'const KEY = "sk-hub-abcdefgh12345678";',
+    'docs/guide.md': 'Голосовой ввод рецептов.',
+  },
+});
+
+test('«посмотри репозиторий и сделай пост»: README и главные файлы уходят модели, секреты — нет', async () => {
+  const w = await createWorld();
+  w.gh.repos['grunvald91/Sushef'] = SUSHEF();
+  await w.say('/repo grunvald91/Sushef');
+  w.clear();
+  w.llmReplies.push('Пост про Сушеф');
+  await w.say('Вот этот репозиторий посмотри и по нему сделай пост');
+
+  const sys = w.llmCalls[0].messages[0].content;
+  assert.match(sys, /ДАННЫЕ РЕПОЗИТОРИЯ/);
+  assert.match(sys, /техкарты, пошаговое приготовление/);
+  assert.match(sys, /Голосовой ввод рецептов/);
+  assert.doesNotMatch(sys, /very-secret/, '.env не читается');
+  assert.doesNotMatch(sys, /sk-hub-abcdefgh/, 'файл с ключом отброшен');
+  assert.ok(w.sent(OWNER).some((m) => /Читаю <code>grunvald91\/Sushef<\/code>/.test(m.text)));
+  assert.match(w.last(OWNER).text, /Пост про Сушеф/);
+
+  // продолжение разговора: репозиторий ещё «в памяти» на час
+  w.clear();
+  await w.say('перепиши покороче');
+  assert.match(w.llmCalls[0].messages[0].content, /техкарты/);
+  w.advance(3700);
+  w.clear();
+  await w.say('а теперь про другое');
+  assert.doesNotMatch(w.llmCalls[0].messages[0].content, /ДАННЫЕ РЕПОЗИТОРИЯ/);
+});
+
+test('репозиторий называют в сообщении (в любом регистре) — читаем его, а не выбранный', async () => {
+  const w = await createWorld();
+  w.gh.repos['grunvald91/Sushef'] = SUSHEF();
+  w.gh.repos['me/other'] = { default_branch: 'main', files: { 'README.md': 'Другой проект' } };
+  await w.say('/repo me/other');
+  w.clear();
+  await w.say('Grunvald91/sushef . К тебе подключен мой гитхаб');
+  assert.match(w.llmCalls[0].messages[0].content, /техкарты/);
+  assert.doesNotMatch(w.llmCalls[0].messages[0].content, /Другой проект/);
+});
+
+test('чтение репозитория: бота не читаем; нет репозитория — просим указать; обычный разговор про GitHub ничего не читает', async () => {
+  const w = await createWorld();
+  w.gh.repos['grunvald91/my_ai_assistent'] = { ...SUSHEF(), canonical: undefined };
+  await w.say('посмотри репозиторий grunvald91/my_ai_assistent и сделай пост');
+  assert.match(w.last(OWNER).text, /самого бота я не читаю/);
+  assert.equal(w.llmCalls.length, 0);
+
+  await w.say('посмотри мой репозиторий и сделай пост');
+  assert.match(w.last(OWNER).text, /Не вижу, какой репозиторий читать/);
+  assert.equal(w.llmCalls.length, 0);
+
+  const before = w.gh.calls.length;
+  await w.say('как работает github actions?');
+  assert.equal(w.gh.calls.length, before, 'просто разговор про GitHub репозиториев не читает');
+  assert.equal(w.llmCalls.length, 1);
+});
+
+test('чтение репозитория: ошибка GitHub — понятный текст, модель не отвечает «из головы»', async () => {
+  const w = await createWorld();
+  await w.say('посмотри репозиторий me/missing и сделай пост');
+  assert.match(w.last(OWNER).text, /GitHub не нашёл репозиторий/);
+  assert.equal(w.llmCalls.length, 0);
+});

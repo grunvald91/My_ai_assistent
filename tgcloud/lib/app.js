@@ -35,6 +35,7 @@ export function createApp(base) {
   const business = createBusiness(D);
   const replies = createReplies(D);
   const code = createCode(D);
+  D.repoContext = code.repoContext; // чат читает репозиторий по просьбе владельца
   const commands = createCommands(D, { posts, business, replies, code });
 
   // ───────── кто я ─────────

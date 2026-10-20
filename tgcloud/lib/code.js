@@ -251,6 +251,76 @@ export function createCode(D) {
     await D.log('code_draft', chatId, { id, repo: repo.full_name, files: files.length });
   }
 
+  // ───────── чтение репозитория для обычного чата ─────────
+  // «посмотри репозиторий и сделай пост»: без этого модель в чате не видит GitHub и просит прислать README.
+  // Читаем только на чтение, репозиторий бота не трогаем, файлы с секретами в модель не отдаём.
+
+  const KEYWORD = /репозитор|репо(?![а-яa-z])|github|гитхаб|гит\s?хаб/i;
+  const ACTION = /посмотр|изуч|прочит|загляни|глянь|проанализ|разбер|пост|реклам|описани|по нему|по ней|по проекту|подключ/i;
+  const URL_REF = /github\.com\/([A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100})/i;
+  const NAME_REF = /(?<![\w/.-])([A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]*[A-Za-z][A-Za-z0-9._-]*)(?![\w/-])/;
+  const PRIORITY = [
+    /^readme(\.\w+)?$/i, /^package\.json$/, /^pyproject\.toml$/, /^go\.mod$/, /^composer\.json$/, /^requirements\.txt$/,
+    /^docs?\/[^/]+\.md$/i, /^[^/]+\.md$/i, /^(src|app|lib)\/(index|main|app|bot)\.\w+$/, /^(index|main|app|bot)\.\w+$/,
+  ];
+  const SECRET_NAME = /(^|\/)(\.env|id_rsa|.*\.pem|.*\.key|.*secret.*|.*credential.*)/i;
+
+  /** Что прислать модели: README и главные файлы репозитория. null — просьбы про репозиторий нет. */
+  async function repoContext(text) {
+    if (!gh()) return null;
+    const t = String(text ?? '');
+    const url = URL_REF.exec(t)?.[1];
+    const name = NAME_REF.exec(t)?.[1];
+    const asked = !!url || (KEYWORD.test(t) && (ACTION.test(t) || !!name));
+    if (!asked) {
+      // продолжение разговора («перепиши покороче») — недавний прочитанный репозиторий ещё в силе
+      const st = safeJson(await store.getSetting('repo_ctx'), null);
+      return st && D.now() - st.ts < 3600 ? { text: st.text, repo: st.repo } : null;
+    }
+    try {
+      let repo;
+      const explicit = (url || name || '').replace(/\.git$/i, '');
+      const fallback = await store.getSetting('gh_repo');
+      if (explicit) {
+        try {
+          repo = await gh().getRepo(explicit);
+        } catch (e) {
+          if (!(e instanceof GithubError && e.kind === 'notfound') || !fallback) throw e;
+        }
+      }
+      if (!repo) {
+        if (!fallback) return { error: 'Не вижу, какой репозиторий читать: пришли ссылку или выбери его командой /gh.' };
+        repo = await gh().getRepo(fallback);
+      }
+      if (isSelf(repo.full_name)) return { error: '🚫 Репозиторий самого бота я не читаю. Назови другой.' };
+
+      await out.sendHtml(D.ownerId, `🔎 Читаю <code>${escapeHtml(repo.full_name)}</code>…`);
+      const tree = await gh().getTree(repo.full_name, repo.default_branch);
+      const cands = listCandidates(tree.files).filter((f) => !SECRET_NAME.test(f.path) && f.size <= 60000);
+      const picked = [];
+      for (const re of PRIORITY) for (const f of cands) if (re.test(f.path) && !picked.includes(f) && picked.length < 8) picked.push(f);
+
+      let body = '';
+      for (const f of picked) {
+        if (body.length > 45000) break;
+        const raw = await gh().getFile(repo.full_name, f.path, repo.default_branch);
+        if (findSecrets(raw).length) continue;
+        body += `\n=== ФАЙЛ ${f.path} ===\n${truncate(raw, 12000, '\n…(обрезано)')}\n`;
+      }
+      const head =
+        `Репозиторий ${repo.full_name} (${repo.private ? 'приватный' : 'публичный'})` +
+        (repo.description ? `, описание на GitHub: ${repo.description}` : '') +
+        `.\nФайлов: ${tree.files.length}. Пути (до 60): ${tree.files.slice(0, 60).map((f) => f.path).join(', ')}\n`;
+      const digest = head + (body || '\n(читаемых текстовых файлов нет)\n');
+      await store.setSetting('repo_ctx', JSON.stringify({ repo: repo.full_name, ts: D.now(), text: digest }));
+      await D.log('repo_read', D.ownerId, { repo: repo.full_name, files: picked.length });
+      return { text: digest, repo: repo.full_name };
+    } catch (e) {
+      if (e instanceof GithubError) return { error: e.userMessage };
+      throw e;
+    }
+  }
+
   // ───────── кнопки x:* ─────────
 
   async function callback(cq, parts) {
@@ -358,5 +428,5 @@ export function createCode(D) {
     }
   }
 
-  return { showGh, setRepo, startTask, onState, callback, runTask, runsCommand: actions.command };
+  return { showGh, setRepo, startTask, onState, callback, runTask, runsCommand: actions.command, repoContext };
 }
