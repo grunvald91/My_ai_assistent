@@ -114,7 +114,7 @@ export function createChat(D) {
     // просьба «посмотри репозиторий…» → README и главные файлы уходят модели как данные
     const repo = D.repoContext ? await D.repoContext(text ?? (await lastUserText(key, chat))) : null;
     if (repo?.error) {
-      await out.sendHtml(chatId, escapeHtml(repo.error));
+      await out.sendHtml(chatId, repo.html ? repo.error : escapeHtml(repo.error));
       return;
     }
     if (repo?.text) system += repoBlock(repo.text);

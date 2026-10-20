@@ -243,10 +243,13 @@ function fakeGithub(w, path, opts) {
   const repo = g.repos[key];
   const rest = m[3] ?? '';
   if (rest === '') return res(200, { full_name: repo.canonical ?? key, private: !!repo.private, default_branch: repo.default_branch ?? 'main' });
+  const filesOf = (branch) => repo.branchFiles?.[branch] ?? repo.files;
   if (rest.startsWith('/git/trees/')) {
     if (repo.empty) return res(409, { message: 'Git Repository is empty.' });
-    return res(200, { truncated: false, tree: Object.entries(repo.files).map(([path, c]) => ({ path, type: 'blob', size: c.length })) });
+    const br = decodeURIComponent(rest.slice('/git/trees/'.length).split('?')[0]);
+    return res(200, { truncated: false, tree: Object.entries(filesOf(br)).map(([path, c]) => ({ path, type: 'blob', size: c.length })) });
   }
+  if (rest.startsWith('/branches')) return res(200, [{ name: 'main' }, ...Object.keys(repo.branchFiles ?? {}).map((name) => ({ name }))]);
   if ((m = /^\/contents\/(.+)$/.exec(rest))) {
     const file = decodeURIComponent(m[1]);
     if (method === 'PUT') {
@@ -255,7 +258,8 @@ function fakeGithub(w, path, opts) {
       repo.files[file] = Buffer.from(body.content, 'base64').toString('utf8');
       return res(201, {});
     }
-    return repo.files[file] === undefined ? res(404, { message: 'Not Found' }) : res(200, repo.files[file]);
+    const files = filesOf(new URLSearchParams(qs ?? '').get('ref'));
+    return files[file] === undefined ? res(404, { message: 'Not Found' }) : res(200, files[file]);
   }
   if (rest.startsWith('/git/ref/heads/')) return res(200, { object: { sha: 'base-sha' } });
   if (rest.startsWith('/git/commits/base-sha')) return res(200, { tree: { sha: 'base-tree' } });

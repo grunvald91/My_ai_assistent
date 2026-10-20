@@ -264,8 +264,18 @@ export function createCode(D) {
     /^docs?\/[^/]+\.md$/i, /^[^/]+\.md$/i, /^(src|app|lib)\/(index|main|app|bot)\.\w+$/, /^(index|main|app|bot)\.\w+$/,
   ];
   const SECRET_NAME = /(^|\/)(\.env|id_rsa|.*\.pem|.*\.key|.*secret.*|.*credential.*)/i;
+  const BRANCH_REF = /(?:ветк[аеуи]|branch)\s+[`"«']?([A-Za-z0-9][\w./-]{0,100})/i;
 
-  /** Что прислать модели: README и главные файлы репозитория. null — просьбы про репозиторий нет. */
+  /** Файлы по важности: README и манифесты, потом документы и точки входа, потом всё остальное (мелкие и ближе к корню — раньше). */
+  function rankFiles(cands) {
+    const rank = (f) => {
+      const i = PRIORITY.findIndex((re) => re.test(f.path));
+      return i === -1 ? PRIORITY.length : i;
+    };
+    return [...cands].sort((a, b) => rank(a) - rank(b) || a.path.split('/').length - b.path.split('/').length || a.size - b.size || (a.path < b.path ? -1 : 1));
+  }
+
+  /** Что прислать модели: ВСЕ текстовые файлы ветки (в пределах окна модели). null — просьбы про репозиторий нет. */
   async function repoContext(text) {
     if (!gh()) return null;
     const t = String(text ?? '');
@@ -273,9 +283,9 @@ export function createCode(D) {
     const name = NAME_REF.exec(t)?.[1];
     const asked = !!url || (KEYWORD.test(t) && (ACTION.test(t) || !!name));
     if (!asked) {
-      // продолжение разговора («перепиши покороче») — недавний прочитанный репозиторий ещё в силе
+      // продолжение разговора («перепиши покороче») — прочитанный репозиторий остаётся в контексте, пока не прочитан другой или не сделан /reset
       const st = safeJson(await store.getSetting('repo_ctx'), null);
-      return st && D.now() - st.ts < 3600 ? { text: st.text, repo: st.repo } : null;
+      return st ? { text: st.text, repo: st.repo } : null;
     }
     try {
       let repo;
@@ -294,26 +304,61 @@ export function createCode(D) {
       }
       if (isSelf(repo.full_name)) return { error: '🚫 Репозиторий самого бота я не читаю. Назови другой.' };
 
-      await out.sendHtml(D.ownerId, `🔎 Читаю <code>${escapeHtml(repo.full_name)}</code>…`);
-      const tree = await gh().getTree(repo.full_name, repo.default_branch);
-      const cands = listCandidates(tree.files).filter((f) => !SECRET_NAME.test(f.path) && f.size <= 60000);
-      const picked = [];
-      for (const re of PRIORITY) for (const f of cands) if (re.test(f.path) && !picked.includes(f) && picked.length < 8) picked.push(f);
+      const branch = BRANCH_REF.exec(t)?.[1] || repo.default_branch;
+      await out.sendHtml(D.ownerId, `🔎 Читаю <code>${escapeHtml(repo.full_name)}</code>, ветка <code>${escapeHtml(branch)}</code>…`);
+      const tree = await gh().getTree(repo.full_name, branch);
 
-      let body = '';
-      for (const f of picked) {
-        if (body.length > 45000) break;
-        const raw = await gh().getFile(repo.full_name, f.path, repo.default_branch);
-        if (findSecrets(raw).length) continue;
-        body += `\n=== ФАЙЛ ${f.path} ===\n${truncate(raw, 12000, '\n…(обрезано)')}\n`;
+      const model = await core.ownerModel();
+      const cands = rankFiles(listCandidates(tree.files, Infinity).filter((f) => !SECRET_NAME.test(f.path)));
+      const parts = [];
+      let used = 0;
+      let skipped = 0;
+      for (let i = 0; i < cands.length; i += 8) {
+        const batch = cands.slice(i, i + 8);
+        const raws = await Promise.all(batch.map((f) => gh().getFile(repo.full_name, f.path, branch).catch(() => null)));
+        batch.forEach((f, k) => {
+          const raw = raws[k];
+          if (raw == null || findSecrets(raw).length) {
+            skipped++;
+            return;
+          }
+          used += raw.length;
+          parts.push(`\n=== ФАЙЛ ${f.path} ===\n${raw}\n`);
+        });
+      }
+
+      // Единственный жёсткий предел — окно самой модели (≈3 символа на токен, запас под историю и ответ).
+      // Ничего молча не отбрасываем: если не влезает — говорим об этом и ждём решения владельца.
+      const window = model.ctx || 200000;
+      const needTokens = Math.round(used / 3);
+      if (needTokens > window - 30000) {
+        return {
+          error:
+            `📚 Репозиторий <b>${escapeHtml(repo.full_name)}</b> (ветка ${escapeHtml(branch)}) — около ${Math.round(needTokens / 1000)} тыс. токенов, а окно модели ${escapeHtml(model.id)} — ${Math.round(window / 1000)} тыс.\n` +
+            'Варианты: переключиться на модель с окном побольше (/model — например Claude Opus 5.5, у неё 1 млн) или сказать, какую папку читать.',
+          html: true,
+        };
+      }
+
+      let others = '';
+      if (parts.length <= 3 || used < 3000) {
+        // в этой ветке почти пусто — подскажем, какие ещё есть
+        try {
+          const br = ((await gh().listBranches(repo.full_name)) ?? []).map((b) => b.name).filter((n) => n !== branch);
+          if (br.length) others = `\nВ этой ветке почти ничего нет. Другие ветки репозитория: ${br.join(', ')}. Код может лежать там — предложи владельцу назвать нужную («ветка имя»).\n`;
+        } catch {
+          /* список веток — подсказка, не обязательная часть */
+        }
       }
       const head =
-        `Репозиторий ${repo.full_name} (${repo.private ? 'приватный' : 'публичный'})` +
+        `Репозиторий ${repo.full_name} (${repo.private ? 'приватный' : 'публичный'}), ветка ${branch}` +
         (repo.description ? `, описание на GitHub: ${repo.description}` : '') +
-        `.\nФайлов: ${tree.files.length}. Пути (до 60): ${tree.files.slice(0, 60).map((f) => f.path).join(', ')}\n`;
-      const digest = head + (body || '\n(читаемых текстовых файлов нет)\n');
+        `.\nФайлов в ветке: ${tree.files.length}; прочитано текстовых: ${parts.length}${skipped ? `, пропущено ${skipped} (не читаются или в них секреты)` : ''}.\n` +
+        `Пути: ${tree.files.map((f) => f.path).join(', ')}\n${others}`;
+      const digest = head + (parts.join('') || '\n(читаемых текстовых файлов нет)\n');
       await store.setSetting('repo_ctx', JSON.stringify({ repo: repo.full_name, ts: D.now(), text: digest }));
-      await D.log('repo_read', D.ownerId, { repo: repo.full_name, files: picked.length });
+      await D.log('repo_read', D.ownerId, { repo: repo.full_name, branch, files: parts.length, chars: used });
+      await out.sendHtml(D.ownerId, `📚 Прочитано файлов: ${parts.length} из ${tree.files.length} (~${Math.round(used / 1000)} тыс. символов). Пишу…`);
       return { text: digest, repo: repo.full_name };
     } catch (e) {
       if (e instanceof GithubError) return { error: e.userMessage };

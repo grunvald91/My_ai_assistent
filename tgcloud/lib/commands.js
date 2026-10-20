@@ -112,6 +112,7 @@ export function createCommands(D, mods) {
       case 'reset':
         await store.clearMessages(String(chatId));
         await store.updateChat(chatId, { summary: null, summaryUpto: 0 });
+        await store.setSetting('repo_ctx', null); // прочитанный репозиторий тоже забываем
         await out.sendHtml(chatId, '🧹 История этого чата очищена. Факты (/memory) остались.');
         return true;
       case 'forget_all':

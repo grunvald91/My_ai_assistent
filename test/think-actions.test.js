@@ -422,13 +422,17 @@ test('«посмотри репозиторий и сделай пост»: READ
   assert.ok(w.sent(OWNER).some((m) => /Читаю <code>grunvald91\/Sushef<\/code>/.test(m.text)));
   assert.match(w.last(OWNER).text, /Пост про Сушеф/);
 
-  // продолжение разговора: репозиторий ещё «в памяти» на час
+  // продолжение разговора: репозиторий остаётся в контексте, пока не /reset
   w.clear();
   await w.say('перепиши покороче');
   assert.match(w.llmCalls[0].messages[0].content, /техкарты/);
-  w.advance(3700);
+  w.advance(86400);
   w.clear();
   await w.say('а теперь про другое');
+  assert.match(w.llmCalls[0].messages[0].content, /техкарты/);
+  await w.say('/reset');
+  w.clear();
+  await w.say('новая тема');
   assert.doesNotMatch(w.llmCalls[0].messages[0].content, /ДАННЫЕ РЕПОЗИТОРИЯ/);
 });
 
@@ -465,4 +469,43 @@ test('чтение репозитория: ошибка GitHub — понятн�
   await w.say('посмотри репозиторий me/missing и сделай пост');
   assert.match(w.last(OWNER).text, /GitHub не нашёл репозиторий/);
   assert.equal(w.llmCalls.length, 0);
+});
+
+test('читаем ВСЮ ветку без урезаний: все файлы целиком, ветка из просьбы, пути всех файлов', async () => {
+  const w = await createWorld();
+  const files = {};
+  for (let i = 0; i < 30; i++) files[`src/mod${i}.js`] = `export const f${i} = () => "функция номер ${i}"; // ${'x'.repeat(5000)}`;
+  files['README.md'] = '# Сушеф';
+  w.gh.repos['me/sushef'] = { default_branch: 'main', files: { 'README.md': '# Сушеф' }, branchFiles: { dev: files } };
+  await w.say('/repo me/sushef');
+  w.clear();
+  await w.say('изучи репозиторий me/sushef, ветка dev, и сделай пост');
+  const sys = w.llmCalls[0].messages[0].content;
+  for (let i = 0; i < 30; i++) assert.match(sys, new RegExp(`функция номер ${i}\\b`), 'файл ' + i);
+  assert.match(sys, /xxxxxxxxxx/);
+  assert.doesNotMatch(sys, /обрезано/);
+  assert.match(sys, /ветка dev/);
+  assert.ok(w.gh.calls.some((c) => /git\/trees\/dev/.test(c.path)), 'дерево читалось из ветки dev');
+});
+
+test('в основной ветке пусто → модель получает список других веток', async () => {
+  const w = await createWorld();
+  w.gh.repos['me/sushef'] = { default_branch: 'main', files: { 'README.md': '# Сушеф' }, branchFiles: { dev: { 'a.js': 'x' } } };
+  await w.say('/repo me/sushef');
+  w.clear();
+  await w.say('посмотри репозиторий и сделай пост');
+  assert.match(w.llmCalls[0].messages[0].content, /Другие ветки репозитория: dev/);
+});
+
+test('не влезает в окно модели: ничего не отбрасываем молча — объясняем и предлагаем решение', async () => {
+  const w = await createWorld();
+  const files = {};
+  for (let i = 0; i < 10; i++) files[`big${i}.js`] = 'a'.repeat(100000);
+  w.gh.repos['me/huge'] = { default_branch: 'main', files };
+  await w.say('/repo me/huge');
+  w.clear();
+  await w.say('посмотри репозиторий и сделай пост');
+  assert.equal(w.llmCalls.length, 0);
+  assert.match(w.last(OWNER).text, /окно модели/);
+  assert.match(w.last(OWNER).text, /\/model/);
 });

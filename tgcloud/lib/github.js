@@ -101,6 +101,7 @@ export function createGithub({ fetch, token, base = 'https://api.github.com' }) 
 
     getFile: (full, path, ref) => req('GET', `${repoPath(full)}/contents/${seg(path)}?ref=${encodeURIComponent(ref)}`, undefined, { raw: true }),
 
+    listBranches: (full) => req('GET', `${repoPath(full)}/branches?per_page=30`),
     getRef: (full, branch) => req('GET', `${repoPath(full)}/git/ref/heads/${seg(branch)}`),
     getCommit: (full, sha) => req('GET', `${repoPath(full)}/git/commits/${sha}`),
     createBlob: (full, content) => req('POST', `${repoPath(full)}/git/blobs`, { content, encoding: 'utf-8' }),
