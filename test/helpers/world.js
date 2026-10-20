@@ -197,8 +197,8 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
       message_id: ++w.nextMessageId, date: w.now, chat: { id: chat, type: 'supergroup', title }, from: user(from, 'Гость'), text,
       ...(replyTo ? { reply_to_message: replyTo } : {}), ...extra,
     });
-  w.press = (data, { messageId = 5, chat = OWNER, from = OWNER } = {}) =>
-    send('callback_query', { id: 'cb' + uid, from: user(from), data, message: { message_id: messageId, chat: { id: chat, type: chat > 0 ? 'private' : 'supergroup' } } });
+  w.press = (data, { messageId = 5, chat = OWNER, from = OWNER, markup } = {}) =>
+    send('callback_query', { id: 'cb' + uid, from: user(from), data, message: { message_id: messageId, chat: { id: chat, type: chat > 0 ? 'private' : 'supergroup' }, ...(markup ? { reply_markup: markup } : {}) } });
 
   // ───────── удобные выборки ─────────
   w.calls = (method) => w.tg.filter((c) => c.method === method).map((c) => c.params);

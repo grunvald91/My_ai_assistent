@@ -509,3 +509,40 @@ test('не влезает в окно модели: ничего не отбра
   assert.match(w.last(OWNER).text, /окно модели/);
   assert.match(w.last(OWNER).text, /\/model/);
 });
+
+test('кнопки под ответом с репозиторием: убрать репозиторий из контекста / сбросить весь контекст', async () => {
+  const w = await createWorld();
+  w.gh.repos['grunvald91/Sushef'] = SUSHEF();
+  await w.say('/repo grunvald91/Sushef');
+  w.clear();
+  w.llmReplies.push('Пост про Сушеф\n\n[[запомнить: Сушеф — мой проект]]');
+  await w.say('посмотри репозиторий и сделай пост');
+  const m = w.last(OWNER);
+  const rows = m.reply_markup.inline_keyboard;
+  const data = rows.flat().map((b) => b.callback_data);
+  assert.ok(data.includes('rc:x') && data.includes('rc:r'));
+  assert.ok(data.some((d) => d.startsWith('mem:y:')), 'кнопка «Запомнить» осталась рядом');
+  assert.match(rows.flat().find((b) => b.callback_data === 'rc:x').text, /Убрать репозиторий из контекста \(~\d+ тыс\. токенов\)/);
+
+  await w.press('rc:x', { markup: m.reply_markup });
+  assert.equal(await w.store.getSetting('repo_ctx'), null);
+  const edited = w.calls('editMessageReplyMarkup').at(-1).reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(edited.some((d) => d.startsWith('mem:y:')), '«Запомнить» не пропала');
+  assert.ok(!edited.some((d) => d.startsWith('rc:')), 'кнопки сброса убраны');
+  w.clear();
+  await w.say('следующий вопрос');
+  assert.doesNotMatch(w.llmCalls[0].messages[0].content, /ДАННЫЕ РЕПОЗИТОРИЯ/);
+  assert.ok(w.llmCalls[0].messages.some((x) => /Пост про Сушеф/.test(x.content)), 'история разговора осталась');
+
+  // полный сброс
+  await w.say('посмотри репозиторий и сделай пост');
+  await w.press('rc:r');
+  assert.equal(await w.store.getSetting('repo_ctx'), null);
+  assert.deepEqual(await w.store.getHistory(String(OWNER), 0, 10), []);
+});
+
+test('обычный ответ без репозитория кнопок сброса не имеет', async () => {
+  const w = await createWorld();
+  await w.say('привет');
+  assert.equal(w.last(OWNER).reply_markup, undefined);
+});

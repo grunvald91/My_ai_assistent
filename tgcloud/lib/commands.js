@@ -110,9 +110,7 @@ export function createCommands(D, mods) {
       case 'forget':
         return forget(msg, arg);
       case 'reset':
-        await store.clearMessages(String(chatId));
-        await store.updateChat(chatId, { summary: null, summaryUpto: 0 });
-        await store.setSetting('repo_ctx', null); // прочитанный репозиторий тоже забываем
+        await resetContext(chatId);
         await out.sendHtml(chatId, '🧹 История этого чата очищена. Факты (/memory) остались.');
         return true;
       case 'forget_all':
@@ -230,6 +228,13 @@ export function createCommands(D, mods) {
     await store.updateChat(chatId, { model: found.id });
     await out.sendHtml(chatId, `✅ Модель этого чата: <code>${escapeHtml(found.id)}</code>${found.down ? '\n⚠️ Сервис сообщает, что она сейчас недоступна.' : ''}`);
     return true;
+  }
+
+  /** История чата, сводка и прочитанный репозиторий — всё, что раздувает контекст. Факты (/memory) остаются. */
+  async function resetContext(chatId) {
+    await store.clearMessages(String(chatId));
+    await store.updateChat(chatId, { summary: null, summaryUpto: 0 });
+    await store.setSetting('repo_ctx', null);
   }
 
   // ───────── /think ─────────
@@ -456,6 +461,21 @@ export function createCommands(D, mods) {
         await store.updateChat(chatId, { model: m.id });
         await out.answerCb(cq.id, 'Выбрано: ' + truncate(m.name, 150));
         return modelProvider(chatId, await store.getChat(chatId), PROVIDER_ORDER.indexOf(m.provider), msgId);
+      }
+      return;
+    }
+
+    if (kind === 'rc') {
+      // кнопки под ответом: rc:x — убрать репозиторий из контекста, rc:r — сбросить весь контекст
+      if (a === 'r') await resetContext(chatId);
+      else await store.setSetting('repo_ctx', null);
+      await out.answerCb(cq.id, a === 'r' ? '🧹 Контекст сброшен' : '📦 Репозиторий убран из контекста');
+      // убираем только свои кнопки; «💾 Запомнить» и прочее остаётся
+      const rows = (cq.message.reply_markup?.inline_keyboard ?? []).filter((r) => !r.some((b) => String(b.callback_data).startsWith('rc:')));
+      try {
+        await out.call('editMessageReplyMarkup', { chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: rows } });
+      } catch {
+        /* сообщение могло устареть — не страшно */
       }
       return;
     }

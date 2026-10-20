@@ -148,6 +148,18 @@ export function createChat(D) {
       body += `\n\n💡 Запомнить: _${fact}_`;
     }
 
+    if (repo?.text) {
+      // репозиторий сидит в контексте и оплачивается с каждым сообщением — даём способ его убрать
+      const k = Math.max(1, Math.round(repo.text.length / 3000));
+      markup = {
+        inline_keyboard: [
+          ...(markup?.inline_keyboard ?? []),
+          [{ text: `📦 Убрать репозиторий из контекста (~${k} тыс. токенов)`, callback_data: 'rc:x' }],
+          [{ text: '🧹 Сбросить весь контекст', callback_data: 'rc:r' }],
+        ],
+      };
+    }
+
     await out.sendText({ chatId, text: body, markup });
     await store.addMessage({ chatKey: key, role: 'assistant', text: saved, model: model.id, tokens: res.tokensOut, ts: D.now() });
     await store.updateChat(chatId, { lastReplyAt: D.now() });

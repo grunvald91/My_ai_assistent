@@ -262,6 +262,7 @@ export function createApp(base) {
         case 'm':
         case 'g':
         case 't':
+        case 'rc':
         case 'mem':
         case 'fa':
           return await commands.callback(cq, parts);
