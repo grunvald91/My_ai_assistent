@@ -522,7 +522,7 @@ test('кнопки под ответом с репозиторием: убрат
   const data = rows.flat().map((b) => b.callback_data);
   assert.ok(data.includes('rc:x') && data.includes('rc:r'));
   assert.ok(data.some((d) => d.startsWith('mem:y:')), 'кнопка «Запомнить» осталась рядом');
-  assert.match(rows.flat().find((b) => b.callback_data === 'rc:x').text, /Убрать репозиторий из контекста \(~\d+ тыс\. токенов\)/);
+  assert.match(rows.flat().find((b) => b.callback_data === 'rc:x').text, /Убрать репозиторий \(~\d+ тыс\. ток\.\)/);
 
   await w.press('rc:x', { markup: m.reply_markup });
   assert.equal(await w.store.getSetting('repo_ctx'), null);

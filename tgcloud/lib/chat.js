@@ -154,7 +154,7 @@ export function createChat(D) {
       markup = {
         inline_keyboard: [
           ...(markup?.inline_keyboard ?? []),
-          [{ text: `📦 Убрать репозиторий из контекста (~${k} тыс. токенов)`, callback_data: 'rc:x' }],
+          [{ text: `📦 Убрать репозиторий (~${k} тыс. ток.)`, callback_data: 'rc:x' }],
           [{ text: '🧹 Сбросить весь контекст', callback_data: 'rc:r' }],
         ],
       };
