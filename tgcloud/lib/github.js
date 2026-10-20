@@ -86,6 +86,7 @@ export function createGithub({ fetch, token, base = 'https://api.github.com' }) 
   return {
     me: () => req('GET', '/user'),
     listRepos: () => req('GET', '/user/repos?sort=pushed&per_page=10&affiliation=owner,collaborator,organization_member'),
+    listAllRepos: () => req('GET', '/user/repos?sort=pushed&per_page=100&affiliation=owner,collaborator,organization_member'),
     getRepo: (full) => req('GET', repoPath(full)),
 
     /** Дерево файлов ветки. Пустой репозиторий → { empty: true, files: [] }. */

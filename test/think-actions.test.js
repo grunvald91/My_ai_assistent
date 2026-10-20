@@ -601,3 +601,56 @@ test('журнал: неудачный вызов ИИ пишется с тип�
   assert.equal(fail.payload.kind, 'balance');
   assert.equal(typeof fail.payload.ms, 'number');
 });
+
+// ───────── «создай ветку и залей код» обычным сообщением ─────────
+
+const FEATURE = ['@@@ COMMIT: Add AI chat', '@@@ SUMMARY: Чат с ИИ.', '@@@ FILE create chat.js', 'export const chat = () => {};', '@@@ END'].join('\n');
+
+test('просьба «создай ветку и залей код» без /code уходит в кодовый режим: репозиторий из текста, предпросмотр, ничего не отправлено', async () => {
+  const w = await createWorld();
+  w.gh.repos['me/servgo'] = { default_branch: 'main', private: true, canonical: 'me/ServGo', files: { 'index.html': '<h1>x</h1>' } };
+  w.clear();
+  w.llmReplies.push('NONE', FEATURE);
+  await w.say('Создай ветку feature/ai-chat в me/servgo и добавь туда чат с ИИ');
+  assert.equal(await w.store.getSetting('gh_repo'), 'me/ServGo');
+  assert.match(w.llmCalls[0].messages[0].content, /Выбор файлов|файл/i);
+  const card = w.last(OWNER);
+  assert.match(card.text, /Add AI chat/);
+  assert.match(card.text, /Ничего не отправлено/);
+  assert.equal(w.gh.commits.length, 0);
+  assert.ok(card.reply_markup.inline_keyboard.flat().some((b) => b.callback_data.startsWith('x:pr:')));
+});
+
+test('репозиторий можно назвать просто словом («в ServGo»): ищем среди репозиториев аккаунта; бота — нет', async () => {
+  const w = await createWorld();
+  w.gh.repos['me/ServGo'] = { default_branch: 'main', files: { 'a.js': '1' } };
+  w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: {} };
+  w.clear();
+  w.llmReplies.push('NONE', FEATURE);
+  await w.say('Залей в ServGo новую ветку с чатом');
+  assert.equal(await w.store.getSetting('gh_repo'), 'me/ServGo');
+  assert.match(w.last(OWNER).text, /Add AI chat/);
+
+  await w.say('Создай ветку в my_ai_assistent с чатом');
+  assert.match(w.last(OWNER).text, /самого бота трогать нельзя/);
+});
+
+test('просьба про код без выбранного репозитория: объясняем, что выбрать; обычные сообщения в код не уходят', async () => {
+  const w = await createWorld();
+  await w.say('Создай ветку feature/x и залей код');
+  assert.match(w.last(OWNER).text, /не понял, в каком репозитории/);
+  assert.equal(w.llmCalls.length, 0);
+
+  w.llmReplies.push('Обычный ответ');
+  await w.say('Расскажи про git, что такое ветка');
+  assert.match(w.last(OWNER).text, /Обычный ответ/);
+  assert.equal(w.llmCalls.length, 1);
+});
+
+test('в системном промпте чата перечислены команды бота: модель не говорит «у меня нет GitHub», а называет /code', async () => {
+  const w = await createWorld();
+  await w.say('привет');
+  const sys = w.llmCalls[0].messages[0].content;
+  assert.match(sys, /\/code задание/);
+  assert.match(sys, /не говори, что у тебя нет доступа/);
+});

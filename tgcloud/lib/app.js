@@ -174,6 +174,7 @@ export function createApp(base) {
       if (await dispatchState(msg, chat)) return;
     }
 
+    if (await code.maybeAutoTask(chat, text)) return; // «создай ветку и залей код» без /code
     await chatMod.answerOwner(msg, chat, text);
   }
 

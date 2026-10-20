@@ -251,6 +251,55 @@ export function createCode(D) {
     await D.log('code_draft', chatId, { id, repo: repo.full_name, files: files.length });
   }
 
+  // ───────── просьба написать код обычным сообщением ─────────
+  // «создай ветку feature/x в ServGo и залей код» без /code → всё равно запускаем кодовый режим
+  // (предпросмотр и кнопки как обычно: ничего не отправляется без нажатия).
+
+  const CODE_INTENT =
+    /(?:созда|сдела|залей|залить|запуш|закоммит|коммит|добав|напиши|реализу|внеси|подготов|запил).{0,100}(?:ветк|коммит|pull\s?request|\bPR\b|пулл|в\s+репозитор|в\s+репо(?![а-я]))|\bgit\s+(?:checkout|commit|push|branch)\b|\bfeature\/[\w-]+/i;
+
+  /** true — сообщение обработано как задача для кода. */
+  async function maybeAutoTask(chat, text) {
+    if (!gh() || !CODE_INTENT.test(text)) return false;
+    const chatId = chat.chatId;
+    try {
+      // репозиторий: назван явно (ссылка, владелец/имя) → он; иначе слово из текста, совпавшее с именем репозитория; иначе выбранный
+      const BRANCHY = /^(feature|feat|fix|hotfix|bugfix|release|chore|refactor|docs|test|dev)\//i; // «feature/x» — это ветка, а не владелец/имя
+      const refs = [URL_REF.exec(text)?.[1], ...[...text.matchAll(new RegExp(NAME_REF.source, 'g'))].map((m) => m[1])].filter((x) => x && !BRANCHY.test(x));
+      let repo = null;
+      for (const r of refs) {
+        try {
+          repo = await gh().getRepo(r.replace(/\.git$/i, ''));
+          break;
+        } catch (e) {
+          if (!(e instanceof GithubError && e.kind === 'notfound')) throw e;
+        }
+      }
+      if (!repo) {
+        const words = new Set((text.match(/[A-Za-z0-9._-]{3,}/g) ?? []).map((w) => w.toLowerCase()));
+        const hit = ((await gh().listAllRepos()) ?? []).find((r) => words.has(r.full_name.split('/')[1].toLowerCase()));
+        if (hit) repo = await gh().getRepo(hit.full_name);
+      }
+      if (repo) {
+        if (isSelf(repo.full_name)) {
+          await out.sendHtml(chatId, '🚫 Репозиторий самого бота трогать нельзя — свой код я не переписываю. Назови другой.');
+          return true;
+        }
+        if ((await store.getSetting('gh_repo')) !== repo.full_name) await store.setSetting('gh_repo', repo.full_name);
+      }
+      if (!(await store.getSetting('gh_repo'))) {
+        await out.sendHtml(chatId, 'Это задача для кода, но я не понял, в каком репозитории. Выбери: /gh или <code>/repo владелец/имя</code> — и повтори просьбу.');
+        return true;
+      }
+      await store.setState(chatId, null);
+      await runTask(chatId, text);
+      return true;
+    } catch (e) {
+      await fail(chatId, e);
+      return true;
+    }
+  }
+
   // ───────── чтение репозитория для обычного чата ─────────
   // «посмотри репозиторий и сделай пост»: без этого модель в чате не видит GitHub и просит прислать README.
   // Читаем только на чтение, репозиторий бота не трогаем, файлы с секретами в модель не отдаём.
@@ -489,5 +538,5 @@ export function createCode(D) {
     }
   }
 
-  return { showGh, setRepo, startTask, onState, callback, runTask, runsCommand: actions.command, repoContext };
+  return { showGh, setRepo, startTask, onState, callback, runTask, runsCommand: actions.command, repoContext, maybeAutoTask };
 }
