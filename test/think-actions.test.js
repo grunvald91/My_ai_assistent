@@ -369,3 +369,23 @@ test('«Что упало»: упавшие задачи и шаги; «Пере
   assert.deepEqual(w.gh.reruns, [{ repo: 'me/site', run: 501 }]);
   assert.match(w.last(OWNER).text, /запущены заново/);
 });
+
+test('GitHub: разовый сетевой сбой чтения повторяется; запись не повторяется; в сообщении видна причина', async () => {
+  const { createGithub, GithubError } = await import('../tgcloud/lib/github.js');
+  let n = 0;
+  const flaky = async () => {
+    n++;
+    if (n === 1) throw new Error('connection reset');
+    return { ok: true, status: 200, json: async () => ({ login: 'me' }) };
+  };
+  assert.deepEqual(await createGithub({ fetch: flaky, token: 't' }).me(), { login: 'me' });
+  assert.equal(n, 2);
+
+  n = 0;
+  const down = async () => {
+    n++;
+    throw new Error('fetch failed: ENOTFOUND');
+  };
+  await assert.rejects(createGithub({ fetch: down, token: 't' }).dispatch('a/b', 1, 'main'), (e) => e instanceof GithubError && e.kind === 'network' && /ENOTFOUND/.test(e.userMessage));
+  assert.equal(n, 1, 'POST не повторяется');
+});

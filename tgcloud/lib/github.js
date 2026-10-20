@@ -28,7 +28,7 @@ export class GithubError extends Error {
       case 'upstream':
         return '🔌 GitHub сейчас недоступен. Попробуй позже.';
       default:
-        return '🌐 Не получилось связаться с GitHub (возможно, платформа не пускает исходящие запросы на api.github.com).';
+        return '🌐 Не получилось связаться с GitHub' + (this.message ? ` (${this.message.slice(0, 160)})` : '') + '. Попробуй ещё раз; если повторяется — платформа могла временно не пускать запросы на api.github.com.';
     }
   }
 }
@@ -37,9 +37,8 @@ const seg = (p) => String(p).split('/').map(encodeURIComponent).join('/');
 
 export function createGithub({ fetch, token, base = 'https://api.github.com' }) {
   async function req(method, path, body, { raw = false } = {}) {
-    let res;
-    try {
-      res = await fetch(base + path, {
+    const send = () =>
+      fetch(base + path, {
         method,
         headers: {
           Authorization: 'Bearer ' + token,
@@ -50,6 +49,14 @@ export function createGithub({ fetch, token, base = 'https://api.github.com' }) 
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
+    let res;
+    try {
+      try {
+        res = await send();
+      } catch (e) {
+        if (method !== 'GET') throw e; // повторяем только чтение: запись/запуск дважды нельзя
+        res = await send(); // разовый сбой сети платформы
+      }
     } catch (e) {
       throw new GithubError('network', String(e?.message ?? e));
     }
