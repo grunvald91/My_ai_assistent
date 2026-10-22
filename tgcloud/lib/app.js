@@ -6,7 +6,7 @@
 import { createOut } from './out.js';
 import { createCore } from './core.js';
 import { createChat } from './chat.js';
-import { createAttach, POST_INTENT } from './attach.js';
+import { createAttach, POST_INTENT, parseDecline } from './attach.js';
 import { createPosts } from './posts.js';
 import { createBusiness } from './business.js';
 import { createReplies } from './replies.js';
@@ -186,17 +186,28 @@ export function createApp(base) {
       if (await dispatchState(msg, chat)) return;
     }
 
-    // перед этим прислали вложение без подписи — текст и есть вопрос к нему
+    // перед этим прислали вложение и бот спросил, что с ним сделать — текст и есть ответ
+    let said = text;
     if (await D.attach.hasPending()) {
-      const items = await D.attach.take();
-      if (items) {
-        await D.attach.takeCaption();
-        return chatMod.answerMedia(chatId, text, items);
+      const { cancel, rest } = parseDecline(text);
+      if (cancel) {
+        await D.attach.drop();
+        if (!rest) {
+          await out.sendHtml(chatId, '👌 Ок, вложение забыл.');
+          return;
+        }
+        said = rest; // «ничего не надо, …» — дальше обычное сообщение
+      } else {
+        const items = await D.attach.take();
+        if (items) {
+          await D.attach.takeCaption();
+          return chatMod.answerMedia(chatId, text, items);
+        }
       }
     }
 
-    if (await code.maybeAutoTask(chat, text)) return; // «создай ветку и залей код» без /code
-    await chatMod.answerOwner(msg, chat, text);
+    if (await code.maybeAutoTask(chat, said)) return; // «создай ветку и залей код» без /code
+    await chatMod.answerOwner(msg, chat, said);
   }
 
   async function dispatchState(msg, chat) {

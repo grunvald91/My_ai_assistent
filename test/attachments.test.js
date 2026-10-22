@@ -176,3 +176,33 @@ test('неподдерживаемый и слишком большой файл
   assert.match(w.last(OWNER).text, /Не получилось разобрать вложения/);
   assert.equal(w.llmCalls.length, 0);
 });
+
+test('после вложения бот спрашивает, что сделать; «ничего не надо» — забывает', async () => {
+  const w = await createWorld();
+  await w.photo('D1');
+  assert.match(w.last(OWNER).text, /Что с этим сделать\?/);
+  await w.say('ничего не надо');
+  assert.match(w.last(OWNER).text, /вложение забыл/);
+  assert.equal(w.llmCalls.length, 0);
+  w.llmReplies.push('ok');
+  await w.say('привет');
+  assert.equal(typeof lastUser(w.llmCalls.at(-1)).content, 'string', 'следующее сообщение — обычное');
+});
+
+test('«ничего не надо, …» — вложение забыто, остаток — обычное сообщение', async () => {
+  const w = await createWorld();
+  await w.photo('D2');
+  w.llmReplies.push('Столица — Париж.');
+  await w.say('Ничего не надо. Какая столица Франции?');
+  const u = lastUser(w.llmCalls.at(-1));
+  assert.equal(u.content, 'Какая столица Франции?');
+});
+
+test('«не надо подробно…» — это указание к вложению, а не отказ', async () => {
+  const w = await createWorld();
+  await w.photo('D3');
+  w.llmReplies.push('Кот.');
+  await w.say('не надо подробно, просто скажи кто это');
+  const u = lastUser(w.llmCalls.at(-1));
+  assert.equal(u.content.at(-1).type, 'image_url');
+});

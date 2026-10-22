@@ -30,6 +30,19 @@ export function pdfPages(u8) {
   return n;
 }
 
+/**
+ * Ответ на «что сделать с вложением?» — отказ? «ничего не надо[, дальше текст]» или одно «не надо/отмена/забудь».
+ * «Не надо подробно, опиши коротко» — это НЕ отказ, а указание к вложению.
+ * → { cancel, rest } (rest — что написано после отказа: это уже обычное сообщение)
+ */
+export function parseDecline(text) {
+  const t = String(text ?? '').trim();
+  const m = /^(?:нет[,.!\s]+)?(?:ничего|ниче|ничё|нечего)\s+(?:с\s+ним[иа]?\s+|с\s+этим\s+)?(?:не\s+)?(?:надо|нужно|делать)(?![а-яё])[\s,.!;:—–-]*/i.exec(t);
+  if (m) return { cancel: true, rest: t.slice(m[0].length).trim() };
+  if (/^(?:нет|не\s+надо|не\s+нужно|отмена|отбой|забудь|забей)[\s.!]*$/i.test(t)) return { cancel: true, rest: '' };
+  return { cancel: false, rest: t };
+}
+
 export function createAttach(D) {
   const { store, out, core, cfg } = D;
 
@@ -190,9 +203,10 @@ export function createAttach(D) {
     const buttons = [row, [{ text: '✖️ Не надо', callback_data: 'a:x', style: 'danger' }]];
     const head = msg.media_group_id ? '📎 Получаю альбом.' : `📎 Принял: ${escapeHtml(label(items))}.`;
     const tail = msg.media_group_id
-      ? ' Когда все файлы загрузятся — выбери, что сделать' + (caption ? ' (подпись учту).' : ', или просто напиши вопрос.')
-      : ' Напиши, что с этим сделать, — или нажми кнопку.';
-    await out.sendHtml(chatId, head + tail, { reply_markup: { inline_keyboard: buttons } });
+      ? ' Когда всё загрузится — что с ним сделать?' + (caption ? ' (подпись учту)' : '') + ' Напиши или выбери кнопку.'
+      : ' Что с этим сделать? Напиши или выбери кнопку.';
+    const hint = '\n\n<i>Если ничего не нужно — напиши «ничего не надо» (можно сразу дальше: «ничего не надо, …»).</i>';
+    await out.sendHtml(chatId, head + tail + hint, { reply_markup: { inline_keyboard: buttons } });
     return true;
   }
 
