@@ -56,3 +56,13 @@ test('в группе цитата сообщения, на которое от�
   const t = textOf(lastUser(w.llmCalls.at(-1)));
   assert.ok(t.includes(long));
 });
+
+test('/draft: сообщение, на которое отвечают, уходит модели целиком', async () => {
+  const w = await createWorld();
+  await w.setGroupMode(-5001, 'off');
+  const long = 'Вопрос участника. '.repeat(200);
+  w.llmReplies.push('Черновик ответа');
+  await w.group('/draft', { from: OWNER, replyTo: { message_id: 4, text: long, from: { id: 2002, first_name: 'Гость' } } });
+  const prompt = JSON.stringify(w.llmCalls.at(-1).messages);
+  assert.ok(prompt.includes(long.slice(0, 3000)) && prompt.includes(long.slice(-200)), 'модель видит всё сообщение');
+});

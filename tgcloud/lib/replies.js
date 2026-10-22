@@ -58,7 +58,7 @@ export function createReplies(D) {
     const author = displayName(target.from);
     let text;
     try {
-      text = await compose({ groupChatId: groupId, title, quote: truncate(quote, 1500), quoteAuthor: author, instruction: arg });
+      text = await compose({ groupChatId: groupId, title, quote, quoteAuthor: author, instruction: arg });
     } catch (e) {
       if (e instanceof LlmError || e instanceof LimitError) {
         await out.toOwner(escapeHtml(e.userMessage));
@@ -84,7 +84,7 @@ export function createReplies(D) {
     };
     await store.createDraft(d);
     // сохраняем цитируемое сообщение, чтобы «Переделать» работало без группы под рукой
-    await store.setSetting('draftq:' + id, JSON.stringify({ q: truncate(quote, 1500), a: author, t: title }));
+    await store.setSetting('draftq:' + id, JSON.stringify({ q: quote, a: author, t: title }));
     const sent = await out.toOwner(cardText(d, title, quote), { reply_markup: keyboard(id) });
     if (!sent) {
       await out.sendText({
