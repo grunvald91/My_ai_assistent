@@ -654,3 +654,32 @@ test('в системном промпте чата перечислены ко�
   assert.match(sys, /\/code задание/);
   assert.match(sys, /не говори, что у тебя нет доступа/);
 });
+
+test('длинная задача: ветка и глагол далеко друг от друга, репозиторий назван словами («ai growth os») — всё равно кодовый режим', async () => {
+  const w = await createWorld();
+  w.gh.repos['me/ai-growth-os'] = { default_branch: 'main', files: { 'index.html': '<h1>x</h1>' } };
+  w.gh.repos['me/Sushef'] = { default_branch: 'main', files: { 'README.md': '#' } };
+  await w.say('/repo me/Sushef'); // выбран другой репозиторий — но в задаче назван ai growth os
+  w.clear();
+  w.llmReplies.push('NONE', FEATURE);
+  await w.say(
+    'Создай страницу AI-чата в стиле Claude/ChatGPT в проекте ai growth os. Сначала определи стек. Функции: текст, фото, файлы до 1 МБ, история, ' +
+      'повтор отправки при сбое, копирование сообщений, диалоги (новый, удаление, переименование), лимит длины. Дизайн как у админ-панели. Работай в новой ветке feature/ai-chat и открой Pull Request.',
+  );
+  assert.equal(await w.store.getSetting('gh_repo'), 'me/ai-growth-os');
+  assert.ok(w.sent(OWNER).some((m) => /Понял как задачу для кода. Репозиторий: <code>me\/ai-growth-os<\/code>/.test(m.text)));
+  assert.match(w.last(OWNER).text, /Add AI chat/);
+  assert.equal(w.llmCalls.length, 2, 'выбор файлов + код');
+});
+
+test('вопросы про git и обычные просьбы в кодовый режим не попадают', async () => {
+  const w = await createWorld();
+  w.gh.repos['me/site'] = { default_branch: 'main', files: { 'a.js': '1' } };
+  await w.say('/repo me/site');
+  w.clear();
+  for (const t of ['Объясни, как создать ветку в git', 'Расскажи, что такое pull request', 'Напиши пост для канала', 'Как работает коммит?']) {
+    w.llmReplies.push('Обычный ответ');
+    await w.say(t);
+    assert.match(w.last(OWNER).text, /Обычный ответ/, t);
+  }
+});

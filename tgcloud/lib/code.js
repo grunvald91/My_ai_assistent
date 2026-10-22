@@ -255,12 +255,29 @@ export function createCode(D) {
   // «создай ветку feature/x в ServGo и залей код» без /code → всё равно запускаем кодовый режим
   // (предпросмотр и кнопки как обычно: ничего не отправляется без нажатия).
 
-  const CODE_INTENT =
-    /(?:созда|сдела|залей|залить|запуш|закоммит|коммит|добав|напиши|реализу|внеси|подготов|запил).{0,100}(?:ветк|коммит|pull\s?request|\bPR\b|пулл|в\s+репозитор|в\s+репо(?![а-я]))|\bgit\s+(?:checkout|commit|push|branch)\b|\bfeature\/[\w-]+/i;
+  // Задача для кода = в сообщении есть слово про ветку/PR/коммит/репозиторий И глагол действия (в любом месте и порядке),
+  // а сообщение не вопрос «объясни, что такое…».
+  const GIT_WORDS = /ветк[аиеуыо]|\bbranch\b|pull\s?request|пулл|\bPR\b|коммит|в\s+репозитор|в\s+репо(?![а-я])|\bgit\s+(?:checkout|commit|push|branch)\b|\bfeature\/[\w-]+/i;
+  const DO_VERBS = /созда|сдела|залей|залить|запуш|закоммит|добав|напиши|реализу|внеси|подготов|запил|работай|открой|собери|исправь|измени|поправь|обнови|сверста|допиши/i;
+  const EXPLAIN = /^\s*(?:расскажи|объясни|что такое|как работает|почему|зачем|в чём разница)/i;
+  // «изучи/посмотри репозиторий, ветка dev, и сделай пост» — это чтение, а не запись в репозиторий
+  const READ_FIRST = /^\s*(?:изучи|посмотри|прочитай|проанализируй|разбери|оцени|проверь|глянь)/i;
+  const WRITE_WORDS = /залей|залить|запуш|закоммит|коммит|pull\s?request|пулл|\bPR\b|созда\S*\s+(?:\S+\s+){0,2}ветк|\bgit\s+(?:checkout|commit|push|branch)\b/i;
+  const isCodeTask = (t) =>
+    GIT_WORDS.test(t) && DO_VERBS.test(t) && !EXPLAIN.test(t) && (!READ_FIRST.test(t) || WRITE_WORDS.test(t));
+
+  /** Название репозитория в тексте словами: «ai growth os» ≈ ai-growth-os, «ServGo» ≈ servgo. */
+  const norm = (x) => String(x).toLowerCase().replace(/[^a-z0-9]+/g, '');
+  function nameCandidates(text) {
+    const w = text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+    const set = new Set();
+    for (let i = 0; i < w.length; i++) for (let n = 1; n <= 4 && i + n <= w.length; n++) set.add(w.slice(i, i + n).join(''));
+    return set;
+  }
 
   /** true — сообщение обработано как задача для кода. */
   async function maybeAutoTask(chat, text) {
-    if (!gh() || !CODE_INTENT.test(text)) return false;
+    if (!gh() || !isCodeTask(text)) return false;
     const chatId = chat.chatId;
     try {
       // репозиторий: назван явно (ссылка, владелец/имя) → он; иначе слово из текста, совпавшее с именем репозитория; иначе выбранный
@@ -276,8 +293,14 @@ export function createCode(D) {
         }
       }
       if (!repo) {
-        const words = new Set((text.match(/[A-Za-z0-9._-]{3,}/g) ?? []).map((w) => w.toLowerCase()));
-        const hit = ((await gh().listAllRepos()) ?? []).find((r) => words.has(r.full_name.split('/')[1].toLowerCase()));
+        const cands = nameCandidates(text);
+        // если названо несколько репозиториев — берём тот, чьё имя длиннее (точнее): «ai growth os» важнее, чем «ServGo» в описании логотипа
+        const hit = ((await gh().listAllRepos()) ?? [])
+          .filter((r) => {
+            const n = norm(r.full_name.split('/')[1]);
+            return n.length >= 4 && cands.has(n);
+          })
+          .sort((a, b) => norm(b.full_name.split('/')[1]).length - norm(a.full_name.split('/')[1]).length)[0];
         if (hit) repo = await gh().getRepo(hit.full_name);
       }
       if (repo) {
@@ -292,6 +315,7 @@ export function createCode(D) {
         return true;
       }
       await store.setState(chatId, null);
+      await out.sendHtml(chatId, `🧑‍💻 Понял как задачу для кода. Репозиторий: <code>${escapeHtml(await store.getSetting('gh_repo'))}</code> (другой — /repo).`);
       await runTask(chatId, text);
       return true;
     } catch (e) {
