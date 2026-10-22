@@ -109,7 +109,13 @@ export function createGithub({ fetch, token, base = 'https://api.github.com' }) 
     createTree: (full, baseTree, tree) => req('POST', `${repoPath(full)}/git/trees`, { base_tree: baseTree, tree }),
     createCommit: (full, message, tree, parents) => req('POST', `${repoPath(full)}/git/commits`, { message, tree, parents }),
     createRef: (full, branch, sha) => req('POST', `${repoPath(full)}/git/refs`, { ref: 'refs/heads/' + branch, sha }),
-    updateRef: (full, branch, sha) => req('PATCH', `${repoPath(full)}/git/refs/heads/${seg(branch)}`, { sha, force: false }),
+    updateRef: (full, branch, sha, force = false) => req('PATCH', `${repoPath(full)}/git/refs/heads/${seg(branch)}`, { sha, force }),
+    /** Открытый PR из ветки head (имя ветки без владельца) в base, либо null. */
+    async findOpenPr(full, head, base) {
+      const owner = full.split('/')[0];
+      const list = await req('GET', `${repoPath(full)}/pulls?state=open&head=${encodeURIComponent(owner + ':' + head)}&base=${encodeURIComponent(base)}`);
+      return Array.isArray(list) && list.length ? list[0] : null;
+    },
     createPr: (full, { title, head, base, body }) => req('POST', `${repoPath(full)}/pulls`, { title, head, base, body }),
 
     // ── GitHub Actions

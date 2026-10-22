@@ -91,7 +91,7 @@ export const drafts = table('drafts', {
   text: text('text'), // текущий текст
   format: text('format').notNull().default('md'), // md — от модели (Markdown); html — вручную от владельца
   status: text('status').notNull().default('new'),
-  // new | await_channel | await_brief | ready | await_revision | await_manual | publishing | published | canceled | error
+  // new | await_channel | await_brief | ready | await_revision | await_manual | publishing | maybe_posted | published | canceled | error
   previewMessageId: integer('preview_message_id'),
   publishedMessageId: integer('published_message_id'),
   link: text('link'),

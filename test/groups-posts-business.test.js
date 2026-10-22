@@ -516,3 +516,70 @@ test('Business, auto: инъекция в сообщении собеседни�
   assert.doesNotMatch(msgs[0].content, /Личный секрет/);
   assert.match(msgs[0].content, /недоверенный ввод/);
 });
+
+async function readyPost(w) {
+  await addChannel(w);
+  await w.say('/post');
+  w.llmReplies.push('Текст поста');
+  await w.say('тема');
+  return w.last(OWNER).reply_markup.inline_keyboard[0][0].callback_data.split(':')[2];
+}
+const channelSends = (w) => w.calls('sendMessage').filter((p) => p.chat_id === -1001234567890).length;
+
+test('пост: ответ Telegram потерян (5xx/сеть) — не повторяем вслепую, спрашиваем; «Пост вышел» закрывает', async () => {
+  const w = await createWorld();
+  const id = await readyPost(w);
+  w.fail('sendMessage', 502, 'Bad Gateway');
+  await w.press(`p:pub:${id}`);
+  assert.equal((await w.store.getDraft(id)).status, 'maybe_posted');
+  assert.match(w.last(OWNER).text, /Не уверен, вышел ли пост/);
+  const before = channelSends(w);
+  await w.press(`p:pub:${id}`);
+  assert.equal(channelSends(w), before, 'повторной отправки без ответа владельца нет');
+  await w.press(`p:ok:${id}`);
+  assert.equal((await w.store.getDraft(id)).status, 'published');
+  await w.press(`p:re:${id}`);
+  assert.equal(channelSends(w), before, 'после «вышел» повтор невозможен');
+});
+
+test('пост: «Поста нет — опубликовать» отправляет заново и ровно один раз', async () => {
+  const w = await createWorld();
+  const id = await readyPost(w);
+  w.fail('sendMessage', 500, 'Internal Server Error');
+  await w.press(`p:pub:${id}`);
+  const before = channelSends(w);
+  await w.press(`p:re:${id}`);
+  await w.press(`p:re:${id}`);
+  assert.equal((await w.store.getDraft(id)).status, 'published');
+  assert.equal(channelSends(w) - before, 1);
+});
+
+test('пост: вызов бота оборвали посреди публикации — повторная кнопка не публикует, а спрашивает', async () => {
+  const w = await createWorld();
+  const id = await readyPost(w);
+  await w.store.updateDraft(id, { status: 'publishing', publishedAt: w.now - 120 });
+  const before = channelSends(w);
+  await w.press(`p:pub:${id}`);
+  assert.equal(channelSends(w), before);
+  assert.equal((await w.store.getDraft(id)).status, 'maybe_posted');
+  assert.match(w.last(OWNER).text, /Не уверен, вышел ли пост/);
+});
+
+test('пост: публикация идёт прямо сейчас — вторая кнопка ждёт, не спрашивает', async () => {
+  const w = await createWorld();
+  const id = await readyPost(w);
+  await w.store.updateDraft(id, { status: 'publishing', publishedAt: w.now - 5 });
+  await w.press(`p:pub:${id}`);
+  assert.equal((await w.store.getDraft(id)).status, 'publishing');
+});
+
+test('пост: часть поста ушла (фото), текст не отправился — исход неизвестен', async () => {
+  const w = await createWorld();
+  await addChannel(w);
+  w.llmReplies.push('Очень длинный пост. '.repeat(80));
+  await w.photo('PX', { caption: 'пост про весну' });
+  const id = w.last(OWNER).reply_markup.inline_keyboard[0][0].callback_data.split(':')[2];
+  w.fail('sendMessage', 403, 'Forbidden: bot was blocked'); // фото уйдёт, текст — отказ
+  await w.press(`p:pub:${id}`);
+  assert.equal((await w.store.getDraft(id)).status, 'maybe_posted', 'часть уже в канале — вслепую не повторяем');
+});

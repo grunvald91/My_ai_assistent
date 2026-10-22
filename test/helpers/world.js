@@ -291,6 +291,7 @@ function fakeGithub(w, path, opts) {
     return res(201, { sha: 'abcdef1234567' });
   }
   if (rest === '/git/refs' && method === 'POST') {
+    if (g.refs.some((r) => r.repo === key && r.ref === body.ref)) return res(422, { message: 'Reference already exists' });
     g.refs.push({ repo: key, ref: body.ref, sha: body.sha, kind: 'create' });
     return res(201, {});
   }
@@ -317,8 +318,14 @@ function fakeGithub(w, path, opts) {
     g.reruns.push({ repo: key, run: Number(m[1]) });
     return res(201, {});
   }
+  if (rest === '/pulls' && method === 'GET') {
+    const head = decodeURIComponent(/head=([^&]*)/.exec(qs ?? '')?.[1] ?? '').split(':')[1];
+    const i = g.prs.findIndex((p) => p.repo === key && p.head === head);
+    return res(200, i >= 0 ? [{ html_url: `https://github.com/${key}/pull/${i + 1}` }] : []);
+  }
   if (rest === '/pulls') {
     if (repo.prFails) return res(422, { message: 'PR failed' });
+    if (g.prs.some((p) => p.repo === key && p.head === body.head && p.base === body.base)) return res(422, { message: 'A pull request already exists for this branch' });
     g.prs.push({ repo: key, ...body });
     return res(201, { html_url: `https://github.com/${key}/pull/${g.prs.length}` });
   }

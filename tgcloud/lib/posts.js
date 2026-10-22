@@ -20,6 +20,14 @@ export function createPosts(D) {
   const { store, out, core, cfg } = D;
   const ownerChat = () => D.ownerId;
 
+  // Отправки поста считаем: если публикация упала, нужно знать, ушла ли уже хоть одна часть (тогда исход неизвестен)
+  let tracker = null;
+  async function tgSend(method, params) {
+    const r = await out.call(method, params);
+    if (tracker) tracker.sent++;
+    return r;
+  }
+
   // ───────── текст черновика → что отправлять ─────────
 
   function htmlOf(draft) {
@@ -41,10 +49,10 @@ export function createPosts(D) {
       const p = { chat_id: chatId, link_preview_options: { is_disabled: true } };
       if (last && markup) p.reply_markup = markup;
       try {
-        sent.push(await out.call('sendMessage', { ...p, text: chunks[i].html, parse_mode: 'HTML' }));
+        sent.push(await tgSend('sendMessage', { ...p, text: chunks[i].html, parse_mode: 'HTML' }));
       } catch (e) {
         if (!isParseError(e)) throw e;
-        sent.push(await out.call('sendMessage', { ...p, text: truncate(chunks[i].md, 4096, '') }));
+        sent.push(await tgSend('sendMessage', { ...p, text: truncate(chunks[i].md, 4096, '') }));
       }
     }
     return sent;
@@ -54,10 +62,10 @@ export function createPosts(D) {
     const p = { chat_id: chatId, photo: fileId };
     if (markup) p.reply_markup = markup;
     try {
-      return await out.call('sendPhoto', { ...p, caption: htmlOf(draft), parse_mode: 'HTML' });
+      return await tgSend('sendPhoto', { ...p, caption: htmlOf(draft), parse_mode: 'HTML' });
     } catch (e) {
       if (!isParseError(e)) throw e;
-      return out.call('sendPhoto', { ...p, caption: truncate(plainOf(draft), TG_CAPTION_LIMIT, '') });
+      return tgSend('sendPhoto', { ...p, caption: truncate(plainOf(draft), TG_CAPTION_LIMIT, '') });
     }
   }
 
@@ -79,7 +87,7 @@ export function createPosts(D) {
         const m = await sendPhotoWithCaption(chatId, photos[0], draft, markup);
         return { first: m.message_id, control: m.message_id };
       }
-      const ph = await out.call('sendPhoto', { chat_id: chatId, photo: photos[0] });
+      const ph = await tgSend('sendPhoto', { chat_id: chatId, photo: photos[0] });
       const sent = await sendBody(chatId, draft, markup);
       return { first: ph.message_id, control: sent[sent.length - 1].message_id };
     }
@@ -95,11 +103,11 @@ export function createPosts(D) {
     });
     let msgs;
     try {
-      msgs = await out.call('sendMediaGroup', { chat_id: chatId, media });
+      msgs = await tgSend('sendMediaGroup', { chat_id: chatId, media });
     } catch (e) {
       if (!isParseError(e)) throw e;
       media[0] = { type: 'photo', media: photos[0], ...(captionOk ? { caption: truncate(plainOf(draft), TG_CAPTION_LIMIT, '') } : {}) };
-      msgs = await out.call('sendMediaGroup', { chat_id: chatId, media });
+      msgs = await tgSend('sendMediaGroup', { chat_id: chatId, media });
     }
     const first = msgs[0].message_id;
     if (!captionOk) {
@@ -432,28 +440,61 @@ export function createPosts(D) {
   const linkOf = (ch, messageId) =>
     ch.username ? `https://t.me/${ch.username}/${messageId}` : String(ch.chatId).startsWith('-100') ? `https://t.me/c/${String(ch.chatId).slice(4)}/${messageId}` : null;
 
+  const STALE_PUBLISH_SEC = 60; // публикация идёт секунды; дольше минуты — вызов бота, скорее всего, оборвали
+
+  /** Исход публикации неизвестен: ничего не повторяем сами, спрашиваем владельца. */
+  async function markMaybePosted(draftId, chatId, channel, partial) {
+    await store.updateDraft(draftId, { status: 'maybe_posted' });
+    await out.sendHtml(
+      chatId,
+      `⚠️ <b>Не уверен, вышел ли пост</b> в «${escapeHtml(chName(channel))}»: ${partial ? 'часть поста уже ушла, а дальше что-то оборвалось' : 'ответ Telegram потерялся'}. ` +
+        'Если отправить ещё раз вслепую, получится дубль.\n\nЗагляни в канал и скажи, что там:',
+      { reply_markup: kb([[{ text: '✅ Пост вышел', callback_data: 'p:ok:' + draftId, style: 'success' }], [{ text: '🔁 Поста нет — опубликовать', callback_data: 'p:re:' + draftId }]]) },
+    );
+  }
+
   async function publish(draftId, cq) {
     const chatId = cq.message.chat.id;
     const draft = await store.getDraft(draftId);
     if (!draft) return out.answerCb(cq.id, 'Черновик не найден', true);
+    if (draft.status === 'publishing' && D.now() - (draft.publishedAt ?? 0) > STALE_PUBLISH_SEC) {
+      // публикация началась давно и не закончилась: вызов бота оборвали на полпути
+      await out.answerCb(cq.id);
+      await out.dropButtons(chatId, cq.message.message_id);
+      const ch = await store.getChannel(draft.channelId);
+      return markMaybePosted(draftId, chatId, ch, false);
+    }
     if (!(await store.claimDraft(draftId, 'ready', 'publishing'))) {
-      return out.answerCb(cq.id, draft.status === 'published' ? 'Уже опубликовано' : 'Сейчас нельзя опубликовать', true);
+      const why = { published: 'Уже опубликовано', maybe_posted: 'Исход прошлой публикации неизвестен — ответь на вопрос выше', publishing: 'Публикуется, подожди' }[draft.status] ?? 'Сейчас нельзя опубликовать';
+      return out.answerCb(cq.id, why, true);
     }
     await out.answerCb(cq.id, 'Публикую…');
+    await store.updateDraft(draftId, { publishedAt: D.now() }); // время начала: по нему видно «зависшую» публикацию
     const channel = await store.getChannel(draft.channelId);
     const photos = (await store.listDraftPhotos(draftId)).map((p) => p.fileId);
     let res;
+    tracker = { sent: 0 };
     try {
       res = await deliver(draft, photos, channel.chatId, null);
     } catch (e) {
-      await store.updateDraft(draftId, { status: 'ready' }); // можно нажать ещё раз
-      await D.log('post_error', channel.chatId, { error: String(e?.description ?? e?.message ?? e).slice(0, 200) });
-      await out.sendHtml(
-        chatId,
-        `❌ Не получилось опубликовать в «${escapeHtml(chName(channel))}»: ${escapeHtml(String(e?.description ?? e?.message ?? e))}\nПроверь, что я админ канала с правом «Публиковать сообщения». Потом нажми «Опубликовать» ещё раз.`,
-      );
+      const sentSome = tracker.sent > 0;
+      tracker = null;
+      await D.log('post_error', channel.chatId, { error: String(e?.description ?? e?.message ?? e).slice(0, 200), sent: sentSome });
+      // Telegram ответил отказом (4xx) и ничего не ушло — пост точно не вышел, можно нажать ещё раз.
+      // Иначе (сеть, 5xx, оборванный ответ, часть уже ушла) исход неизвестен: повторять вслепую нельзя — будет дубль.
+      const certain = !sentSome && Number.isInteger(e?.code) && e.code >= 400 && e.code < 500;
+      if (certain) {
+        await store.updateDraft(draftId, { status: 'ready' });
+        await out.sendHtml(
+          chatId,
+          `❌ Не получилось опубликовать в «${escapeHtml(chName(channel))}»: ${escapeHtml(String(e?.description ?? e?.message ?? e))}\nПроверь, что я админ канала с правом «Публиковать сообщения». Потом нажми «Опубликовать» ещё раз.`,
+        );
+      } else {
+        await markMaybePosted(draftId, chatId, channel, sentSome);
+      }
       return;
     }
+    tracker = null;
     const link = linkOf(channel, res.first);
     await store.updateDraft(draftId, { status: 'published', publishedMessageId: res.first, link, publishedAt: D.now() });
     await out.dropButtons(chatId, cq.message.message_id);
@@ -481,13 +522,28 @@ export function createPosts(D) {
     const draft = await store.getDraft(id);
     if (!draft) return out.answerCb(cq.id, 'Черновик не найден', true);
     if (act === 'go') {
-      if (['ready', 'publishing', 'published', 'canceled'].includes(draft.status)) return out.answerCb(cq.id, 'Уже обработано', true);
+      if (['ready', 'publishing', 'maybe_posted', 'published', 'canceled'].includes(draft.status)) return out.answerCb(cq.id, 'Уже обработано', true);
       await out.answerCb(cq.id);
       await out.dropButtons(chatId, cq.message.message_id);
       return advance(id, chatId);
     }
     if (act === 'pub') return publish(id, cq);
-    if (draft.status !== 'ready') return out.answerCb(cq.id, draft.status === 'published' ? 'Пост уже опубликован' : 'Черновик уже не активен', true);
+    if (act === 'ok' || act === 're') {
+      // ответ владельца на «не уверен, вышел ли пост»
+      if (draft.status !== 'maybe_posted') return out.answerCb(cq.id, 'Уже решено', true);
+      await out.dropButtons(chatId, cq.message.message_id);
+      if (act === 'ok') {
+        await store.updateDraft(id, { status: 'published', publishedAt: D.now() });
+        await out.answerCb(cq.id, 'Записал: пост вышел');
+        const chat = await store.getChat(chatId);
+        if (chat?.state?.endsWith(':' + id)) await store.setState(chatId, null);
+        await out.sendHtml(chatId, '✅ Записал, что пост вышел. Повторно отправлять не буду.');
+        return;
+      }
+      if (!(await store.claimDraft(id, 'maybe_posted', 'ready'))) return out.answerCb(cq.id, 'Уже решено', true);
+      return publish(id, cq);
+    }
+    if (draft.status !== 'ready') return out.answerCb(cq.id, draft.status === 'published' ? 'Пост уже опубликован' : draft.status === 'maybe_posted' ? 'Сначала ответь, вышел ли пост' : 'Черновик уже не активен', true);
     if (act === 'rev') {
       await store.setState(chatId, 'post_rev:' + id);
       await out.answerCb(cq.id);

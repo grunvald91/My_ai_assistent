@@ -768,8 +768,15 @@ export function createCode(D) {
           await g.updateRef(name, base, commit.sha);
           resultHtml = `✅ Закоммичено в <code>${escapeHtml(base)}</code>: https://github.com/${escapeHtml(name)}/commit/${commit.sha.slice(0, 7)}`;
         } else {
+          // Имя ветки зависит только от черновика, поэтому при повторе после сбоя ветка уже может существовать — это наша ветка:
+          // двигаем её на свежий коммит (то же содержимое), а не падаем на «уже существует».
           const branch = `claude/${slug(plan.commit)}-${d.id.slice(-4)}`;
-          await g.createRef(name, branch, commit.sha);
+          try {
+            await g.createRef(name, branch, commit.sha);
+          } catch (e) {
+            if (!(e instanceof GithubError && e.kind === 'invalid' && /already exists/i.test(e.message))) throw e;
+            await g.updateRef(name, branch, commit.sha, true);
+          }
           let prUrl = null;
           try {
             const pr = await g.createPr(name, {
@@ -781,6 +788,14 @@ export function createCode(D) {
             prUrl = pr.html_url;
           } catch (e) {
             if (!(e instanceof GithubError)) throw e;
+            // PR из этой ветки уже открыт прошлой попыткой — берём его
+            if (e.kind === 'invalid' && /already exists/i.test(e.message)) {
+              try {
+                prUrl = (await g.findOpenPr(name, branch, base))?.html_url ?? null;
+              } catch (e2) {
+                if (!(e2 instanceof GithubError)) throw e2;
+              }
+            }
           }
           resultHtml = prUrl
             ? `✅ Pull Request создан: ${escapeHtml(prUrl)}`

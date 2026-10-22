@@ -265,3 +265,28 @@ test('/code через Actions: ошибка из Actions доходит до в
   assert.ok(w.sent(OWNER).some((m) => /запустить не вышло/.test(m.text) && /Actions/.test(m.text)));
   assert.ok(w.last(OWNER).reply_markup.inline_keyboard.flat().some((b) => b.callback_data?.startsWith('x:pr:')), 'запасной путь довёл до предпросмотра');
 });
+
+test('/code: повтор после сбоя, когда ветка и PR уже созданы, не падает и не плодит дубли', async () => {
+  const w = await createWorld({ cfg: { codeViaActions: true } });
+  w.gh.repos['me/site'] = { default_branch: 'main', private: true, files: { 'a.js': 'x' } };
+  w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
+  await w.say('/repo me/site');
+  await w.say('/code добавь b.js');
+  const job = w.gh.dispatches.find((x) => x.workflow === 'codejob.yml').inputs.job;
+  const raw = '@@@ COMMIT: add b\n@@@ SUMMARY: готово\n@@@ FILE create b.js\nconsole.log(1)\n@@@ END';
+  await w.app.code.receiveJobPart(job, 0, raw);
+  await w.app.code.finishJob({ job, n: 1, finish: 'stop', usage: null, model: 'claude-sonnet-5-5', error: null });
+  const pr = w.last(OWNER).reply_markup.inline_keyboard.flat().find((b) => b.callback_data?.startsWith('x:pr:')).callback_data;
+  await w.press(pr);
+  assert.match(w.last(OWNER).text, /Pull Request создан/);
+  assert.equal(w.gh.prs.length, 1);
+
+  // как будто прошлая попытка оборвалась уже после создания ветки и PR: черновик снова «готов», нажимаем ещё раз
+  const draftId = pr.split(':')[2];
+  await w.store.updateDraft(draftId, { status: 'ready' });
+  await w.press(pr);
+  assert.match(w.last(OWNER).text, /Pull Request создан: https:\/\/github\.com\/me\/site\/pull\/1/, 'взят уже открытый PR');
+  assert.equal(w.gh.prs.length, 1, 'второй PR не создан');
+  assert.ok(w.gh.refs.some((r) => r.kind === 'update'), 'ветка передвинута на свежий коммит, а не создана заново');
+  assert.equal((await w.store.getDraft(draftId)).status, 'published');
+});
