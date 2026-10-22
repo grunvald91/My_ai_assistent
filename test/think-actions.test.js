@@ -584,7 +584,7 @@ test('endpoints/diag: только владельцу; показывает за
   assert.ok(r.stuck_updates[0].age_s >= 0);
   const llm = r.journal.find((j) => j.type === 'llm');
   assert.ok(llm && typeof llm.data.ms === 'number' && llm.data.model === 'claude-sonnet-5-5');
-  assert.deepEqual(r.probes.map((p) => p.name), ['ClaudeHub /v1/models', 'ClaudeHub чат (1 токен)', 'GitHub API']);
+  assert.deepEqual(r.probes.map((p) => p.name), ['ClaudeHub /v1/models', 'ClaudeHub чат (1 токен)', 'Запуск codejob.yml токеном бота', 'GitHub API']);
   assert.ok(r.probes.every((p) => 'ms' in p));
   const s = JSON.stringify(r);
   assert.doesNotMatch(s, /Секретн/, 'текстов переписки в отчёте нет');
