@@ -53,6 +53,8 @@ export const DEFAULTS = {
   // Ответ ИИ останавливаем на этой секунде вызова и отдаём написанное с кнопкой «Продолжить», чтобы не потерять его целиком.
   richMessages: true, // ответы владельцу — Rich-сообщениями Telegram (Bot API 10.1+): таблицы, цитаты, код, до 32768 символов; при отказе — обычным HTML
   // Проверено на ClaudeHub (scripts/probe-media.mjs): какие модели читают PDF (формат Anthropic) и уверенно видят картинки
+  // Быстрые модели для /auto (первая живая из списка, если дешевле выбранной)
+  fastModels: ['claude-haiku-5-5', 'claude-haiku-4.5', 'gemini-flash-3.8'],
   pdfModels: ['claude-opus-5-5', 'claude-opus-4.8'],
   visionModels: ['claude-sonnet-5-5', 'gemini-flash-3.8', 'kimi-k3', 'glm-5.3', 'claude-opus-5-5'],
   codeViaActions: true, // /code: тяжёлую часть (чтение репозитория, написание кода) делает GitHub Actions — там нет лимита ~30 с; при отказе — по шагам в самом боте
@@ -61,11 +63,12 @@ export const DEFAULTS = {
 };
 
 // Меню команд владельца. Менять список — поднимай COMMANDS_VERSION: бот сам обновит меню.
-export const COMMANDS_VERSION = 7;
+export const COMMANDS_VERSION = 8;
 export const OWNER_COMMANDS = [
   ['start', 'Начало и справка'],
   ['model', 'Выбрать модель ИИ'],
   ['think', 'Уровень размышлений ИИ'],
+  ['auto', 'Автоподбор модели: простые вопросы — быстрой'],
   ['post', 'Подготовить пост в канал'],
   ['channels', 'Мои каналы и их стиль'],
   ['memory', 'Что я помню'],

@@ -40,6 +40,7 @@ export function createCommands(D, mods) {
     '<b>Основное</b>\n' +
     '/model — выбрать модель ИИ\n' +
     '/think — уровень размышлений: выкл / низкий / средний / высокий\n' +
+    '/auto — автоподбор модели: простые вопросы отвечает быстрая дешёвая, сложные — выбранная\n' +
     '/post — пост в канал (пришли фото и описание)\n' +
     '📎 Пришли фото или файл (PDF, Word, Excel, PowerPoint, текст, код) с вопросом в подписи — разберу. Без подписи — напиши вопрос следом. Для поста: подпись со словом «пост».\n' +
     '/channels — каналы и их стиль\n' +
@@ -102,6 +103,8 @@ export function createCommands(D, mods) {
         return model(msg, chat, arg);
       case 'think':
         return think(chatId, arg);
+      case 'auto':
+        return auto(chatId, arg);
       case 'memory':
         return memory(msg);
       case 'remember':
@@ -268,6 +271,28 @@ export function createCommands(D, mods) {
     await store.setSetting('think', level);
     await out.sendHtml(chatId, `🧠 Уровень размышлений: ${THINK_TEXT[level]}`);
     return true;
+  }
+
+  // ───────── /auto ─────────
+
+  async function autoPanel(chatId, editMsgId) {
+    const on = (await store.getSetting('auto')) === '1';
+    const html =
+      `⚡ <b>Автоподбор модели</b>: ${on ? '🟢 включён' : '⚪ выключен'}\n\n` +
+      'Включён: на короткие простые вопросы («что такое…», «какая столица…») отвечает быстрая и дешёвая модель. ' +
+      'Всё сложное — код, анализ, длинные просьбы, файлы и фото, а также когда включены размышления (/think) — отвечает модель, выбранная в /model.\n\n' +
+      'Когда ответила быстрая, под ответом написано об этом, и есть кнопка «Ответить сильной» — повторит вопрос выбранной моделью.\n\n' +
+      'Выключен: всегда отвечает выбранная модель.';
+    return show(chatId, editMsgId, html, kb([[{ text: on ? '⚪ Выключить' : '🟢 Включить', callback_data: 'au:' + (on ? 'off' : 'on'), style: on ? undefined : 'success' }]]));
+  }
+
+  async function auto(chatId, arg) {
+    const a = String(arg ?? '').trim().toLowerCase();
+    if (!a) return autoPanel(chatId);
+    if (['on', 'вкл', 'включить', 'да'].includes(a)) await store.setSetting('auto', '1');
+    else if (['off', 'выкл', 'выключить', 'нет'].includes(a)) await store.setSetting('auto', null);
+    else return out.sendHtml(chatId, 'Так: <code>/auto вкл</code> или <code>/auto выкл</code> — или нажми кнопки: /auto').then(() => true);
+    return autoPanel(chatId);
   }
 
   // ───────── память ─────────
@@ -479,6 +504,12 @@ export function createCommands(D, mods) {
         /* сообщение могло устареть — не страшно */
       }
       return;
+    }
+
+    if (kind === 'au') {
+      await store.setSetting('auto', a === 'on' ? '1' : null);
+      await out.answerCb(cq.id, a === 'on' ? 'Включён' : 'Выключен');
+      return autoPanel(chatId, msgId);
     }
 
     if (kind === 't') {

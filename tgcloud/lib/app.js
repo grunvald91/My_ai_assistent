@@ -296,6 +296,7 @@ export function createApp(base) {
         case 'g':
         case 't':
         case 'rc':
+        case 'au':
         case 'mem':
         case 'fa':
           return await commands.callback(cq, parts);
@@ -353,6 +354,9 @@ export function createApp(base) {
           if (parts[1] === 'c') {
             await out.answerCb(cq.id, 'Дописываю…');
             if (!(await chatMod.continueLast(chatId))) await out.sendHtml(chatId, 'Нечего продолжать — напиши сообщение ещё раз.');
+          } else if (parts[1] === 's') {
+            await out.answerCb(cq.id, 'Спрашиваю выбранную модель…');
+            if (!(await chatMod.askStrong(chatId))) await out.sendHtml(chatId, 'Нечего повторять — напиши сообщение ещё раз.');
           } else if (parts[1] === 'm') {
             await out.answerCb(cq.id, 'Переключаю модель…');
             if (!(await chatMod.switchAndRetry(chatId, parts.slice(2).join(':')))) await out.sendHtml(chatId, 'Нечего повторять или такой модели нет — выбери: /model');

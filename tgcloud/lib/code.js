@@ -124,6 +124,29 @@ export function createCode(D) {
   const saveJob = (job) => store.setSetting(JOB, job ? JSON.stringify(job) : null);
   const jobButton = (label) => ({ reply_markup: kb([[{ text: label, callback_data: 'x:cj', style: 'primary' }, { text: '✖️ Отмена', callback_data: 'x:cjx', style: 'danger' }]]) });
 
+  // ───────── статус задачи: четыре разных «готово» ─────────
+  // 1 отправлено в Actions → 2 код написан → 3 ты подтвердил → 4 записано в репозиторий (PR/коммит).
+  // Одно сообщение редактируется по мере продвижения, чтобы «готово» не означало «отправлено».
+
+  const STEPS = ['Отправлено в GitHub Actions', 'Код написан и проверен ботом', 'Ты подтвердил', 'Записано в репозиторий'];
+  /** done — сколько шагов завершено; now — что идёт сейчас (по умолчанию следующий); state: wait | fail | cancel */
+  function progressHtml(repoName, done, { state = 'run', note = '' } = {}) {
+    const lines = STEPS.map((s, i) => {
+      if (i < done) return `✅ ${i + 1}. ${s}`;
+      if (i === done) return state === 'fail' ? `❌ ${i + 1}. ${s}` : state === 'cancel' ? `✖️ ${i + 1}. ${s}` : state === 'wait' ? `⏸ ${i + 1}. ${s}` : `⏳ ${i + 1}. ${s}`;
+      return `▫️ ${i + 1}. ${s}`;
+    });
+    return `🧑‍💻 <b>Задача для ${escapeHtml(repoName)}</b>\n${lines.join('\n')}${note ? '\n\n' + note : ''}`;
+  }
+  async function setProgress(st, done, opts) {
+    if (!st?.msgId) return;
+    try {
+      await out.editHtml(st.chatId, st.msgId, progressHtml(st.repo, done, opts), null);
+    } catch (e) {
+      console.warn('progress edit failed', e?.message ?? e); // статус — удобство: сбой правки ничего не ломает
+    }
+  }
+
   // ───────── тяжёлая часть в GitHub Actions ─────────
   // Обработчик бота живёт ~30 с, GitHub Actions — до 30 минут. Бот только запускает workflow codejob.yml в СВОЁМ репозитории
   // (для этого токену нужно право Actions: Read and write и на репозиторий бота); результат приходит обратно эндпоинтами
@@ -154,12 +177,14 @@ export function createCode(D) {
         await store.setSetting('cj:' + id, null);
         throw e;
       }
-      await out.sendHtml(
+      const sent = await out.sendHtml(
         chatId,
-        `🚀 Задача для <code>${escapeHtml(repo.full_name)}</code> ушла в GitHub Actions: там нет лимита в 30 секунд, поэтому код пишется целиком. Обычно это 1–5 минут. Результат придёт сюда предпросмотром, ничего не отправляется без твоей кнопки.
-` +
-          `<a href="https://github.com/${escapeHtml(D.selfRepo)}/actions/workflows/${WORKFLOW}">Ход выполнения</a>`,
+        progressHtml(repo.full_name, 1, { note: `Код пишется в GitHub Actions — там нет лимита в 30 секунд, обычно 1–5 минут. Дальше пришлю предпросмотр; в репозиторий ничего не попадёт без твоей кнопки.\n<a href="https://github.com/${escapeHtml(D.selfRepo)}/actions/workflows/${WORKFLOW}">Ход выполнения</a>` }),
       );
+      if (sent?.message_id) {
+        const cur = safeJson(await store.getSetting('cj:' + id), null);
+        if (cur) await store.setSetting('cj:' + id, JSON.stringify({ ...cur, statusMsg: sent.message_id }));
+      }
       return true;
     } catch (e) {
       if (e instanceof GithubError) {
@@ -186,8 +211,11 @@ export function createCode(D) {
       for (let i = 0; i < n; i++) await store.setSetting(`cj:${job}:${i}`, null);
       await store.setSetting('cj:' + job, null);
     };
+    const st = meta.statusMsg ? { chatId: meta.chatId, msgId: meta.statusMsg, repo: meta.repo.full_name } : null;
+    let finished = false; // дошли до предпросмотра
     try {
       if (error) {
+        await setProgress(st, 1, { state: 'fail', note: 'GitHub Actions не справился.' });
         await out.sendHtml(meta.chatId, `❌ Задача в GitHub Actions не удалась: ${escapeHtml(truncate(error, 600))}
 
 Можно повторить: /code`);
@@ -197,6 +225,7 @@ export function createCode(D) {
       for (let i = 0; i < n; i++) {
         const part = await store.getSetting(`cj:${job}:${i}`);
         if (part == null) {
+          await setProgress(st, 1, { state: 'fail', note: 'Ответ дошёл не полностью.' });
           await out.sendHtml(meta.chatId, '❌ Ответ из GitHub Actions дошёл не полностью. Повтори задачу: /code');
           return true;
         }
@@ -207,10 +236,12 @@ export function createCode(D) {
         await store.addUsage(dayKey(D.now(), core.tz()), usage.in ?? 0, usage.out ?? 0, costUsd(m, usage.in ?? 0, usage.out ?? 0));
       }
       const tree = await gh().getTree(meta.repo.full_name, meta.branch);
-      await prepareDraft(meta.chatId, { task: meta.task, repo: meta.repo, branch: meta.branch, tree, text, finish });
+      finished = (await prepareDraft(meta.chatId, { task: meta.task, repo: meta.repo, branch: meta.branch, tree, text, finish, status: st })) === true;
+      if (!finished) await setProgress(st, 1, { state: 'fail', note: 'Из ответа модели не получилось собрать изменения.' });
       return true;
     } catch (e) {
       if (e instanceof GithubError || e instanceof LlmError || e instanceof LimitError) {
+        await setProgress(st, 1, { state: 'fail', note: 'Не удалось подготовить предпросмотр.' });
         await out.sendHtml(meta.chatId, escapeHtml(e.userMessage));
         return true;
       }
@@ -355,7 +386,8 @@ export function createCode(D) {
     return true;
   }
 
-  async function prepareDraft(chatId, { task, repo, branch, tree, text, finish }) {
+  /** true — предпросмотр отправлен; иначе причина уже показана. */
+  async function prepareDraft(chatId, { task, repo, branch, tree, text, finish, status = null }) {
     const ch = parseChanges(text);
     const existing = new Set(tree.files.map((f) => f.path));
     const problems = [];
@@ -390,19 +422,19 @@ export function createCode(D) {
     }
     if (total > MAX_TOTAL_BYTES) {
       await out.sendHtml(chatId, `⚠️ Изменения слишком большие (${kb1(total)} > ${kb1(MAX_TOTAL_BYTES)}). Разбей задачу на части.`);
-      return;
+      return false;
     }
 
     const secrets = [...new Set(files.flatMap((f) => findSecrets(f.content)))];
     if (secrets.length) {
       await out.sendHtml(chatId, `🛑 В коде нашлись секреты (${escapeHtml(secrets.join(', '))}) — такое я не коммичу. Переформулируй задачу: ключи должны браться из переменных окружения.`);
       await D.log('code_secret_blocked', chatId, { repo: repo.full_name });
-      return;
+      return false;
     }
 
     if (!files.length && !deletes.length) {
       await out.sendHtml(chatId, '🤷 Изменений нет.\n\n' + escapeHtml(ch.summary || truncate(text, 1500) || 'Модель не предложила правок.') + (problems.length ? '\n\n⚠️ ' + escapeHtml(problems.join('; ')) : ''));
-      return;
+      return false;
     }
 
     const warnings = [...problems];
@@ -417,6 +449,7 @@ export function createCode(D) {
       summary: ch.summary,
       files: files.map(({ path, action, content }) => ({ path, action, content })),
       deletes,
+      status,
     };
     const id = uid();
     await store.createDraft({ id, kind: 'code', brief: truncate(task, 2000, ''), text: JSON.stringify(plan), format: 'md', status: 'ready', rev: 1, createdAt: D.now() });
@@ -439,6 +472,8 @@ export function createCode(D) {
       { reply_markup: kb(rows) },
     );
     await D.log('code_draft', chatId, { id, repo: repo.full_name, files: files.length });
+    await setProgress(status, 2, { state: 'wait', note: `Код готов: файлов — ${files.length + deletes.length}. <b>В репозиторий пока ничего не записано</b> — жду твою кнопку в предпросмотре ниже.` });
+    return true;
   }
 
   // ───────── просьба написать код обычным сообщением ─────────
@@ -681,6 +716,7 @@ export function createCode(D) {
 
     if (act === 'cx') {
       await store.updateDraft(id, { status: 'canceled' });
+      await setProgress(plan.status, 2, { state: 'cancel', note: 'Отменено тобой — в репозитории ничего не менялось.' });
       await out.answerCb(cq.id, 'Отменено');
       await out.dropButtons(chatId, cq.message.message_id);
       return;
@@ -701,6 +737,7 @@ export function createCode(D) {
     if (!(await store.claimDraft(d.id, 'ready', 'publishing'))) return out.answerCb(cq.id, 'Уже выполняется', true);
     await out.answerCb(cq.id, 'Отправляю…');
     await out.dropButtons(chatId, cq.message.message_id);
+    await setProgress(plan.status, 3, { note: 'Записываю в репозиторий…' });
     const g = gh();
     try {
       // защита ещё раз, по каноническому имени
@@ -753,8 +790,10 @@ export function createCode(D) {
       await store.updateDraft(d.id, { status: 'published', publishedAt: D.now(), link: truncate(resultHtml.replace(/<[^>]+>/g, ''), 300, '') });
       await D.log('code_pushed', chatId, { repo: name, mode, files: plan.files.length + plan.deletes.length });
       await out.sendHtml(chatId, resultHtml);
+      await setProgress(plan.status, 4, { note: 'Готово: изменения записаны в репозиторий.' });
     } catch (e) {
       await store.updateDraft(d.id, { status: 'ready' });
+      await setProgress(plan.status, 3, { state: 'fail', note: 'Запись не удалась — изменения сохранены, нажми кнопку ещё раз.' });
       if (e instanceof GithubError) {
         await out.sendHtml(chatId, escapeHtml(e.userMessage) + '\n\nИзменения сохранены — нажми кнопку ещё раз, когда исправишь причину.', { reply_markup: kb([[{ text: '🔁 Повторить', callback_data: `x:${mode}:${d.id}` }]]) });
         return;

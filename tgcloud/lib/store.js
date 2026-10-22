@@ -117,6 +117,11 @@ export async function deleteUpTo(chatKey, id) {
   await db.delete(T.messages).where(and(eq(T.messages.chatKey, chatKey), lt(T.messages.id, id + 1))).run();
 }
 
+/** Удаляет одно сообщение истории (например, ответ быстрой модели перед повтором сильной). */
+export async function deleteMessage(chatKey, id) {
+  await db.delete(T.messages).where(and(eq(T.messages.chatKey, chatKey), eq(T.messages.id, id))).run();
+}
+
 export async function clearMessages(chatKey) {
   await db.delete(T.messages).where(eq(T.messages.chatKey, chatKey)).run();
 }

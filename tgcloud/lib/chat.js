@@ -4,6 +4,7 @@ import { ownerSystem, groupSystem } from './persona.js';
 import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
+import { isSimple, pickFast } from './auto.js';
 import { renderChunks, richMarkdown } from './format.js';
 import { displayName, escapeHtml, randomDraftId, truncate, uid } from './util.js';
 
@@ -151,7 +152,7 @@ export function createChat(D) {
     return respondOwner(chatId, q || undefined, { media, question: q });
   }
 
-  async function respondOwner(chatId, text, { cont = false, media = null, question } = {}) {
+  async function respondOwner(chatId, text, { cont = false, media = null, question, strong = false } = {}) {
     // срок считаем от начала ЭТОГО вызова бота (запоминаем сразу: параллельный апдейт может переписать D.t0)
     const t0 = D.t0 ?? Date.now();
     const deadline = cfg.cutAfterMs ? t0 + cfg.cutAfterMs : null;
@@ -195,6 +196,20 @@ export function createChat(D) {
       else messages.push({ role: 'user', content });
       // файл не режем и заранее не отказываем: если модели не хватит окна, она сама вернёт ошибку — объясним её (см. replyError)
     }
+    // /auto: простой вопрос без файлов — быстрой дешёвой моделью (и честно говорим об этом)
+    let fastNote = '';
+    let strongId = null;
+    if (!media && !cont && !strong && !repo?.text && (await store.getSetting('auto')) === '1' && (await core.thinkLevel()) === 'off') {
+      const asked = text ?? (await lastUserText(key, chat));
+      if (isSimple(asked)) {
+        const fast = pickFast(await core.getModels(), model, cfg.fastModels);
+        if (fast) {
+          strongId = model.id;
+          model = fast;
+          fastNote = `⚡ Вопрос простой — ответила быстрая модель ${fast.id}. Выбранная тобой — ${strongId}.`;
+        }
+      }
+    }
     if (cont) messages.push({ role: 'user', content: CONTINUE_PROMPT });
 
     const streamer = draftStreamer(chatId);
@@ -215,6 +230,7 @@ export function createChat(D) {
     else if (res.finish === 'length') body += '\n\n…(ответ обрезан лимитом длины)';
     if (res.error) body += '\n\n⚠️ Связь с моделью оборвалась — ответ может быть неполным.';
     if (mediaNote) body += `\n\nℹ️ ${mediaNote}`;
+    if (fastNote) body += `\n\n${fastNote}`;
     if (res.thinkDropped) body += '\n\nℹ️ Эта модель не приняла режим размышлений — ответила без него.';
 
     let markup;
@@ -229,6 +245,9 @@ export function createChat(D) {
 
     if (res.cut) {
       markup = { inline_keyboard: [...(markup?.inline_keyboard ?? []), [{ text: '▶️ Продолжить', callback_data: 'r:c' }]] };
+    }
+    if (strongId) {
+      markup = { inline_keyboard: [...(markup?.inline_keyboard ?? []), [{ text: ('🧠 Ответить сильной: ' + strongId).slice(0, 60), callback_data: 'r:s' }]] };
     }
 
     if (repo?.text) {
@@ -263,14 +282,25 @@ export function createChat(D) {
   }
 
   /** «🔄 Повторить»: заново отвечаем на последнее сообщение владельца. */
-  async function retryLast(chatId) {
+  async function retryLast(chatId, opts = {}) {
     const chat = await store.getChat(chatId);
     if (!chat) return false;
     const hist = await store.getHistory(String(chatId), chat.summaryUpto ?? 0, 1);
     const last = hist[hist.length - 1];
     if (!last || last.role !== 'user') return false;
-    await respondOwner(chatId);
+    await respondOwner(chatId, undefined, opts);
     return true;
+  }
+
+  /** «🧠 Ответить сильной»: убираем ответ быстрой модели из истории и отвечаем на тот же вопрос выбранной моделью. */
+  async function askStrong(chatId) {
+    const chat = await store.getChat(chatId);
+    if (!chat) return false;
+    const hist = await store.getHistory(String(chatId), chat.summaryUpto ?? 0, 2);
+    const [prev, last] = hist.length === 2 ? hist : [null, hist[0]];
+    if (last?.role !== 'assistant' || prev?.role !== 'user') return false;
+    await store.deleteMessage(String(chatId), last.id);
+    return retryLast(chatId, { strong: true });
   }
 
   /** «▶️ Продолжить»: дописываем ответ, который оборвали по сроку. */
@@ -291,7 +321,7 @@ export function createChat(D) {
     await store.updateChat(chatId, { model: m.id });
     await out.sendHtml(chatId, `✅ Модель этого чата: <code>${escapeHtml(m.id)}</code>. Отвечаю на то же сообщение…`);
     // упала не первая часть, а «Продолжить» — продолжаем уже новой моделью
-    return (await retryLast(chatId)) || continueLast(chatId);
+    return (await retryLast(chatId, { strong: true })) || continueLast(chatId); // модель выбрана руками — /auto её не подменяет
   }
 
   /** Кнопки под ошибкой: модели-замены (одним нажатием), «Повторить» и копия текста для ручной вставки. */
@@ -412,5 +442,5 @@ export function createChat(D) {
     return 'ok';
   }
 
-  return { answerOwner, answerMedia, respondOwner, retryLast, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
+  return { answerOwner, answerMedia, respondOwner, retryLast, askStrong, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
 }

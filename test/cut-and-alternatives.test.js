@@ -224,7 +224,10 @@ test('/code через GitHub Actions: бот запускает codejob.yml, р
   assert.equal(d.repo, 'grunvald91/my_ai_assistent');
   assert.equal(d.inputs.repo, 'me/site');
   assert.equal(d.inputs.task, 'добавь b.js');
-  assert.match(w.last(OWNER).text, /ушла в GitHub Actions/);
+  const status = w.last(OWNER);
+  assert.match(status.text, /✅ 1\. Отправлено в GitHub Actions/);
+  assert.match(status.text, /⏳ 2\./, 'идёт шаг 2 — «готово» ещё не сказано');
+  const lastEdit = () => w.calls('editMessageText').at(-1)?.text ?? '';
 
   // Actions присылает ответ модели двумя частями и итог
   const job = d.inputs.job;
@@ -236,6 +239,12 @@ test('/code через GitHub Actions: бот запускает codejob.yml, р
   assert.match(preview.text, /b\.js/);
   assert.ok(preview.reply_markup.inline_keyboard.flat().some((b) => b.callback_data?.startsWith('x:pr:')));
   assert.equal(await w.app.code.receiveJobPart(job, 2, 'x'), false, 'задача закрыта');
+  assert.match(lastEdit(), /✅ 2\. Код написан[\s\S]*⏸ 3\. Ты подтвердил[\s\S]*ничего не записано/, 'код готов, но в репозиторий ничего не записано');
+
+  // подтверждение → запись → «готово» только в конце
+  const pr = preview.reply_markup.inline_keyboard.flat().find((b) => b.callback_data?.startsWith('x:pr:')).callback_data;
+  await w.press(pr);
+  assert.match(lastEdit(), /✅ 4\. Записано в репозиторий[\s\S]*Готово/);
 });
 
 test('/code через Actions: ошибка из Actions доходит до владельца; нет прав на запуск — подсказка и запасной путь по шагам', async () => {
@@ -247,6 +256,7 @@ test('/code через Actions: ошибка из Actions доходит до в
   const job = w.gh.dispatches.at(-1).inputs.job;
   await w.app.code.finishJob({ job, n: 0, error: 'модель недоступна' });
   assert.match(w.last(OWNER).text, /Задача в GitHub Actions не удалась: модель недоступна/);
+  assert.match(w.calls('editMessageText').at(-1).text, /✅ 1\.[\s\S]*❌ 2\./, 'в статусе сбой виден на шаге 2');
 
   w.gh.repos['grunvald91/my_ai_assistent'].actionsDenied = true;
   w.clear();
