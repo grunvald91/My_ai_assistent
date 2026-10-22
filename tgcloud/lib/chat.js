@@ -5,7 +5,6 @@ import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
 import { renderChunks, richMarkdown } from './format.js';
-import { messageTokens } from './tokens.js';
 import { displayName, escapeHtml, randomDraftId, truncate, uid } from './util.js';
 
 // ───────── «запомнить?» — предложение бота в конце ответа ─────────
@@ -194,12 +193,7 @@ export function createChat(D) {
       const i = messages.map((m) => m.role).lastIndexOf('user');
       if (i >= 0) messages[i] = { ...messages[i], content };
       else messages.push({ role: 'user', content });
-      // не режем файл молча: если не помещается в окно модели — говорим об этом
-      const need = messages.reduce((n, m) => n + messageTokens(m), 0);
-      if (model.ctx && need > model.ctx * 0.9) {
-        await out.sendHtml(chatId, `📏 Вложения вместе с перепиской — около ${Math.round(need / 1000)} тыс. токенов, а окно модели ${escapeHtml(model.id)} — ${Math.round(model.ctx / 1000)} тыс. Выбери модель с большим окном (/model) или пришли файл частями — сам ничего не режу.`);
-        return;
-      }
+      // файл не режем и заранее не отказываем: если модели не хватит окна, она сама вернёт ошибку — объясним её (см. replyError)
     }
     if (cont) messages.push({ role: 'user', content: CONTINUE_PROMPT });
 
@@ -210,7 +204,7 @@ export function createChat(D) {
     try {
       res = await core.generate({ model, messages, maxTokens: cfg.maxTokensChat, stream: true, onProgress: streamer.onProgress, think: await core.thinkLevel(), deadline });
     } catch (e) {
-      return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)) });
+      return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null });
     }
 
     const { text: clean, fact } = extractProposal(res.text.trim());
@@ -301,14 +295,16 @@ export function createChat(D) {
   }
 
   /** Кнопки под ошибкой: модели-замены (одним нажатием), «Повторить» и копия текста для ручной вставки. */
-  async function errorButtons(e, { modelId, userText }) {
+  async function errorButtons(e, { modelId, userText, needs }) {
     const rows = [];
     const kinds = ['forbidden', 'notfound', 'upstream', 'rate', 'network', 'timeout', 'bad_request', 'budget'];
     if (e instanceof LlmError && modelId && kinds.includes(e.kind)) {
       try {
         const recent = await store.recentJournal(60);
         const avoid = new Set(recent.filter((r) => r.type === 'llm_fail' && D.now() - r.ts < 900 && r.payload?.model).map((r) => r.payload.model));
-        const alts = alternatives(await core.getModels(), modelId, { avoid });
+        // с вложением предлагаем только модели, которые его поймут (иначе нажатие снова уйдёт в ту же модель)
+        const able = (m) => m.id === modelId || !needs || (needs.pdf ? cfg.pdfModels.includes(m.id) : !needs.image || m.vision || /^claude/i.test(m.id) || cfg.visionModels.includes(m.id));
+        const alts = alternatives((await core.getModels()).filter(able), modelId, { avoid });
         if (alts.length) rows.push(alts.map((m) => ({ text: '🔁 ' + m.id, callback_data: ('r:m:' + m.id).slice(0, 64) })));
       } catch (err) {
         console.warn('alternatives failed', err?.message ?? err); // кнопки замены — удобство, без них ошибка всё равно показана
@@ -326,6 +322,9 @@ export function createChat(D) {
     }
     const rows = await errorButtons(e, ctx);
     let html = escapeHtml(explain(e));
+    if (ctx.needs !== undefined && ctx.needs !== null && e instanceof LlmError && (e.kind === 'too_large' || (e.kind === 'bad_request' && /context|too long|too large|too many|maximum|exceed|limit|size|token|pages?/i.test(e.message)))) {
+      html += '\n\n📎 Похоже, дело во вложении: оно слишком большое для этой модели (окно, число страниц PDF или размер картинки). Можно взять модель с бо́льшим окном или прислать файл частями — сам бот ничего не обрезает.';
+    }
     if (rows.some((r) => r[0]?.callback_data?.startsWith('r:m:'))) html += '\n\nНажми на модель ниже — переключу чат на неё и сразу отвечу на твоё сообщение (набирать заново не нужно).';
     await out.sendHtml(chatId, html, rows.length ? { reply_markup: { inline_keyboard: rows } } : {});
   }

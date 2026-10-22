@@ -4,7 +4,67 @@
 import { inflateRaw } from './inflate.js';
 
 const dec = typeof TextDecoder === 'function' ? new TextDecoder('utf-8') : null;
-export const utf8Decode = (u8) => (dec ? dec.decode(u8) : String.fromCharCode(...u8));
+const strict = (() => {
+  try {
+    return typeof TextDecoder === 'function' ? new TextDecoder('utf-8', { fatal: true }) : null;
+  } catch {
+    return null;
+  }
+})();
+export const utf8Decode = (u8) => (dec ? dec.decode(u8) : latin(u8));
+const latin = (u8) => {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+  return s;
+};
+
+// Windows-1251: русские CSV/TXT из Excel и 1С часто в ней, а не в UTF-8
+const CP1251_HI =
+  'ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—\uFFFD™љ›њќћџ\u00A0ЎўЈ¤Ґ¦§Ё©Є«¬\u00AD®Ї°±Ііґµ¶·ё№є»јЅѕї' +
+  'АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя';
+export function cp1251Decode(u8) {
+  const parts = [];
+  let s = '';
+  for (let i = 0; i < u8.length; i++) {
+    const b = u8[i];
+    s += b < 128 ? String.fromCharCode(b) : CP1251_HI[b - 128];
+    if (s.length >= 8192) {
+      parts.push(s);
+      s = '';
+    }
+  }
+  parts.push(s);
+  return parts.join('');
+}
+
+function utf16Decode(u8, le) {
+  const parts = [];
+  let s = '';
+  for (let i = 2; i + 1 < u8.length; i += 2) {
+    s += String.fromCharCode(le ? u8[i] | (u8[i + 1] << 8) : (u8[i] << 8) | u8[i + 1]);
+    if (s.length >= 8192) {
+      parts.push(s);
+      s = '';
+    }
+  }
+  parts.push(s);
+  return parts.join('');
+}
+
+/** Текстовый файл в любой из частых кодировок: UTF-8 (с BOM и без), UTF-16 (по BOM), Windows-1251. null — не текст. */
+export function decodeText(u8) {
+  if (u8.length >= 2 && u8[0] === 0xff && u8[1] === 0xfe) return utf16Decode(u8, true);
+  if (u8.length >= 2 && u8[0] === 0xfe && u8[1] === 0xff) return utf16Decode(u8, false);
+  if (!looksLikeText(u8)) return null;
+  if (strict) {
+    try {
+      return strict.decode(u8);
+    } catch {
+      return cp1251Decode(u8); // не UTF-8 — значит, почти наверняка Windows-1251
+    }
+  }
+  return utf8Decode(u8);
+}
 
 const IMAGE_EXT = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
 const TEXT_EXT = new Set(
@@ -113,6 +173,24 @@ const textFile = (zip, name) => {
 };
 const numKey = (s) => Number(/(\d+)\.xml$/.exec(s)?.[1] ?? 0);
 
+/** Связи части OOXML (…/_rels/x.xml.rels): Id → полный путь внутри zip. */
+function rels(zip, relsPath, baseDir) {
+  const map = new Map();
+  for (const m of textFile(zip, relsPath).matchAll(/<Relationship\b[^>]*>/g)) {
+    const id = /\bId="([^"]*)"/.exec(m[0])?.[1];
+    let target = /\bTarget="([^"]*)"/.exec(m[0])?.[1];
+    if (!id || !target) continue;
+    target = target.startsWith('/') ? target.slice(1) : baseDir + target;
+    const parts = [];
+    for (const p of target.split('/')) {
+      if (p === '..') parts.pop();
+      else if (p && p !== '.') parts.push(p);
+    }
+    map.set(id, parts.join('/'));
+  }
+  return map;
+}
+
 /** Word: абзацы, табуляции, таблицы (ячейки через « | »). */
 export function docxText(bytes) {
   const zip = unzip(bytes);
@@ -131,10 +209,13 @@ export function docxText(bytes) {
   return out.replace(/ \| \n/g, ' |\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-/** PowerPoint: текст каждого слайда. */
+/** PowerPoint: текст каждого слайда в том порядке, в каком они идут в презентации. */
 export function pptxText(bytes) {
   const zip = unzip(bytes);
-  const slides = zip.names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => numKey(a) - numKey(b));
+  // порядок слайдов — в presentation.xml (номер в имени файла не меняется, когда слайды переставляют)
+  const r = rels(zip, 'ppt/_rels/presentation.xml.rels', 'ppt/');
+  let slides = [...textFile(zip, 'ppt/presentation.xml').matchAll(/<p:sldId\b[^>]*\br:id="([^"]*)"/g)].map((m) => r.get(m[1])).filter((n) => n && zip.names.includes(n));
+  if (!slides.length) slides = zip.names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => numKey(a) - numKey(b));
   if (!slides.length) throw new Error('в файле нет слайдов — это не pptx');
   return slides
     .map((n, i) => {
@@ -154,7 +235,41 @@ const colIndex = (ref) => {
   return n - 1;
 };
 
-/** Excel: каждый лист — строки через табуляцию (значения формул — последние вычисленные). */
+// встроенные форматы Excel, которые означают дату/время
+const DATE_FMT_IDS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 27, 30, 36, 45, 46, 47, 50, 57]);
+const isDateCode = (code) => /[dmyhs]/i.test(String(code).replace(/"[^"]*"|\[[^\]]*\]|\\.|_.|\*./g, '')) && !/^(general|@)$/i.test(code);
+
+/** Номера стилей ячеек (атрибут s), у которых формат — дата. */
+function dateStyles(zip) {
+  const xml = textFile(zip, 'xl/styles.xml');
+  const custom = new Map();
+  for (const m of xml.matchAll(/<numFmt\b[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"/g)) custom.set(Number(m[1]), unxml(m[2]));
+  const out = new Set();
+  const xfs = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(xml)?.[1] ?? '';
+  let i = 0;
+  for (const m of xfs.matchAll(/<xf\b[^>]*>/g)) {
+    const id = Number(/numFmtId="(\d+)"/.exec(m[0])?.[1] ?? 0);
+    if (DATE_FMT_IDS.has(id) || (custom.has(id) && isDateCode(custom.get(id)))) out.add(i);
+    i++;
+  }
+  return out;
+}
+
+const pad = (n) => String(n).padStart(2, '0');
+/** Серийный номер Excel → «ДД.ММ.ГГГГ» (и время, если оно есть). */
+export function excelDate(v, date1904 = false) {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return String(v);
+  const ms = Math.round((x - (date1904 ? -1462 : 25569)) * 86400000);
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return String(v);
+  const day = `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
+  const t = d.getUTCHours() || d.getUTCMinutes() || d.getUTCSeconds() ? ` ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}${d.getUTCSeconds() ? ':' + pad(d.getUTCSeconds()) : ''}` : '';
+  if (x < 1) return t.trim(); // только время
+  return day + t;
+}
+
+/** Excel: каждый лист — строки через табуляцию (значения формул — последние вычисленные, даты — как даты). */
 export function xlsxText(bytes) {
   const zip = unzip(bytes);
   const shared = [];
@@ -165,25 +280,41 @@ export function xlsxText(bytes) {
     shared.push(unxml(t));
   }
   const wb = textFile(zip, 'xl/workbook.xml');
-  const sheetNames = [...wb.matchAll(/<sheet\s[^>]*name="([^"]*)"/g)].map((m) => unxml(m[1]));
-  const sheets = zip.names.filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort((a, b) => numKey(a) - numKey(b));
+  const date1904 = /<workbookPr\b[^>]*date1904="(1|true)"/.test(wb);
+  const dates = dateStyles(zip);
+  // листы в порядке книги, имя ↔ файл через связи (номер в имени файла после перестановки листов не совпадает)
+  const r = rels(zip, 'xl/_rels/workbook.xml.rels', 'xl/');
+  const declared = [...wb.matchAll(/<sheet\b[^>]*>/g)].map((m) => ({ name: unxml(/\bname="([^"]*)"/.exec(m[0])?.[1] ?? ''), path: r.get(/\br:id="([^"]*)"/.exec(m[0])?.[1] ?? '') }));
+  let sheets = declared.filter((s) => s.path && zip.names.includes(s.path));
+  if (!sheets.length) {
+    // нет связей (нестандартный файл) — по номерам файлов, имена по порядку книги
+    sheets = zip.names
+      .filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
+      .sort((a, b) => numKey(a) - numKey(b))
+      .map((path, i) => ({ name: declared[i]?.name || 'Лист ' + (i + 1), path }));
+  }
   if (!sheets.length) throw new Error('в файле нет листов — это не xlsx');
   return sheets
-    .map((n, i) => {
-      const xml = textFile(zip, n);
+    .map(({ name, path }) => {
+      const xml = textFile(zip, path);
       const rows = [];
-      for (const r of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+      for (const r of xml.matchAll(/<row\b[^>]*?(?:\/>|>([\s\S]*?)<\/row>)/g)) {
+        if (!r[1]) continue; // пустая строка <row …/>
         const cells = [];
         for (const c of r[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
           const attrs = c[1];
           const body = c[2] ?? '';
           const ref = /\br="([A-Z]+\d+)"/.exec(attrs)?.[1] ?? '';
           const type = /\bt="([^"]*)"/.exec(attrs)?.[1] ?? '';
+          const style = Number(/\bs="(\d+)"/.exec(attrs)?.[1] ?? -1);
           let val = '';
           if (type === 'inlineStr') val = unxml([...body.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join(''));
           else {
             const v = /<v>([\s\S]*?)<\/v>/.exec(body)?.[1] ?? '';
-            val = type === 's' ? shared[Number(v)] ?? '' : unxml(v);
+            if (type === 's') val = shared[Number(v)] ?? '';
+            else if (type === 'b') val = v === '1' ? 'ИСТИНА' : 'ЛОЖЬ';
+            else if (!type && v !== '' && dates.has(style)) val = excelDate(v, date1904);
+            else val = unxml(v);
           }
           const idx = ref ? colIndex(ref) : cells.length;
           while (cells.length < idx) cells.push('');
@@ -191,7 +322,7 @@ export function xlsxText(bytes) {
         }
         if (cells.some((v) => v !== '')) rows.push(cells.join('\t'));
       }
-      return `── Лист «${sheetNames[i] ?? 'Лист ' + (i + 1)}» ──\n${rows.join('\n')}`;
+      return `── Лист «${name}» ──\n${rows.join('\n')}`;
     })
     .join('\n\n');
 }

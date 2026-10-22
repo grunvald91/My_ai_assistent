@@ -125,16 +125,33 @@ export function parseIdList(s) {
 }
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-/** Байты → base64 (btoa/Buffer в изоляте не гарантированы). */
+let PAIRS = null; // 12 бит → 2 символа: вдвое меньше операций на байт
+/** Байты → base64 (btoa/Buffer в изоляте не гарантированы). Быстрый путь: таблица пар и сборка кусками. */
 export function base64Encode(bytes) {
-  let out = '';
-  for (let i = 0; i < bytes.length; i += 3) {
-    const a = bytes[i];
-    const b = i + 1 < bytes.length ? bytes[i + 1] : 0;
-    const c = i + 2 < bytes.length ? bytes[i + 2] : 0;
-    out += B64[a >> 2] + B64[((a & 3) << 4) | (b >> 4)];
-    out += i + 1 < bytes.length ? B64[((b & 15) << 2) | (c >> 6)] : '=';
-    out += i + 2 < bytes.length ? B64[c & 63] : '=';
+  if (!PAIRS) {
+    PAIRS = new Array(4096);
+    for (let i = 0; i < 4096; i++) PAIRS[i] = B64[i >> 6] + B64[i & 63];
   }
-  return out;
+  const n = bytes.length;
+  const full = n - (n % 3);
+  const chunks = [];
+  let part = [];
+  for (let i = 0; i < full; i += 3) {
+    const v = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+    part.push(PAIRS[v >> 12] + PAIRS[v & 4095]);
+    if (part.length === 8192) {
+      chunks.push(part.join(''));
+      part = [];
+    }
+  }
+  if (n - full === 1) {
+    const a = bytes[full];
+    part.push(B64[a >> 2] + B64[(a & 3) << 4] + '==');
+  } else if (n - full === 2) {
+    const a = bytes[full];
+    const b = bytes[full + 1];
+    part.push(B64[a >> 2] + B64[((a & 3) << 4) | (b >> 4)] + B64[(b & 15) << 2] + '=');
+  }
+  chunks.push(part.join(''));
+  return chunks.join('');
 }

@@ -337,16 +337,17 @@ test('пост: стиль и примеры канала попадают в п
   assert.match(sys, /Всем привет, сегодня про деньги/);
 });
 
-test('пост: альбом из нескольких фото — «Готово» собирает все, подпись у первого фото', async () => {
+test('пост: альбом из нескольких фото — «Пост в канал» собирает все, подпись у первого фото', async () => {
   const w = await createWorld();
   await addChannel(w);
   w.llmReplies.push('Подпись к альбому');
   await w.photo('A1', { caption: 'пост про новую коллекцию', group: 'g1' });
   await w.photo('A2', { group: 'g1' });
   await w.photo('A3', { group: 'g1' });
-  assert.equal(w.llmCalls.length, 0, 'пока не нажали «Готово» — не генерируем');
+  assert.equal(w.llmCalls.length, 0, 'пока не нажали кнопку — не генерируем');
   assert.equal(w.sent(OWNER).filter((m) => /Получаю альбом/.test(m.text)).length, 1, 'подсказка одна на весь альбом');
   const go = w.last(OWNER).reply_markup.inline_keyboard[0][0].callback_data;
+  assert.equal(go, 'a:p', 'подпись «пост…» — первой идёт кнопка поста');
   await w.press(go);
   await w.press(go);
   assert.equal(w.llmCalls.length, 1, 'двойной клик не плодит генерации');

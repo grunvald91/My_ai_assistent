@@ -237,6 +237,12 @@ export async function addDraftPhoto(draftId, fileId, n) {
   await db.insert(T.draftPhotos).values({ draftId, fileId, n }).run();
 }
 
+/** Удаляет строки draft_photos по id (только их: параллельно могли добавиться новые). */
+export async function deleteDraftPhotos(ids) {
+  if (!ids.length) return;
+  await db.delete(T.draftPhotos).where(inArray(T.draftPhotos.id, ids)).run();
+}
+
 export async function listDraftPhotos(draftId) {
   return db
     .select()

@@ -264,6 +264,14 @@ export function createPosts(D) {
     return advance(draftId, chatId);
   }
 
+  /** Кнопка «Пост в канал» под отложенными фото: все фото — в один черновик, дальше обычный путь (канал → описание). */
+  async function fromPhotos(chatId, fileIds, brief = '') {
+    const draftId = uid();
+    await store.createDraft({ id: draftId, kind: 'post', status: 'new', brief: brief || null, createdAt: D.now() });
+    for (let i = 0; i < fileIds.length; i++) await store.addDraftPhoto(draftId, fileIds[i], i);
+    return advance(draftId, chatId);
+  }
+
   /** Фото собраны: определяем канал и описание, дальше — генерация. */
   async function advance(draftId, chatId) {
     const draft = await store.getDraft(draftId);
@@ -498,5 +506,5 @@ export function createPosts(D) {
     }
   }
 
-  return { startPost, onPhoto, advance, onState, postCallback, channelCallback, showChannels, onChannelMembership, sendPreview, generatePost, deliver };
+  return { startPost, onPhoto, fromPhotos, advance, onState, postCallback, channelCallback, showChannels, onChannelMembership, sendPreview, generatePost, deliver };
 }

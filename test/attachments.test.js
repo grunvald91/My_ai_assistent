@@ -62,7 +62,7 @@ test('альбом: бот отвечает один раз, подпись ал
   await w.photo('AL1', { group: 'gg', caption: 'Сравни' });
   await w.photo('AL2', { group: 'gg' });
   await w.photo('AL3', { group: 'gg' });
-  assert.equal(w.sent(OWNER).filter((m) => /Принял/.test(m.text)).length, 1);
+  assert.equal(w.sent(OWNER).filter((m) => /Получаю альбом/.test(m.text)).length, 1);
   assert.equal(w.llmCalls.length, 0);
   w.llmReplies.push('Разница в цвете.');
   await w.press('a:go');
@@ -118,13 +118,56 @@ test('фото с подписью «пост…» по-прежнему идё�
   assert.ok(!w.last(OWNER)?.text?.includes('Принял'));
 });
 
-test('не влезает в окно модели — не режем, а говорим', async () => {
+test('модель отказала из-за размера вложения — объясняем и предлагаем только модели, которые его поймут', async () => {
   const w = await createWorld();
-  await w.store.setSetting('models_cache', JSON.stringify([{ id: 'claude-sonnet-5-5', name: 'S', provider: 'Claude', down: false, priceIn: 3, priceOut: 15, ctx: 2000, vision: true, maxOut: 4000, thinking: true }]));
-  await w.store.setSetting('models_ts', String(w.now));
-  await w.doc('BIG', { name: 'big.txt', bytes: 'слово '.repeat(5000), caption: 'перескажи' });
-  assert.equal(w.llmCalls.length, 0);
-  assert.match(w.last(OWNER).text, /не режу/);
+  w.llmReplies.push({ status: 400, body: { error: { message: 'prompt is too long: 250000 tokens > 200000 maximum' } } });
+  await w.doc('BIG', { name: 'big.pdf', mime: 'application/pdf', bytes: '%PDF-1.4 /Type /Page /Type /Pages', caption: 'перескажи' });
+  const m = w.last(OWNER);
+  assert.match(m.text, /слишком большое для этой модели/);
+  const alts = btns(m).filter((b) => b.callback_data?.startsWith('r:m:')).map((b) => b.callback_data.slice(4));
+  assert.ok(alts.every((id) => ['claude-opus-5-5', 'claude-opus-4.8'].includes(id)), 'для PDF — только модели, читающие PDF: ' + alts);
+});
+
+test('альбом: фото, пришедшие одновременно, не теряются', async () => {
+  const w = await createWorld();
+  await w.say('привет');
+  w.clear?.();
+  await Promise.all(['B1', 'B2', 'B3', 'B4'].map((id) => w.photo(id, { group: 'par' })));
+  w.llmReplies.push('ok');
+  await w.press('a:go');
+  const u = lastUser(w.llmCalls.at(-1));
+  assert.equal(u.content.filter((p) => p.type === 'image_url').length, 4);
+});
+
+test('«Не надо» забывает вложение: следующий текст — обычное сообщение', async () => {
+  const w = await createWorld();
+  await w.photo('N1');
+  await w.press('a:x');
+  w.llmReplies.push('Привет!');
+  await w.say('привет');
+  assert.equal(typeof lastUser(w.llmCalls.at(-1)).content, 'string');
+});
+
+test('файл в Windows-1251 читается по-русски', async () => {
+  const w = await createWorld();
+  w.llmReplies.push('ok');
+  await w.doc('W1', { name: 'выгрузка.csv', bytes: [0xd6, 0xe5, 0xed, 0xe0, 0x3b, 0x31, 0x30], caption: 'что тут' });
+  const u = lastUser(w.llmCalls.at(-1));
+  assert.match(typeof u.content === 'string' ? u.content : u.content[0].text, /Цена;10/);
+});
+
+test('«Пост в канал» из нескольких отложенных фото — один черновик и один вопрос', async () => {
+  const w = await createWorld();
+  await w.store.upsertChannel({ chatId: -100777, title: 'Канал', username: 'k' }, w.now);
+  await w.photo('Q1');
+  await w.photo('Q2');
+  const before = w.sent(OWNER).length;
+  await w.press('a:p');
+  const asks = w.sent(OWNER).slice(before).filter((m) => /описание/.test(m.text ?? ''));
+  assert.equal(asks.length, 1, 'вопрос про описание — один раз');
+  const st = (await w.store.getChat(OWNER)).state;
+  assert.match(st, /^post_brief:/);
+  assert.equal((await w.store.listDraftPhotos(st.slice('post_brief:'.length))).length, 2, 'оба фото в одном черновике');
 });
 
 test('неподдерживаемый и слишком большой файл — понятное объяснение', async () => {

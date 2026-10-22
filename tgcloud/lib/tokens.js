@@ -17,8 +17,8 @@ export function estimateTokens(s) {
 /** Токены одного сообщения чата: текст + небольшой служебный довесок. */
 export function messageTokens(m) {
   if (Array.isArray(m.content)) {
-    // части: текст по длине, картинка ~1500, документ по размеру base64 (грубо 1 токен на 3 байта)
-    return m.content.reduce((n, p) => n + (p?.type === 'image_url' ? 1500 : p?.type === 'document' ? Math.ceil((p.data?.length ?? 0) * 0.25) : estimateTokens(p?.text ?? '')), 4);
+    // части: текст по длине, картинка ~1500, PDF ~2500 на страницу (текст + изображение страницы); страниц не нашли — считаем 10
+    return m.content.reduce((n, p) => n + (p?.type === 'image_url' ? 1500 : p?.type === 'document' ? 2500 * (p.pages || 10) : estimateTokens(p?.text ?? '')), 4);
   }
   return estimateTokens(m.content ?? m.text ?? '') + 4;
 }

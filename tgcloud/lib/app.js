@@ -152,9 +152,9 @@ export function createApp(base) {
     // фото и файлы: в режиме поста (или с подписью «пост…») — материал для поста, иначе — разбор моделью
     if (msg.photo || msg.document) {
       const inPost = chat.state?.startsWith('post_brief:');
-      // остальные фото альбома идут туда же, куда первое (его черновик уже есть)
-      const albumOfPost = !!msg.photo && !!msg.media_group_id && !!(await store.getDraft('g' + msg.media_group_id));
-      const wantsPost = !!msg.photo && (inPost || albumOfPost || POST_INTENT.test(msg.caption ?? ''));
+      // альбом всегда собираем в одном месте (его фото приходят параллельно, подпись — только у одного),
+      // а «Разобрать» или «Пост в канал» выбирается кнопкой, когда всё загрузится
+      const wantsPost = !!msg.photo && (inPost || (!msg.media_group_id && POST_INTENT.test(msg.caption ?? '')));
       if (wantsPost) {
         let c = chat;
         if (chat.state && !inPost) {
@@ -301,6 +301,11 @@ export function createApp(base) {
         case 'a': {
           const chatId = cq.message.chat.id;
           await out.dropButtons(chatId, cq.message.message_id);
+          if (parts[1] === 'x') {
+            await D.attach.drop();
+            await out.answerCb(cq.id, 'Забыл вложение');
+            return undefined;
+          }
           const items = await D.attach.take();
           if (!items) {
             await out.answerCb(cq.id, 'Вложение устарело — пришли ещё раз', true);
@@ -309,9 +314,10 @@ export function createApp(base) {
           if (parts[1] === 'p') {
             // «Пост в канал»: фото уходит в тот же поток, что и фото с подписью «пост»
             await out.answerCb(cq.id, 'Делаю пост…');
-            const photo = items.filter((i) => i.photo);
-            for (const it of photo) await posts.onPhoto({ chat: cq.message.chat, message_id: cq.message.message_id, photo: [{ file_id: it.file_id }] }, await store.getChat(chatId));
-            return undefined;
+            const photos = items.filter((i) => i.photo).map((i) => i.file_id);
+            if (!photos.length) return void (await out.sendHtml(chatId, 'Для поста нужны фото, а тут только файлы.'));
+            await store.setState(chatId, null);
+            return await posts.fromPhotos(chatId, photos, await D.attach.takeCaption());
           }
           await out.answerCb(cq.id, 'Смотрю…');
           return await chatMod.answerMedia(chatId, await D.attach.takeCaption(), items);

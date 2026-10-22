@@ -8,13 +8,27 @@
 //    остальное бот сам превращает в текст и вкладывает в запрос как данные, а не инструкции.
 // В истории чата остаётся только текст («📎 фото» + вопрос): байты картинок и файлов в истории не хранятся.
 
-import { classify, docxText, xlsxText, pptxText, looksLikeText, utf8Decode } from './files.js';
+import { classify, docxText, xlsxText, pptxText, decodeText } from './files.js';
 import { base64Encode, escapeHtml, safeJson } from './util.js';
 
 const TG_MAX = 20 * 1024 * 1024; // getFile отдаёт ботам файлы до 20 МБ
 const PENDING_TTL = 900;
 export const DEFAULT_QUESTION = 'Опиши, что на изображении, и выдели главное. Если это документ — коротко перескажи суть и отметь важное.';
 export const POST_INTENT = /пост|анонс|в\s+канал|опублик/i;
+
+/** Число страниц PDF (по объектам /Type /Page) — для оценки токенов, если ClaudeHub не вернёт расход. 0 — не нашли. */
+export function pdfPages(u8) {
+  let n = 0;
+  const T = [47, 84, 121, 112, 101]; // "/Type"
+  for (let i = 0; i < u8.length - 12; i++) {
+    if (u8[i] !== 47 || u8[i + 1] !== 84 || u8[i + 2] !== 121 || u8[i + 3] !== 112 || u8[i + 4] !== 101) continue;
+    let j = i + T.length;
+    while (u8[j] === 32 || u8[j] === 10 || u8[j] === 13 || u8[j] === 9) j++;
+    // "/Page" и не "/Pages"
+    if (u8[j] === 47 && u8[j + 1] === 80 && u8[j + 2] === 97 && u8[j + 3] === 103 && u8[j + 4] === 101 && u8[j + 5] !== 115) n++;
+  }
+  return n;
+}
 
 export function createAttach(D) {
   const { store, out, core, cfg } = D;
@@ -35,16 +49,26 @@ export function createAttach(D) {
 
   const label = (items) => items.map((i) => (i.photo ? 'фото' : i.name)).join(', ');
 
-  // ── ожидающие вложения
-  async function stash(items) {
-    const cur = safeJson(await store.getSetting('att'), null);
-    const fresh = cur && D.now() - cur.ts < PENDING_TTL ? cur.items : [];
-    await store.setSetting('att', JSON.stringify({ ts: D.now(), items: [...fresh, ...items] }));
+  // ── ожидающие вложения. Каждое — отдельная строка (таблица draft_photos, «черновик» PENDING):
+  // фото альбома приходят параллельными апдейтами, и запись «прочитал список → дописал → сохранил» теряла бы фото.
+  const PENDING = 'att:pending';
+  async function pendingRows() {
+    const rows = await store.listDraftPhotos(PENDING);
+    return rows.map((r) => ({ id: r.id, item: safeJson(r.fileId, null) })).filter((r) => r.item);
+  }
+  async function stash(items, order = 0) {
+    // order — message_id: фото альбома, пришедшие параллельно, встают в том порядке, в каком их отправили
+    for (const it of items) await store.addDraftPhoto(PENDING, JSON.stringify({ ...it, ts: D.now() }), order);
   }
   async function take() {
-    const cur = safeJson(await store.getSetting('att'), null);
-    await store.setSetting('att', null);
-    return cur && D.now() - cur.ts < PENDING_TTL && cur.items?.length ? cur.items : null;
+    const rows = await pendingRows();
+    await store.deleteDraftPhotos(rows.map((r) => r.id));
+    const items = rows.filter((r) => D.now() - (r.item.ts ?? 0) < PENDING_TTL).map(({ item: { ts, ...it } }) => it);
+    return items.length ? items : null;
+  }
+  async function drop() {
+    await store.deleteDraftPhotos((await pendingRows()).map((r) => r.id));
+    await store.setSetting('att_cap', null);
   }
   // последнее разобранное вложение: нужно, чтобы «Повторить», «Продолжить» и смена модели снова показали модели файл
   const takeCaption = async () => {
@@ -58,10 +82,7 @@ export function createAttach(D) {
     const v = safeJson(await store.getSetting('att_last'), null);
     return v?.items?.length ? v : null;
   };
-  const hasPending = async () => {
-    const cur = safeJson(await store.getSetting('att'), null);
-    return !!(cur && D.now() - cur.ts < PENDING_TTL && cur.items?.length);
-  };
+  const hasPending = async () => (await pendingRows()).some((r) => D.now() - (r.item.ts ?? 0) < PENDING_TTL);
 
   /** Скачивает вложения и превращает в части запроса. Ничего не режет: если не влезет в окно модели — это решает вызывающий. */
   async function build(items) {
@@ -87,7 +108,7 @@ export function createAttach(D) {
           parts.push({ type: 'image_url', image_url: { url: `data:${cls.mime};base64,${base64Encode(bytes)}` } });
           needs.image = true;
         } else if (cls.kind === 'pdf') {
-          parts.push({ type: 'document', mediaType: 'application/pdf', data: base64Encode(bytes), name: it.name });
+          parts.push({ type: 'document', mediaType: 'application/pdf', data: base64Encode(bytes), name: it.name, pages: pdfPages(bytes) });
           needs.pdf = true;
         } else if (cls.kind === 'unsupported') {
           errors.push(`«${it.name}»: ${cls.why}`);
@@ -96,8 +117,8 @@ export function createAttach(D) {
           if (cls.kind === 'docx') text = docxText(bytes);
           else if (cls.kind === 'xlsx') text = xlsxText(bytes);
           else if (cls.kind === 'pptx') text = pptxText(bytes);
-          else if (looksLikeText(bytes)) text = utf8Decode(bytes);
-          else {
+          else text = decodeText(bytes);
+          if (text == null) {
             errors.push(`«${it.name}»: не понимаю этот формат (умею фото, PDF, Word, Excel, PowerPoint и текстовые файлы)`);
             continue;
           }
@@ -157,16 +178,23 @@ export function createAttach(D) {
     // альбом приходит отдельными апдейтами, и «последнего» не узнать — копим и один раз просим подтвердить.
     // Подпись альбома запоминаем как вопрос. Одиночное вложение без подписи — тоже копим и ждём вопрос.
     if (caption) await store.setSetting('att_cap', caption);
-    await stash(items);
+    await stash(items, msg.message_id ?? 0);
     if (msg.media_group_id) {
       const r = await store.hit('attg:' + msg.media_group_id, 1, 1);
       if (!r.allowed) return true;
     }
-    const buttons = [[{ text: '🔍 Разобрать', callback_data: 'a:go', style: 'primary' }]];
-    if (postButton && items.some((i) => i.photo) && !msg.media_group_id) buttons[0].push({ text: '📣 Пост в канал', callback_data: 'a:p' });
-    await out.sendHtml(chatId, `📎 Принял${msg.media_group_id ? ' (альбом — добавляй, сколько нужно)' : ': ' + escapeHtml(label(items))}. ${caption ? 'Когда всё загрузится — нажми «Разобрать».' : 'Напиши, что с этим сделать, — или нажми «Разобрать».'}`, { reply_markup: { inline_keyboard: buttons } });
+    const forPost = POST_INTENT.test(caption);
+    const go = { text: '🔍 Разобрать', callback_data: 'a:go', ...(forPost ? {} : { style: 'primary' }) };
+    const post = { text: '📣 Пост в канал', callback_data: 'a:p', ...(forPost ? { style: 'primary' } : {}) };
+    const row = postButton && items.some((i) => i.photo) ? (forPost ? [post, go] : [go, post]) : [go];
+    const buttons = [row, [{ text: '✖️ Не надо', callback_data: 'a:x', style: 'danger' }]];
+    const head = msg.media_group_id ? '📎 Получаю альбом.' : `📎 Принял: ${escapeHtml(label(items))}.`;
+    const tail = msg.media_group_id
+      ? ' Когда все файлы загрузятся — выбери, что сделать' + (caption ? ' (подпись учту).' : ', или просто напиши вопрос.')
+      : ' Напиши, что с этим сделать, — или нажми кнопку.';
+    await out.sendHtml(chatId, head + tail, { reply_markup: { inline_keyboard: buttons } });
     return true;
   }
 
-  return { itemsOf, label, stash, take, takeCaption, hasPending, saveLast, clearLast, getLast, build, content, pickModel, onMedia };
+  return { itemsOf, label, stash, take, drop, takeCaption, hasPending, saveLast, clearLast, getLast, build, content, pickModel, onMedia };
 }
