@@ -25,7 +25,7 @@ function redPng(w = 32, h = 32) {
   const raw = Buffer.alloc((w * 3 + 1) * h);
   for (let y = 0; y < h; y++) {
     raw[y * (w * 3 + 1)] = 0;
-    for (let x = 0; x < w; x++) raw[y * (w * 3 + 1) + 1 + x * 3] = 255;
+    for (let x = 0; x < w; x++) raw[y * (w * 3 + 1) + 1 + (x < w / 2 ? x * 3 : x * 3 + 2)] = 255; // слева красный, справа синий
   }
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(w, 0);
@@ -72,7 +72,7 @@ async function call(path, body, headers) {
   }
 }
 
-const png = redPng().toString('base64');
+const png = redPng(64, 32).toString('base64');
 const pdf = tinyPdf('Probe code 4242').toString('base64');
 const auth = { Authorization: 'Bearer ' + KEY };
 const anth = { 'x-api-key': KEY, 'anthropic-version': '2023-06-01' };
@@ -82,14 +82,14 @@ const vis = (models.data ?? []).filter((m) => m.supports_vision).map((m) => m.id
 console.log('Модели с supports_vision:', vis.join(', ') || 'нет');
 console.log('Модели без supports_vision (чат):', (models.data ?? []).filter((m) => !m.supports_vision && !/image|embed|veo|tts|banana/i.test(m.id)).map((m) => m.id).join(', '));
 
-for (const model of ['claude-sonnet-5-5', 'gpt-6.1-sol', 'grok-4.7', 'gemini-flash-3.8']) {
+
+const Q = 'Назови цвета левой и правой половины картинки. Ответ: «слева X, справа Y».';
+const all = (process.env.PROBE_MODELS || 'claude-sonnet-5-5,claude-opus-5-5,claude-opus-5,claude-fable-5-1,claude-sonnet-5,claude-opus-4.8,claude-haiku-4.5,gpt-6.1-sol,gpt-6-sol,gemini-flash-3.8,grok-4.7,kimi-k3,glm-5.3').split(',');
+for (const model of all) {
   console.log(`\n== ${model}`);
-  console.log('chat/completions image_url:', await call('/v1/chat/completions', { model, max_tokens: 30, messages: [{ role: 'user', content: [{ type: 'text', text: 'Какого цвета картинка? Ответь одним словом.' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,' + png } }] }] }, auth));
+  console.log(' image_url (chat/completions):', await call('/v1/chat/completions', { model, max_tokens: 40, messages: [{ role: 'user', content: [{ type: 'text', text: Q }, { type: 'image_url', image_url: { url: 'data:image/png;base64,' + png } }] }] }, auth));
+  if (/^claude/.test(model)) {
+    console.log(' image (messages):', await call('/v1/messages', { model, max_tokens: 40, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, { type: 'text', text: Q }] }] }, anth));
+    console.log(' PDF (messages):', await call('/v1/messages', { model, max_tokens: 40, messages: [{ role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdf } }, { type: 'text', text: 'Какой код написан в документе? Только число.' }] }] }, anth));
+  }
 }
-for (const model of ['claude-sonnet-5-5', 'claude-opus-5-5']) {
-  console.log(`\n== ${model} (формат Anthropic)`);
-  console.log('messages image:', await call('/v1/messages', { model, max_tokens: 30, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, { type: 'text', text: 'Какого цвета картинка? Одним словом.' }] }] }, anth));
-  console.log('messages document(PDF):', await call('/v1/messages', { model, max_tokens: 40, messages: [{ role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdf } }, { type: 'text', text: 'Какой код написан в документе? Только число.' }] }] }, anth));
-}
-console.log('\n== PDF через chat/completions (file) для gpt-6.1-sol');
-console.log(await call('/v1/chat/completions', { model: 'gpt-6.1-sol', max_tokens: 40, messages: [{ role: 'user', content: [{ type: 'file', file: { filename: 'a.pdf', file_data: 'data:application/pdf;base64,' + pdf } }, { type: 'text', text: 'Какой код написан в документе? Только число.' }] }] }, auth));
