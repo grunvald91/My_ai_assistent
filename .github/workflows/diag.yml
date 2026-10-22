@@ -24,3 +24,10 @@ jobs:
           node scripts/write-secrets.mjs
           OWNER="${OWNER_IDS%%,*}"
           npx tgcloud run endpoints/diag '{}' --ctx "{ initData: { user: { id: ${OWNER} } } }"
+      - name: Probe handler (чужой пользователь, ничего владельцу не отправляется)
+        if: always()
+        run: |
+          npx tgcloud run handlers/message '{ message_id: 1, date: 1, chat: { id: 1, type: "private" }, from: { id: 1, first_name: "diag" }, text: "/id" }' --ctx '{ update: { update_id: 1 } }' || true
+      - name: Webhook
+        if: always()
+        run: npx tgcloud webhook || true
