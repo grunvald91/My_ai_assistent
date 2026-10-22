@@ -5,6 +5,7 @@ import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
 import { renderChunks, richMarkdown } from './format.js';
+import { messageTokens } from './tokens.js';
 import { displayName, escapeHtml, randomDraftId, truncate, uid } from './util.js';
 
 // ───────── «запомнить?» — предложение бота в конце ответа ─────────
@@ -126,6 +127,7 @@ export function createChat(D) {
 
   async function answerOwner(msg, chat, text) {
     const chatId = msg.chat.id;
+    await D.attach.clearLast(); // новое обычное сообщение: прошлое вложение к нему не относится
     await store.addMessage({ chatKey: String(chatId), role: 'user', name: null, text, ts: D.now() });
     return respondOwner(chatId, text);
   }
@@ -133,13 +135,30 @@ export function createChat(D) {
   /** Что просим у модели, когда ответ оборвали по сроку и владелец нажал «Продолжить». */
   const CONTINUE_PROMPT = 'Твой предыдущий ответ оборвался на полуслове. Продолжи ровно с того места, где он закончился: не повторяй уже написанное, не здоровайся и не поясняй — просто пиши дальше.';
 
-  async function respondOwner(chatId, text, { cont = false } = {}) {
+  /** Вложения (фото/файлы) + вопрос: скачиваем, кладём в историю только текстовый след, отвечаем с картинками/текстом файла. */
+  async function answerMedia(chatId, question, items) {
+    const att = D.attach;
+    await out.typing(chatId);
+    const media = await att.build(items);
+    const list = media.errors.map((e) => '• ' + escapeHtml(e)).join('\n');
+    if (!media.parts.length && !media.blocks.length) {
+      await out.sendHtml(chatId, '⚠️ Не получилось разобрать вложения:\n' + list);
+      return;
+    }
+    if (list) await out.sendHtml(chatId, 'Часть вложений пропустил:\n' + list);
+    const q = (question || '').trim();
+    await store.addMessage({ chatKey: String(chatId), role: 'user', name: null, text: `📎 ${att.label(items)}` + (q ? `\n${q}` : ''), ts: D.now() });
+    await att.saveLast(items, q);
+    return respondOwner(chatId, q || undefined, { media, question: q });
+  }
+
+  async function respondOwner(chatId, text, { cont = false, media = null, question } = {}) {
     // срок считаем от начала ЭТОГО вызова бота (запоминаем сразу: параллельный апдейт может переписать D.t0)
     const t0 = D.t0 ?? Date.now();
     const deadline = cfg.cutAfterMs ? t0 + cfg.cutAfterMs : null;
     const chat = await store.getChat(chatId);
     const key = String(chatId);
-    const model = await core.resolveModel(chat);
+    let model = await core.resolveModel(chat);
     const memories = await core.memoryTexts(['owner']);
     let system = ownerSystem({ name: await core.ownerName(), memories, nowSec: D.now(), tz: core.tz() });
 
@@ -151,6 +170,37 @@ export function createChat(D) {
     }
     if (repo?.text) system += repoBlock(repo.text);
     const messages = await core.contextFor({ key, chat, system });
+
+    // вложение последнего сообщения: свежее (только что пришло) или то же самое при «Повторить/Продолжить/сменить модель»
+    let q = question;
+    if (!media) {
+      const last = await D.attach.getLast();
+      if (last) {
+        media = await D.attach.build(last.items);
+        q = last.question;
+        if (!media.parts.length && !media.blocks.length) media = null;
+      }
+    }
+    let mediaNote = '';
+    if (media) {
+      const pick = await D.attach.pickModel(model, media.needs);
+      if (pick.error) {
+        await out.sendHtml(chatId, '⚠️ ' + escapeHtml(pick.error) + ' Выбери другую модель: /model');
+        return;
+      }
+      model = pick.model;
+      mediaNote = pick.note;
+      const content = D.attach.content(q, media);
+      const i = messages.map((m) => m.role).lastIndexOf('user');
+      if (i >= 0) messages[i] = { ...messages[i], content };
+      else messages.push({ role: 'user', content });
+      // не режем файл молча: если не помещается в окно модели — говорим об этом
+      const need = messages.reduce((n, m) => n + messageTokens(m), 0);
+      if (model.ctx && need > model.ctx * 0.9) {
+        await out.sendHtml(chatId, `📏 Вложения вместе с перепиской — около ${Math.round(need / 1000)} тыс. токенов, а окно модели ${escapeHtml(model.id)} — ${Math.round(model.ctx / 1000)} тыс. Выбери модель с большим окном (/model) или пришли файл частями — сам ничего не режу.`);
+        return;
+      }
+    }
     if (cont) messages.push({ role: 'user', content: CONTINUE_PROMPT });
 
     const streamer = draftStreamer(chatId);
@@ -170,6 +220,7 @@ export function createChat(D) {
     else if (res.stopped) body += '\n\n⏹ Остановлено.';
     else if (res.finish === 'length') body += '\n\n…(ответ обрезан лимитом длины)';
     if (res.error) body += '\n\n⚠️ Связь с моделью оборвалась — ответ может быть неполным.';
+    if (mediaNote) body += `\n\nℹ️ ${mediaNote}`;
     if (res.thinkDropped) body += '\n\nℹ️ Эта модель не приняла режим размышлений — ответила без него.';
 
     let markup;
@@ -362,5 +413,5 @@ export function createChat(D) {
     return 'ok';
   }
 
-  return { answerOwner, respondOwner, retryLast, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
+  return { answerOwner, answerMedia, respondOwner, retryLast, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
 }

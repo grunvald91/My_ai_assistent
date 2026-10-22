@@ -240,6 +240,8 @@ test('пост: фото без подписи → спрашивает опис
   const w = await createWorld();
   await addChannel(w);
   await w.photo('PH2');
+  assert.match(w.last(OWNER).text, /Принял/, 'без подписи фото — не пост, а вложение');
+  await w.press('a:p');
   assert.match(w.last(OWNER).text, /описание/);
   assert.equal(w.llmCalls.length, 0);
   w.llmReplies.push('Готовый текст поста');
@@ -339,7 +341,7 @@ test('пост: альбом из нескольких фото — «Готов
   const w = await createWorld();
   await addChannel(w);
   w.llmReplies.push('Подпись к альбому');
-  await w.photo('A1', { caption: 'новая коллекция', group: 'g1' });
+  await w.photo('A1', { caption: 'пост про новую коллекцию', group: 'g1' });
   await w.photo('A2', { group: 'g1' });
   await w.photo('A3', { group: 'g1' });
   assert.equal(w.llmCalls.length, 0, 'пока не нажали «Готово» — не генерируем');
@@ -366,7 +368,7 @@ test('пост: длинный текст при одном фото — фот�
   const w = await createWorld();
   await addChannel(w);
   w.llmReplies.push('Очень длинный пост. '.repeat(80));
-  await w.photo('PH9', { caption: 'тема' });
+  await w.photo('PH9', { caption: 'пост на тему весны' });
   const prev = w.calls('sendPhoto').at(-1);
   assert.equal(prev.caption, undefined);
   const txt = w.last(OWNER);

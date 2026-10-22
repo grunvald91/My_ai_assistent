@@ -104,6 +104,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
     nextMessageId: 100,
     modelFetches: 0,
     gh: { calls: [], repos: {}, prs: [], refs: [], commits: [], blobs: [], putFiles: [], dispatches: [], reruns: [] }, // заглушка GitHub (см. ниже)
+    files: new Map(), // file_id → байты для api.getFileContent
     balance: { balance: 1234.5, currency: 'RUB' },
   };
   w.advance = (s) => (w.now += s);
@@ -122,6 +123,8 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
       case 'sendPhoto':
       case 'sendDocument':
         return { message_id: ++w.nextMessageId, chat: { id: params.chat_id }, date: w.now, text: params.text };
+      case 'getFileContent':
+        return w.files.get(params.file_id ?? params) ?? new Uint8Array([255, 216, 255, 224, 0, 16]);
       case 'sendMediaGroup':
         return params.media.map(() => ({ message_id: ++w.nextMessageId, chat: { id: params.chat_id } }));
       default:
@@ -198,6 +201,15 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
       photo: [{ file_id: fileId + '_s', width: 10, height: 10 }, { file_id: fileId, width: 100, height: 100 }],
       ...(caption ? { caption } : {}), ...(group ? { media_group_id: group } : {}),
     });
+  // документ: bytes — Uint8Array/Buffer/строка (по умолчанию пустой)
+  w.doc = (fileId, { name = 'файл.txt', mime = '', bytes, caption, group, from = OWNER } = {}) => {
+    if (bytes !== undefined) w.files.set(fileId, typeof bytes === 'string' ? new TextEncoder().encode(bytes) : new Uint8Array(bytes));
+    return send('message', {
+      message_id: ++w.nextMessageId, date: w.now, chat: { id: from, type: 'private' }, from: user(from),
+      document: { file_id: fileId, file_name: name, mime_type: mime, file_size: w.files.get(fileId)?.length ?? 0 },
+      ...(caption ? { caption } : {}), ...(group ? { media_group_id: group } : {}),
+    });
+  };
   w.group = (text, { chat = -5001, from = 2002, title = 'Тестовая группа', replyTo, extra = {} } = {}) =>
     send('message', {
       message_id: ++w.nextMessageId, date: w.now, chat: { id: chat, type: 'supergroup', title }, from: user(from, 'Гость'), text,

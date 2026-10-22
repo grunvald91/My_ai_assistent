@@ -6,6 +6,7 @@
 import { createOut } from './out.js';
 import { createCore } from './core.js';
 import { createChat } from './chat.js';
+import { createAttach, POST_INTENT } from './attach.js';
 import { createPosts } from './posts.js';
 import { createBusiness } from './business.js';
 import { createReplies } from './replies.js';
@@ -29,6 +30,7 @@ export function createApp(base) {
   D.out = createOut(D);
   D.core = createCore(D);
   const { out, core } = D;
+  D.attach = createAttach(D);
   const chatMod = createChat(D);
   D.notifyOwnerOnce = chatMod.notifyOwnerOnce;
   D.draftStreamer = chatMod.draftStreamer; // стрим-черновик нужен и /code
@@ -147,19 +149,27 @@ export function createApp(base) {
     if (!(await store.getSetting('owner_name'))) await store.setSetting('owner_name', msg.from.first_name ?? '');
     await commands.ensureCommands();
 
-    // фото → поток постов (в том числе альбомы)
-    if (msg.photo) {
-      let c = chat;
-      if (chat.state && !chat.state.startsWith('post_brief:')) {
-        await store.setState(chatId, null);
-        c = { ...chat, state: null };
+    // фото и файлы: в режиме поста (или с подписью «пост…») — материал для поста, иначе — разбор моделью
+    if (msg.photo || msg.document) {
+      const inPost = chat.state?.startsWith('post_brief:');
+      // остальные фото альбома идут туда же, куда первое (его черновик уже есть)
+      const albumOfPost = !!msg.photo && !!msg.media_group_id && !!(await store.getDraft('g' + msg.media_group_id));
+      const wantsPost = !!msg.photo && (inPost || albumOfPost || POST_INTENT.test(msg.caption ?? ''));
+      if (wantsPost) {
+        let c = chat;
+        if (chat.state && !inPost) {
+          await store.setState(chatId, null);
+          c = { ...chat, state: null };
+        }
+        return posts.onPhoto(msg, c);
       }
-      return posts.onPhoto(msg, c);
+      if (chat.state) await store.setState(chatId, null);
+      return D.attach.onMedia(msg, chat, (q, items) => chatMod.answerMedia(chatId, q, items), { postButton: true });
     }
 
     const text = msg.text;
     if (!text) {
-      await out.sendHtml(chatId, 'Пока понимаю текст и фото (фото — для постов в каналы). Остальное, увы, пропускаю.');
+      await out.sendHtml(chatId, 'Понимаю текст, фото и файлы (PDF, Word, Excel, PowerPoint, текстовые). Голосовые, видео и стикеры пропускаю.');
       return;
     }
 
@@ -174,6 +184,15 @@ export function createApp(base) {
 
     if (chat.state) {
       if (await dispatchState(msg, chat)) return;
+    }
+
+    // перед этим прислали вложение без подписи — текст и есть вопрос к нему
+    if (await D.attach.hasPending()) {
+      const items = await D.attach.take();
+      if (items) {
+        await D.attach.takeCaption();
+        return chatMod.answerMedia(chatId, text, items);
+      }
     }
 
     if (await code.maybeAutoTask(chat, text)) return; // «создай ветку и залей код» без /code
@@ -279,6 +298,24 @@ export function createApp(base) {
           return await replies.callback(cq, parts.slice(1));
         case 'x':
           return await code.callback(cq, parts.slice(1));
+        case 'a': {
+          const chatId = cq.message.chat.id;
+          await out.dropButtons(chatId, cq.message.message_id);
+          const items = await D.attach.take();
+          if (!items) {
+            await out.answerCb(cq.id, 'Вложение устарело — пришли ещё раз', true);
+            return undefined;
+          }
+          if (parts[1] === 'p') {
+            // «Пост в канал»: фото уходит в тот же поток, что и фото с подписью «пост»
+            await out.answerCb(cq.id, 'Делаю пост…');
+            const photo = items.filter((i) => i.photo);
+            for (const it of photo) await posts.onPhoto({ chat: cq.message.chat, message_id: cq.message.message_id, photo: [{ file_id: it.file_id }] }, await store.getChat(chatId));
+            return undefined;
+          }
+          await out.answerCb(cq.id, 'Смотрю…');
+          return await chatMod.answerMedia(chatId, await D.attach.takeCaption(), items);
+        }
         case 'r': {
           const chatId = cq.message.chat.id;
           if (parts[1] === 'x') {

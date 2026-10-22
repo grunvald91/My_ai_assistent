@@ -95,6 +95,23 @@ const isClaude = (model) => /^claude/i.test(model);
 const DEFAULT_MAX = 16000; // /v1/messages требует max_tokens; core.js всегда передаёт своё значение
 
 /** OpenAI-сообщения → формат Anthropic: system отдельно, роли чередуются, первая — user. */
+/** Части сообщения в формат Anthropic: текст, картинка (data:URI → base64), документ (PDF). */
+function anthropicBlocks(content) {
+  const blocks = [];
+  for (const p of content) {
+    if (typeof p === 'string') blocks.push({ type: 'text', text: p });
+    else if (p?.type === 'image_url') {
+      const m = /^data:([^;]+);base64,(.*)$/s.exec(p.image_url?.url ?? '');
+      if (m) blocks.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } });
+    } else if (p?.type === 'document') blocks.push({ type: 'document', source: { type: 'base64', media_type: p.mediaType || 'application/pdf', data: p.data } });
+    else if (p?.text) blocks.push({ type: 'text', text: p.text });
+  }
+  return blocks;
+}
+
+/** Есть ли в сообщениях PDF-документы (их понимает только формат Anthropic). */
+export const hasDocument = (messages) => messages.some((m) => Array.isArray(m.content) && m.content.some((p) => p?.type === 'document'));
+
 export function toAnthropic(messages) {
   const sys = [];
   const out = [];
@@ -106,8 +123,13 @@ export function toAnthropic(messages) {
     }
     const role = m.role === 'assistant' ? 'assistant' : 'user';
     const last = out[out.length - 1];
-    if (last && last.role === role) last.content += '\n\n' + (text || '…');
-    else out.push({ role, content: text || '…' });
+    const rich = Array.isArray(m.content) && m.content.some((p) => p?.type === 'image_url' || p?.type === 'document');
+    if (last && last.role === role) {
+      if (rich || Array.isArray(last.content)) {
+        const prev = Array.isArray(last.content) ? last.content : [{ type: 'text', text: last.content }];
+        last.content = [...prev, ...(rich ? anthropicBlocks(m.content) : [{ type: 'text', text: text || '…' }])];
+      } else last.content += '\n\n' + (text || '…');
+    } else out.push({ role, content: rich ? anthropicBlocks(m.content) : text || '…' });
   }
   if (!out.length || out[0].role !== 'user') out.unshift({ role: 'user', content: '(начало переписки)' });
   return { system: sys.join('\n\n'), messages: out };
@@ -146,7 +168,8 @@ export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => 
     const late = () => new LlmError('timeout', 'модель не ответила за отведённое время', { retryable: false });
     const strip = st.strip;
     const thinkMode = THINK_MODES[st.thinkIdx];
-    const anth = isClaude(model) && !!think && thinkMode !== 'none';
+    const forceAnth = isClaude(model) && hasDocument(messages); // PDF уходит только форматом Anthropic
+    const anth = isClaude(model) && ((!!think && thinkMode !== 'none') || forceAnth);
 
     let url;
     let headers;
@@ -157,7 +180,7 @@ export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => 
       const a = toAnthropic(messages);
       body = { model, max_tokens: max, messages: a.messages, stream: !!stream };
       if (a.system) body.system = a.system;
-      const tb = thinkBody(thinkMode, think, max);
+      const tb = think && thinkMode !== 'none' ? thinkBody(thinkMode, think, max) : null;
       if (tb) {
         Object.assign(body, tb); // с thinking температуру не передаём
         thinkUsed = thinkMode;
