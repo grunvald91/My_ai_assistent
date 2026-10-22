@@ -55,6 +55,7 @@ export function createApp(base) {
 
   /** Главная точка: type — тип апдейта (имя обработчика), payload — его содержимое, ctx — второй аргумент платформы. */
   async function handle(type, payload, ctx) {
+    D.t0 = Date.now(); // начало вызова: от него считаем срок (cfg.cutAfterMs)
     const updateId = ctx?.update?.update_id;
     if (updateId != null && !(await store.beginUpdate(updateId, D.now(), cfg.updateRunLockSec))) {
       return; // дубль апдейта или он уже обрабатывается
@@ -279,9 +280,17 @@ export function createApp(base) {
           return await code.callback(cq, parts.slice(1));
         case 'r': {
           const chatId = cq.message.chat.id;
-          await out.answerCb(cq.id, 'Повторяю…');
           await out.dropButtons(chatId, cq.message.message_id);
-          if (!(await chatMod.retryLast(chatId))) await out.sendHtml(chatId, 'Нечего повторять — напиши сообщение ещё раз.');
+          if (parts[1] === 'c') {
+            await out.answerCb(cq.id, 'Дописываю…');
+            if (!(await chatMod.continueLast(chatId))) await out.sendHtml(chatId, 'Нечего продолжать — напиши сообщение ещё раз.');
+          } else if (parts[1] === 'm') {
+            await out.answerCb(cq.id, 'Переключаю модель…');
+            if (!(await chatMod.switchAndRetry(chatId, parts.slice(2).join(':')))) await out.sendHtml(chatId, 'Нечего повторять или такой модели нет — выбери: /model');
+          } else {
+            await out.answerCb(cq.id, 'Повторяю…');
+            if (!(await chatMod.retryLast(chatId))) await out.sendHtml(chatId, 'Нечего повторять — напиши сообщение ещё раз.');
+          }
           return undefined;
         }
         default:

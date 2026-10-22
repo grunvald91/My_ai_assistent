@@ -99,13 +99,14 @@ export function createCore(D) {
    * @returns {{text, usage, finish, stopped, error?, tokensIn, tokensOut}}
    * Бросает LimitError (лимиты) или LlmError (сбой ClaudeHub).
    */
-  async function generate({ model, messages, maxTokens, stream = false, onProgress, retries, think }) {
+  async function generate({ model, messages, maxTokens, stream = false, onProgress, retries, think, deadline }) {
     await assertLimits();
     const cap = maxTokens === 'max' ? model.maxOut || cfg.maxTokensFallback : maxTokens;
     const level = think && think !== 'off' && model.thinking ? think : null;
 
     // время каждого вызова — в журнал: по нему видно, где ClaudeHub тормозит или рвёт соединение
     const t0 = Date.now();
+    const dl = deadline === undefined ? (D.t0 && cfg.cutAfterMs ? D.t0 + cfg.cutAfterMs : null) : deadline; // срок вызова бота (см. cfg.cutAfterMs)
     let res;
     try {
       res = await llm.chat({
@@ -115,13 +116,14 @@ export function createCore(D) {
         stream,
         onProgress,
         retries,
+        deadline: dl,
         think: level ? { level, budget: cfg.thinkBudgets[level] } : null,
       });
     } catch (e) {
       await D.log('llm_fail', null, { model: model.id, kind: e?.kind ?? 'error', status: e?.status ?? 0, ms: Date.now() - t0 });
       throw e;
     }
-    await D.log('llm', null, { model: model.id, ms: Date.now() - t0, think: level ?? 'off', finish: res.finish ?? null, stopped: !!res.stopped });
+    await D.log('llm', null, { model: model.id, ms: Date.now() - t0, think: level ?? 'off', finish: res.finish ?? null, stopped: !!res.stopped, cut: !!res.cut });
 
     const tokensIn = res.usage?.in ?? promptTokens(messages);
     const tokensOut = res.usage?.out ?? estimateTokens(res.text);

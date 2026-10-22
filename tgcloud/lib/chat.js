@@ -3,6 +3,7 @@
 import { ownerSystem, groupSystem } from './persona.js';
 import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
+import { alternatives } from './models.js';
 import { displayName, escapeHtml, randomDraftId, truncate, uid } from './util.js';
 
 // ───────── «запомнить?» — предложение бота в конце ответа ─────────
@@ -52,12 +53,14 @@ export function createChat(D) {
     let lastLen = 0;
     let lastAt = 0;
     let lastPing = 0;
+    let pausedUntil = 0;
 
     const push = async (text) => {
       try {
         await D.api.sendMessageDraft({ chat_id: chatId, draft_id: draftId, text, can_stop: true });
       } catch (e) {
-        failed = true;
+        if (e?.code === 429) pausedUntil = Date.now() + Number(e.parameters?.retry_after ?? 2) * 1000; // flood control: просто пропускаем обновления
+        else failed = true;
       }
     };
 
@@ -68,7 +71,7 @@ export function createChat(D) {
       },
       /** Вызывается по мере прихода текста. true = пользователь нажал «Стоп». */
       async onProgress({ text, thinking }) {
-        if (failed) return false;
+        if (failed || Date.now() < pausedUntil) return false;
         const vis = visibleDraft(text);
         if (!vis) {
           // Модель размышляет: текста ещё нет. Раз в ~15 с обновляем плашку «Думаю…» (черновик живёт ~30 с)
@@ -104,7 +107,10 @@ export function createChat(D) {
     return respondOwner(chatId, text);
   }
 
-  async function respondOwner(chatId, text) {
+  /** Что просим у модели, когда ответ оборвали по сроку и владелец нажал «Продолжить». */
+  const CONTINUE_PROMPT = 'Твой предыдущий ответ оборвался на полуслове. Продолжи ровно с того места, где он закончился: не повторяй уже написанное, не здоровайся и не поясняй — просто пиши дальше.';
+
+  async function respondOwner(chatId, text, { cont = false } = {}) {
     const chat = await store.getChat(chatId);
     const key = String(chatId);
     const model = await core.resolveModel(chat);
@@ -112,13 +118,14 @@ export function createChat(D) {
     let system = ownerSystem({ name: await core.ownerName(), memories, nowSec: D.now(), tz: core.tz() });
 
     // просьба «посмотри репозиторий…» → README и главные файлы уходят модели как данные
-    const repo = D.repoContext ? await D.repoContext(text ?? (await lastUserText(key, chat))) : null;
+    const repo = D.repoContext ? await D.repoContext(cont ? '' : text ?? (await lastUserText(key, chat))) : null; // при «Продолжить» берём уже прочитанный репозиторий
     if (repo?.error) {
       await out.sendHtml(chatId, repo.html ? repo.error : escapeHtml(repo.error));
       return;
     }
     if (repo?.text) system += repoBlock(repo.text);
     const messages = await core.contextFor({ key, chat, system });
+    if (cont) messages.push({ role: 'user', content: CONTINUE_PROMPT });
 
     const streamer = draftStreamer(chatId);
     await streamer.start();
@@ -127,13 +134,14 @@ export function createChat(D) {
     try {
       res = await core.generate({ model, messages, maxTokens: cfg.maxTokensChat, stream: true, onProgress: streamer.onProgress, think: await core.thinkLevel() });
     } catch (e) {
-      return replyError(chatId, e);
+      return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)) });
     }
 
     const { text: clean, fact } = extractProposal(res.text.trim());
     let body = clean || '…';
     const saved = body;
-    if (res.stopped) body += '\n\n⏹ Остановлено.';
+    if (res.cut) body += '\n\n⏱ Остановил на полуслове: Telegram обрывает вызов бота примерно через 30 секунд. Нажми «Продолжить» — допишу с этого места.';
+    else if (res.stopped) body += '\n\n⏹ Остановлено.';
     else if (res.finish === 'length') body += '\n\n…(ответ обрезан лимитом длины)';
     if (res.error) body += '\n\n⚠️ Связь с моделью оборвалась — ответ может быть неполным.';
     if (res.thinkDropped) body += '\n\nℹ️ Эта модель не приняла режим размышлений — ответила без него.';
@@ -146,6 +154,10 @@ export function createChat(D) {
         inline_keyboard: [[{ text: '💾 Запомнить', callback_data: 'mem:y:' + pid }, { text: '✖️ Не надо', callback_data: 'mem:n:' + pid }]],
       };
       body += `\n\n💡 Запомнить: _${fact}_`;
+    }
+
+    if (res.cut) {
+      markup = { inline_keyboard: [...(markup?.inline_keyboard ?? []), [{ text: '▶️ Продолжить', callback_data: 'r:c' }]] };
     }
 
     if (repo?.text) {
@@ -165,7 +177,8 @@ export function createChat(D) {
     await store.updateChat(chatId, { lastReplyAt: D.now() });
 
     try {
-      await core.maybeSummarize(await store.getChat(chatId));
+      // сжатие истории — ещё один вызов ИИ: делаем его, только пока вызов бота «молодой» (иначе платформа оборвёт и его, и сам апдейт)
+      if (!D.t0 || Date.now() - D.t0 < (cfg.summarizeOnlyBeforeMs ?? Infinity)) await core.maybeSummarize(await store.getChat(chatId));
     } catch (e) {
       console.warn('summarize failed', e?.message ?? e); // не критично: сводка сделается в следующий раз
     }
@@ -189,13 +202,54 @@ export function createChat(D) {
     return true;
   }
 
-  async function replyError(chatId, e) {
+  /** «▶️ Продолжить»: дописываем ответ, который оборвали по сроку. */
+  async function continueLast(chatId) {
+    const chat = await store.getChat(chatId);
+    if (!chat) return false;
+    const hist = await store.getHistory(String(chatId), chat.summaryUpto ?? 0, 1);
+    if (hist[hist.length - 1]?.role !== 'assistant') return false;
+    await respondOwner(chatId, undefined, { cont: true });
+    return true;
+  }
+
+  /** Кнопка с моделью-заменой: переключаем модель чата и сразу отвечаем на то же сообщение. */
+  async function switchAndRetry(chatId, modelId) {
+    const models = await core.getModels();
+    const m = models.find((x) => x.id === modelId);
+    if (!m) return false;
+    await store.updateChat(chatId, { model: m.id });
+    await out.sendHtml(chatId, `✅ Модель этого чата: <code>${escapeHtml(m.id)}</code>. Отвечаю на то же сообщение…`);
+    return retryLast(chatId);
+  }
+
+  /** Кнопки под ошибкой: модели-замены (одним нажатием), «Повторить» и копия текста для ручной вставки. */
+  async function errorButtons(e, { modelId, userText }) {
+    const rows = [];
+    const kinds = ['forbidden', 'notfound', 'upstream', 'rate', 'network', 'timeout', 'bad_request', 'budget'];
+    if (e instanceof LlmError && modelId && kinds.includes(e.kind)) {
+      try {
+        const recent = await store.recentJournal(60);
+        const avoid = new Set(recent.filter((r) => r.type === 'llm_fail' && D.now() - r.ts < 900 && r.payload?.model).map((r) => r.payload.model));
+        const alts = alternatives(await core.getModels(), modelId, { avoid });
+        if (alts.length) rows.push(alts.map((m) => ({ text: '🔁 ' + m.id, callback_data: ('r:m:' + m.id).slice(0, 64) })));
+      } catch (err) {
+        console.warn('alternatives failed', err?.message ?? err); // кнопки замены — удобство, без них ошибка всё равно показана
+      }
+    }
+    if (e instanceof LlmError && ['rate', 'upstream', 'network'].includes(e.kind)) rows.push([{ text: '🔄 Повторить', callback_data: 'r:1' }]);
+    if (userText && userText.length <= 256) rows.push([{ text: '📋 Скопировать моё сообщение', copy_text: { text: userText } }]);
+    return rows;
+  }
+
+  async function replyError(chatId, e, ctx = {}) {
     if (!(e instanceof LlmError || e instanceof LimitError)) {
       console.error(e);
       await D.log('error', chatId, { message: String(e?.message ?? e).slice(0, 300) });
     }
-    const retryable = e instanceof LlmError && ['rate', 'upstream', 'network'].includes(e.kind);
-    await out.sendHtml(chatId, escapeHtml(explain(e)), retryable ? { reply_markup: { inline_keyboard: [[{ text: '🔄 Повторить', callback_data: 'r:1' }]] } } : {});
+    const rows = await errorButtons(e, ctx);
+    let html = escapeHtml(explain(e));
+    if (rows.some((r) => r[0]?.callback_data?.startsWith('r:m:'))) html += '\n\nНажми на модель ниже — переключу чат на неё и сразу отвечу на твоё сообщение (набирать заново не нужно).';
+    await out.sendHtml(chatId, html, rows.length ? { reply_markup: { inline_keyboard: rows } } : {});
   }
 
   // ───────── группы ─────────
@@ -281,5 +335,5 @@ export function createChat(D) {
     return 'ok';
   }
 
-  return { answerOwner, respondOwner, retryLast, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
+  return { answerOwner, respondOwner, retryLast, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
 }

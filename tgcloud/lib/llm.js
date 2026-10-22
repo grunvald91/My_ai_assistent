@@ -19,7 +19,7 @@ export class LlmError extends Error {
   constructor(kind, message, { status = 0, retryAfter = 0, retryable = false } = {}) {
     super(message);
     this.name = 'LlmError';
-    this.kind = kind; // auth | balance | forbidden | notfound | too_large | bad_request | rate | upstream | network
+    this.kind = kind; // auth | balance | forbidden | notfound | too_large | bad_request | budget | timeout | rate | upstream | network
     this.status = status;
     this.retryAfter = retryAfter;
     this.retryable = retryable;
@@ -42,6 +42,8 @@ export class LlmError extends Error {
         return '⚠️ ClaudeHub отклонил запрос (400)' + (this.message ? ': ' + this.message : '.');
       case 'budget':
         return '🧠 Модель потратила весь лимит ответа на размышления и не успела ответить. Понизь уровень: /think';
+      case 'timeout':
+        return '⏱ Модель не успела начать ответ: Telegram обрывает вызов бота примерно через 30 секунд. Так бывает у медленных моделей и при длинных размышлениях — выбери модель быстрее или понизь /think.';
       case 'rate':
         return '⏳ ClaudeHub просит подождать: слишком много запросов (429). Попробуй через минуту.';
       case 'upstream':
@@ -125,10 +127,23 @@ function thinkBody(mode, think, maxTokens) {
   return null;
 }
 
+/** Гонка с таймером срока; таймер всегда снимается. Если setTimeout в среде нет — срок проверяется только между порциями. */
+const TIMED_OUT = Symbol('timeout');
+function withDeadline(p, ms) {
+  if (typeof setTimeout !== 'function') return p;
+  let id;
+  const t = new Promise((r) => {
+    id = setTimeout(() => r(TIMED_OUT), Math.max(0, ms));
+  });
+  return Promise.race([p, t]).finally(() => clearTimeout(id));
+}
+
 export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => {}, retries = 2 }) {
   const authHeaders = () => ({ Authorization: 'Bearer ' + apiKey });
 
-  async function once({ model, messages, maxTokens, temperature, stream, onProgress, think, st }) {
+  async function once({ model, messages, maxTokens, temperature, stream, onProgress, think, st, deadline }) {
+    const left = () => (deadline ? deadline - Date.now() : Infinity);
+    const late = () => new LlmError('timeout', 'модель не ответила за отведённое время', { retryable: false });
     const strip = st.strip;
     const thinkMode = THINK_MODES[st.thinkIdx];
     const anth = isClaude(model) && !!think && thinkMode !== 'none';
@@ -164,8 +179,16 @@ export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => 
 
     let res;
     try {
-      res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      if (left() <= 0) throw late();
+      const pending = fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      if (deadline) {
+        pending.catch(() => {}); // если выиграл таймер — позднюю ошибку запроса не разбираем
+        const r = await withDeadline(pending, left());
+        if (r === TIMED_OUT) throw late();
+        res = r;
+      } else res = await pending;
     } catch (e) {
+      if (e instanceof LlmError) throw e;
       throw new LlmError('network', String(e?.message ?? e), { retryable: true });
     }
 
@@ -265,9 +288,27 @@ export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => 
     });
 
     let stopped = false;
+    let cut = false; // оборвали по сроку: платформа Telegram убивает вызов бота примерно через 30 с
     let readError = null;
     try {
-      for await (const chunk of res.body) {
+      const it = res.body[Symbol.asyncIterator]();
+      for (;;) {
+        if (deadline && left() <= 0) {
+          cut = true;
+          break;
+        }
+        const next = it.next();
+        let step;
+        if (deadline) {
+          next.catch(() => {});
+          step = await withDeadline(next, left());
+          if (step === TIMED_OUT) {
+            cut = true;
+            break;
+          }
+        } else step = await next;
+        if (step.done) break;
+        const chunk = step.value;
         parser.push(typeof chunk === 'string' ? chunk : dec.decode(chunk));
         if (streamError) break;
         if (onProgress) {
@@ -278,6 +319,14 @@ export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => 
         }
         if (done) break;
       }
+      if (cut || stopped) {
+        try {
+          const r = it.return?.();
+          r?.catch?.(() => {}); // закрываем поток, не дожидаясь
+        } catch {
+          /* поток уже закрыт */
+        }
+      }
       parser.push(dec.flush());
       parser.end();
     } catch (e) {
@@ -286,8 +335,9 @@ export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => 
 
     const err = streamError ?? (readError ? new LlmError('network', String(readError?.message ?? readError), { retryable: true }) : null);
     if (err && !text) throw err;
+    if (cut && !text.trim()) throw late();
     if (!text.trim() && !stopped) throw emptyError(finish);
-    return { text, usage, finish, stopped, error: err ?? undefined, thinkUsed };
+    return { text, usage, finish: cut ? 'cut' : finish, stopped, cut: cut || undefined, error: err ?? undefined, thinkUsed };
   }
 
   /** Пустой ответ: если упёрлись в лимит — значит всё ушло на размышления (повтор не поможет). */
@@ -332,7 +382,7 @@ export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => 
           }
         }
         const limit = opts.retries ?? retries;
-        if (!e.retryable || attempt >= limit) throw e;
+        if (!e.retryable || attempt >= limit || (opts.deadline && Date.now() >= opts.deadline - 2000)) throw e;
         const waitMs = e.retryAfter ? Math.min(e.retryAfter, 10) * 1000 : 1000 * 2 ** attempt;
         attempt++;
         await sleep(waitMs);

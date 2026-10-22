@@ -76,7 +76,7 @@ test('ошибка ClaudeHub: понятный текст и кнопка «По
   await w.say('Привет ещё');
   const err = w.last(OWNER);
   assert.match(err.text, /недоступны/);
-  assert.equal(err.reply_markup.inline_keyboard[0][0].callback_data, 'r:1');
+  assert.ok(err.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'r:1'), 'есть кнопка «Повторить»');
 
   w.llmReplies.push('Теперь работает');
   await w.press('r:1');

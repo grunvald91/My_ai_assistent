@@ -143,6 +143,11 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
       w.llmPaths.push(path);
       let r = w.llmReplies.length ? w.llmReplies.shift() : w.llmDefault;
       if (typeof r === 'function') r = r(body);
+      if (r && typeof r === 'object' && r.stall != null) {
+        // модель написала начало и «зависла» (поток больше ничего не отдаёт)
+        const head = `data: ${JSON.stringify({ choices: [{ delta: { content: r.stall } }] })}\n\n`;
+        return { ok: true, status: 200, headers: { get: () => null }, body: { async *[Symbol.asyncIterator]() { if (r.stall) yield enc.encode(head); await new Promise(() => {}); } } };
+      }
       if (r && typeof r === 'object') return jsonRes(r.status, r.body ?? { error: { message: 'err' } });
       const usage = { prompt_tokens: 100, completion_tokens: Math.max(1, Math.ceil(String(r).length / 4)) };
       if (!body.stream) return { ...jsonRes(200, { choices: [{ message: { content: r }, finish_reason: 'stop' }], usage }) };

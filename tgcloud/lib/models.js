@@ -82,3 +82,33 @@ export function costUsd(model, tokensIn, tokensOut) {
   if (!model || model.priceIn == null) return 0;
   return (tokensIn * model.priceIn + tokensOut * (model.priceOut ?? model.priceIn)) / 1e6;
 }
+
+/**
+ * Похожие модели на замену упавшей: живые, близкие по цене, по одной от провайдера (разные провайдеры падают не одновременно).
+ * avoid — id моделей, которые только что тоже падали.
+ */
+export function alternatives(models, failedId, { avoid = new Set(), count = 3 } = {}) {
+  const base = models.find((m) => m.id === failedId);
+  const price = (m) => m?.priceOut ?? m?.priceIn ?? 0;
+  const dist = (m) => (price(base) > 0 && price(m) > 0 ? Math.abs(Math.log(price(m) / price(base))) : 5);
+  const pref = (m) => {
+    const i = MODEL_PREFERENCE.indexOf(m.id);
+    return i < 0 ? 99 : i;
+  };
+  const pool = models
+    .filter((m) => !m.down && m.id !== failedId && !avoid.has(m.id))
+    .sort((a, b) => dist(a) - dist(b) || pref(a) - pref(b));
+  const out = [];
+  const seen = new Set([providerOf(failedId)]);
+  for (const m of pool) {
+    if (out.length >= count) break;
+    if (seen.has(m.provider)) continue;
+    seen.add(m.provider);
+    out.push(m);
+  }
+  for (const m of pool) {
+    if (out.length >= count) break;
+    if (!out.includes(m)) out.push(m);
+  }
+  return out;
+}
