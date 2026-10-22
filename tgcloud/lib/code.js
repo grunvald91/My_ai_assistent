@@ -98,7 +98,7 @@ export function createCode(D) {
     }
     if (!arg) {
       await store.setState(chatId, 'code_task');
-      await out.sendHtml(chatId, '🧑‍💻 Опиши задачу: что сделать в репозитории. /cancel — отмена.');
+      await out.ask(chatId, '🧑‍💻 Опиши задачу: что сделать в репозитории. /cancel — отмена.');
       return;
     }
     return runTask(chatId, arg);
@@ -237,8 +237,8 @@ export function createCode(D) {
     ].join('\n');
     const rows = tree.empty
       ? [[{ text: `⬆️ Закоммитить в ${branch}`, callback_data: 'x:main:' + id }]]
-      : [[{ text: '🌿 Ветка + Pull Request', callback_data: 'x:pr:' + id }], [{ text: `⬆️ Сразу в ${branch}`, callback_data: 'x:main:' + id }]];
-    rows.push([{ text: '📄 Показать код', callback_data: 'x:show:' + id }, { text: '✖️ Отмена', callback_data: 'x:cx:' + id }]);
+      : [[{ text: '🌿 Ветка + Pull Request', callback_data: 'x:pr:' + id, style: 'primary' }], [{ text: `⬆️ Сразу в ${branch}`, callback_data: 'x:main:' + id }]];
+    rows.push([{ text: '📄 Показать код', callback_data: 'x:show:' + id }, { text: '✖️ Отмена', callback_data: 'x:cx:' + id, style: 'danger' }]);
 
     await out.sendHtml(
       chatId,

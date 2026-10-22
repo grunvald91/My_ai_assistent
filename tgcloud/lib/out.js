@@ -1,7 +1,7 @@
 // out.js — отправка сообщений в Telegram: Markdown → HTML, разбиение на части, повтор при 429,
 // запасной вариант «простым текстом», если Telegram не принял разметку.
 
-import { renderChunks } from './format.js';
+import { renderChunks, richMarkdown, splitText } from './format.js';
 import { escapeHtml, truncate } from './util.js';
 
 const isParseError = (e) => e?.code === 400 && /parse|entit|can't find end|unsupported start tag|unclosed/i.test(e.description ?? '');
@@ -20,6 +20,7 @@ export function htmlToPlain(html) {
 
 export function createOut(D) {
   const { api } = D;
+  let richBroken = false; // платформа/Telegram сказали, что метода нет — дальше не пробуем в этом вызове
 
   /** Вызов метода Bot API с одним повтором при 429 (flood control). */
   async function call(method, params) {
@@ -43,8 +44,39 @@ export function createOut(D) {
    * opts: { chatId, text, replyTo, threadId, bizConn, markup, ephemeralTo, html }
    *   html — готовый HTML вместо Markdown (тогда делится только по длине).
    */
+  const RICH_LIMIT = 30000; // в Rich-сообщении до 32768 символов; берём с запасом на экранирование
+
+  /** Rich-сообщения: возвращает отправленные и остаток текста, который не ушёл (его отправит обычный путь). */
+  async function sendRichParts(chatId, text, markup) {
+    const parts = splitText(text, RICH_LIMIT);
+    const sent = [];
+    let i = 0;
+    for (; i < parts.length; i++) {
+      try {
+        const p = { chat_id: chatId, rich_message: { markdown: richMarkdown(parts[i]) } };
+        if (i === parts.length - 1 && markup) p.reply_markup = markup;
+        const m = await call('sendRichMessage', p);
+        sent.push(m && typeof m === 'object' ? m : { message_id: 0, chat: { id: chatId } });
+      } catch (e) {
+        if (e?.code === 404 || /method.*not.*(found|exist)|unknown method/i.test(e?.description ?? '')) richBroken = true;
+        else await D.log?.('rich_fail', chatId, { code: e?.code ?? 0, d: String(e?.description ?? e?.message ?? '').slice(0, 150) });
+        break;
+      }
+    }
+    return { sent, rest: parts.slice(i).join('\n\n') };
+  }
+
   async function sendText(opts) {
-    const { chatId, text, replyTo, threadId, bizConn, markup, ephemeralTo } = opts;
+    const { chatId, replyTo, threadId, bizConn, markup, ephemeralTo } = opts;
+    let { text } = opts;
+    // Rich-сообщение — только для простого ответа в личку (без ответа-цитаты, топиков, Business, эфемерных)
+    let preSent = [];
+    if (opts.rich && D.cfg?.richMessages && !richBroken && opts.html == null && !replyTo && !threadId && !bizConn && !ephemeralTo) {
+      const r = await sendRichParts(chatId, text, markup);
+      if (!r.rest) return r.sent;
+      preSent = r.sent;
+      text = r.rest;
+    }
     let chunks;
     if (opts.html != null) chunks = [{ html: String(opts.html).slice(0, 4096), md: htmlToPlain(opts.html).slice(0, 4096) }];
     else chunks = renderChunks(text);
@@ -84,7 +116,7 @@ export function createOut(D) {
       if (!m) throw new Error('sendText: не удалось отправить сообщение');
       sent.push(m);
     }
-    return sent;
+    return [...preSent, ...sent];
   }
 
   /** Готовый HTML (интерфейс бота: списки, подсказки, кнопки). */
@@ -94,6 +126,20 @@ export function createOut(D) {
       return await call('sendMessage', p);
     } catch (e) {
       if (isParseError(e)) return call('sendMessage', { ...p, text: truncate(htmlToPlain(html), 4096, ''), parse_mode: undefined });
+      throw e;
+    }
+  }
+
+  /**
+   * Вопрос, на который владелец ответит текстом: поле ввода открывается сразу «ответом» на это сообщение (force_reply, Bot API 10.3),
+   * плюс кнопка «Отмена». Если Telegram не принял — шлём обычным сообщением.
+   */
+  async function ask(chatId, html) {
+    const markup = { inline_keyboard: [[{ text: '✖️ Отмена', callback_data: 'r:x', style: 'danger' }]], force_reply: true };
+    try {
+      return await sendHtml(chatId, html, { reply_markup: markup });
+    } catch (e) {
+      if (e?.code === 400) return sendHtml(chatId, html);
       throw e;
     }
   }
@@ -147,5 +193,5 @@ export function createOut(D) {
     }
   }
 
-  return { call, sendText, sendHtml, editHtml, dropButtons, answerCb, typing, toOwner, escapeHtml };
+  return { call, sendText, sendHtml, ask, editHtml, dropButtons, answerCb, typing, toOwner, escapeHtml };
 }

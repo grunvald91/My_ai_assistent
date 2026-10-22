@@ -245,3 +245,14 @@ export function entitiesToHtml(text, entities) {
   for (let s = stack.length - 1; s >= 0; s--) out += closeTag(stack[s]);
   return out;
 }
+
+/**
+ * Markdown ответа модели → Rich Markdown Telegram (он совместим с GitHub Flavored Markdown).
+ * Единственная правка: «$» вне кода экранируем, иначе цены вроде «$3 и $15» Telegram разберёт как формулу.
+ */
+export function richMarkdown(md) {
+  return String(md ?? '')
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/)
+    .map((seg, i) => (i % 2 ? seg : seg.replace(/(?<!\\)\$/g, '\\$')))
+    .join('');
+}

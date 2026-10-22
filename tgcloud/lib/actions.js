@@ -142,7 +142,7 @@ export function createActions(D, { gh, isSelf, noToken, fail }) {
       `▶️ Запустить <b>${escapeHtml(wf.name)}</b> (<code>${escapeHtml(wf.path)}</code>)\nрепозиторий <code>${escapeHtml(repo.full_name)}</code>, ветка <code>${escapeHtml(ref)}</code>` +
         (inp.length ? '\nпараметры: ' + inp.map(([k, v]) => `<code>${escapeHtml(k)}=${escapeHtml(v)}</code>`).join(' ') : '') +
         '\n\n⚠️ Workflow выполнится с секретами репозитория и может, например, выкатить релиз. Запускаем?',
-      { reply_markup: kb([[{ text: '▶️ Запустить', callback_data: 'x:go' }, { text: '✖️ Отмена', callback_data: 'x:wx' }]]) },
+      { reply_markup: kb([[{ text: '▶️ Запустить', callback_data: 'x:go', style: 'success' }, { text: '✖️ Отмена', callback_data: 'x:wx', style: 'danger' }]]) },
     );
   }
 

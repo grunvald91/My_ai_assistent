@@ -115,7 +115,7 @@ export function createCommands(D, mods) {
         return true;
       case 'forget_all':
         await out.sendHtml(chatId, '⚠️ Стереть <b>всю</b> память: историю всех чатов, сводки и факты? Каналы, их стили и настройки останутся. Это нельзя отменить.', {
-          reply_markup: kb([[{ text: '🗑 Да, стереть', callback_data: 'fa:y' }, { text: 'Отмена', callback_data: 'fa:n' }]]),
+          reply_markup: kb([[{ text: '🗑 Да, стереть', callback_data: 'fa:y', style: 'danger' }, { text: 'Отмена', callback_data: 'fa:n' }]]),
         });
         return true;
       case 'group':

@@ -143,7 +143,7 @@ export function createBusiness(D) {
 
   const cardKeyboard = (id) =>
     kb([
-      [{ text: '✅ Отправить', callback_data: 'b:s:' + id }],
+      [{ text: '✅ Отправить', callback_data: 'b:s:' + id, style: 'success' }],
       [{ text: '✏️ Свой текст', callback_data: 'b:e:' + id }, { text: '🔁 Переделать', callback_data: 'b:r:' + id }],
       [{ text: '⏭ Пропустить', callback_data: 'b:x:' + id }],
     ]);
@@ -236,11 +236,11 @@ export function createBusiness(D) {
       await store.updateBizDraft(d.id, { status: 'editing' });
       await store.setState(chatId, 'biz_edit:' + d.id, { card: msgId });
       await out.answerCb(cq.id);
-      await out.sendHtml(chatId, `✏️ Пришли текст ответа для «${escapeHtml(d.contactName ?? '')}» — отправлю его как есть, форматирование сохраню. /cancel — отмена.`);
+      await out.ask(chatId, `✏️ Пришли текст ответа для «${escapeHtml(d.contactName ?? '')}» — отправлю его как есть, форматирование сохраню. /cancel — отмена.`);
     } else if (act === 'r') {
       await store.setState(chatId, 'biz_rev:' + d.id, { card: msgId });
       await out.answerCb(cq.id);
-      await out.sendHtml(chatId, '🔁 Что поменять в ответе? Например: «короче», «на ты», «назови цену 5000». /cancel — отмена.');
+      await out.ask(chatId, '🔁 Что поменять в ответе? Например: «короче», «на ты», «назови цену 5000». /cancel — отмена.');
     }
   }
 

@@ -114,3 +114,58 @@ test('упало «Продолжить» → кнопка другой моде
   assert.match(w.llmCalls[0].messages.at(-1).content, /Продолжи/);
   assert.match(w.last(OWNER).text, /вторая часть/);
 });
+
+test('Rich-сообщения: ответ уходит Markdown-ом в sendRichMessage, «$» экранируется, код не трогаем', async () => {
+  const w = await createWorld({ cfg: { richMessages: true } });
+  w.llmReplies.push('| a | b |\n|---|---|\n| 1 | 2 |\n\nЦена $3 и $15, в коде `$x` остаётся.');
+  await w.say('Таблицу');
+  const rich = w.calls('sendRichMessage');
+  assert.equal(rich.length, 1);
+  assert.match(rich[0].rich_message.markdown, /\| a \| b \|/);
+  assert.match(rich[0].rich_message.markdown, /Цена \\\$3 и \\\$15/);
+  assert.match(rich[0].rich_message.markdown, /`\$x`/);
+  assert.equal(w.sent(OWNER).length, 0, 'обычное сообщение не дублируется');
+  assert.ok(w.calls('sendRichMessageDraft').length >= 1, 'стрим идёт Rich-черновиком');
+});
+
+test('Rich-сообщения: если Telegram отказал — тот же ответ уходит обычным HTML, ничего не теряется', async () => {
+  const w = await createWorld({ cfg: { richMessages: true } });
+  w.fail('sendRichMessage', 400, 'Bad Request: can\'t parse rich message');
+  w.fail('sendRichMessageDraft', 400, 'Bad Request');
+  w.llmReplies.push('**Привет**, мир');
+  await w.say('Привет');
+  assert.match(w.last(OWNER).text, /<b>Привет<\/b>/);
+});
+
+test('Rich-сообщения: кнопки (Запомнить, Продолжить) едут в reply_markup rich-сообщения', async () => {
+  const w = await createWorld({ cfg: { richMessages: true, cutAfterMs: 300 } });
+  w.llmReplies.push({ stall: 'Начало' });
+  await w.say('Длинно');
+  const r = w.calls('sendRichMessage').at(-1);
+  assert.ok(r.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'r:c'));
+});
+
+test('force_reply: вопрос «опиши задачу» открывает ответ сразу, «Отмена» сбрасывает ожидание', async () => {
+  const w = await createWorld();
+  w.gh.repos['me/sushef'] = { default_branch: 'main', files: { 'README.md': '# x' } };
+  await w.say('/repo me/sushef');
+  w.clear();
+  await w.say('/code');
+  const q = w.last(OWNER);
+  assert.equal(q.reply_markup.force_reply, true);
+  const cancel = q.reply_markup.inline_keyboard.flat().find((b) => b.callback_data === 'r:x');
+  assert.equal(cancel.style, 'danger');
+  await w.press('r:x');
+  w.clear();
+  w.llmReplies.push('Обычный ответ');
+  await w.say('Привет');
+  assert.equal(w.llmCalls.length, 1, 'после отмены сообщение идёт в обычный чат, а не в задачу для кода');
+});
+
+test('цвета кнопок: подтверждение памяти — зелёная', async () => {
+  const w = await createWorld();
+  w.llmReplies.push('Ок.\n\n[[запомнить: Любит чай]]');
+  await w.say('Я люблю чай');
+  const btn = w.last(OWNER).reply_markup.inline_keyboard.flat().find((b) => b.callback_data?.startsWith('mem:y:'));
+  assert.equal(btn.style, 'success');
+});

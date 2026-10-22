@@ -176,3 +176,8 @@ Architecture and setup are in [README.md](README.md); requirements in [tz-telegr
 - Оборванный ответ уходит с кнопкой `r:c` «Продолжить» (`chat.continueLast`: модель видит свой обрыв и дописывает). Если текста нет совсем — ошибка `timeout`.
 - Ошибка модели → кнопки `r:m:<modelId>` (замены из `models.alternatives`: живые, близкие по цене, по одной от провайдера; переключают модель чата и сразу отвечают на то же сообщение) и `copy_text` с исходным сообщением (≤256 символов).
 - Сжатие истории (`maybeSummarize`) — только пока вызов моложе `cfg.summarizeOnlyBeforeMs`.
+
+## Bot API 10.3 (v0.4)
+- Ответы владельцу уходят `sendRichMessage` (`rich_message.markdown`, до 32768 симв., таблицы/цитаты/код), стрим — `sendRichMessageDraft`; `cfg.richMessages` выключает. При любой ошибке — обычный HTML-путь (`out.sendText({ rich: true })`). `richMarkdown()` экранирует «$» вне кода. В тестах Rich по умолчанию выключен (`world.js`).
+- `out.ask()` — вопрос с `force_reply` в inline-клавиатуре + кнопка «Отмена» (`r:x`).
+- Цвета кнопок — поле `style`: `success` (отправить/опубликовать/запомнить), `danger` (отмена/стереть), `primary`.

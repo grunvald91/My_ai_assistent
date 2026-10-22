@@ -172,11 +172,11 @@ export function createPosts(D) {
     if (act === 'st') {
       await store.setState(chatId, 'style:' + id);
       await out.answerCb(cq.id);
-      await out.sendHtml(chatId, `✏️ Опиши стиль канала «${escapeHtml(chName(ch))}» одним сообщением: тон, длина, эмодзи, хэштеги, подпись. /cancel — отмена.`);
+      await out.ask(chatId, `✏️ Опиши стиль канала «${escapeHtml(chName(ch))}» одним сообщением: тон, длина, эмодзи, хэштеги, подпись. /cancel — отмена.`);
     } else if (act === 'ex') {
       await store.setState(chatId, 'example:' + id);
       await out.answerCb(cq.id);
-      await out.sendHtml(chatId, `📌 Пришли текст удачного поста канала «${escapeHtml(chName(ch))}» — буду ориентироваться на его тон (хранится до 3 примеров). /cancel — отмена.`);
+      await out.ask(chatId, `📌 Пришли текст удачного поста канала «${escapeHtml(chName(ch))}» — буду ориентироваться на его тон (хранится до 3 примеров). /cancel — отмена.`);
     } else if (act === 'rm') {
       await store.deactivateChannelByChat(ch.chatId);
       await out.answerCb(cq.id, 'Канал убран из списка');
@@ -205,7 +205,7 @@ export function createPosts(D) {
     await store.createDraft({ id, kind: 'post', status: channel ? 'await_brief' : 'await_channel', channelId: channel?.id ?? null, createdAt: D.now() });
     if (!channel) return askChannel(chatId, id, list);
     await store.setState(chatId, 'post_brief:' + id);
-    await out.sendHtml(chatId, `📝 Канал «${escapeHtml(chName(channel))}». Пришли фото и/или описание поста: что анонсируем, ключевые факты, цена, призыв. /cancel — отмена.`);
+    await out.ask(chatId, `📝 Канал «${escapeHtml(chName(channel))}». Пришли фото и/или описание поста: что анонсируем, ключевые факты, цена, призыв. /cancel — отмена.`);
   }
 
   async function askChannel(chatId, draftId, list) {
@@ -274,7 +274,7 @@ export function createPosts(D) {
     if (draft.channelId) {
       if (brief) return generatePost(draft, {});
       await store.setState(chatId, 'post_brief:' + draftId);
-      await out.sendHtml(chatId, '📸 Фото получил. Теперь пришли описание поста — что в нём сказать?');
+      await out.ask(chatId, '📸 Фото получил. Теперь пришли описание поста — что в нём сказать?');
       return;
     }
 
@@ -287,7 +287,7 @@ export function createPosts(D) {
       await store.updateDraft(draftId, { channelId: list[0].id, status: 'await_brief' });
       if (brief) return generatePost({ ...draft, channelId: list[0].id }, {});
       await store.setState(chatId, 'post_brief:' + draftId);
-      await out.sendHtml(chatId, `📸 Фото получил (канал «${escapeHtml(chName(list[0]))}»). Пришли описание поста — что в нём сказать?`);
+      await out.ask(chatId, `📸 Фото получил (канал «${escapeHtml(chName(list[0]))}»). Пришли описание поста — что в нём сказать?`);
       return;
     }
     await store.updateDraft(draftId, { status: 'await_channel' });
@@ -399,9 +399,9 @@ export function createPosts(D) {
 
   const previewKeyboard = (id) =>
     kb([
-      [{ text: '📣 Опубликовать', callback_data: 'p:pub:' + id }],
+      [{ text: '📣 Опубликовать', callback_data: 'p:pub:' + id, style: 'success' }],
       [{ text: '🔁 Переделать', callback_data: 'p:rev:' + id }, { text: '✏️ Вручную', callback_data: 'p:man:' + id }],
-      [{ text: '🗑 Отмена', callback_data: 'p:cx:' + id }],
+      [{ text: '🗑 Отмена', callback_data: 'p:cx:' + id, style: 'danger' }],
     ]);
 
   async function sendPreview(draftId) {
@@ -467,7 +467,7 @@ export function createPosts(D) {
       await out.editHtml(chatId, cq.message.message_id, `📣 Канал: <b>${escapeHtml(chName(ch))}</b>`, null);
       if (draft.brief) return generatePost({ ...draft, channelId: ch.id }, {});
       await store.setState(chatId, 'post_brief:' + id);
-      await out.sendHtml(chatId, 'Теперь пришли описание поста — что в нём сказать? /cancel — отмена.');
+      await out.ask(chatId, 'Теперь пришли описание поста — что в нём сказать? /cancel — отмена.');
       return;
     }
     const draft = await store.getDraft(id);
@@ -483,11 +483,11 @@ export function createPosts(D) {
     if (act === 'rev') {
       await store.setState(chatId, 'post_rev:' + id);
       await out.answerCb(cq.id);
-      await out.sendHtml(chatId, '🔁 Что поменять? Напиши правку, например: «короче», «без эмодзи», «добавь призыв записаться». /cancel — отмена.');
+      await out.ask(chatId, '🔁 Что поменять? Напиши правку, например: «короче», «без эмодзи», «добавь призыв записаться». /cancel — отмена.');
     } else if (act === 'man') {
       await store.setState(chatId, 'post_manual:' + id);
       await out.answerCb(cq.id);
-      await out.sendHtml(chatId, '✏️ Пришли готовый текст поста целиком — опубликую как есть, форматирование Telegram сохраню. /cancel — отмена.');
+      await out.ask(chatId, '✏️ Пришли готовый текст поста целиком — опубликую как есть, форматирование Telegram сохраню. /cancel — отмена.');
     } else if (act === 'cx') {
       await store.updateDraft(id, { status: 'canceled' });
       await out.answerCb(cq.id, 'Отменено');

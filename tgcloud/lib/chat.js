@@ -4,7 +4,7 @@ import { ownerSystem, groupSystem } from './persona.js';
 import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
-import { renderChunks } from './format.js';
+import { renderChunks, richMarkdown } from './format.js';
 import { displayName, escapeHtml, randomDraftId, truncate, uid } from './util.js';
 
 // ───────── «запомнить?» — предложение бота в конце ответа ─────────
@@ -56,8 +56,21 @@ export function createChat(D) {
     let lastPing = 0;
     let pausedUntil = 0;
     let plain = false; // Telegram не принял HTML черновика — дальше шлём простым текстом
+    let rich = !!cfg.richMessages; // черновик Rich-сообщением (sendRichMessageDraft); при отказе — обычный
 
     const push = async (text) => {
+      if (rich && text) {
+        try {
+          await D.api.sendRichMessageDraft({ chat_id: chatId, draft_id: draftId, rich_message: { markdown: richMarkdown(text.length > 30000 ? text.slice(-30000) : text) }, can_stop: true });
+          return;
+        } catch (e) {
+          if (e?.code === 429) {
+            pausedUntil = Date.now() + Number(e.parameters?.retry_after ?? 2) * 1000;
+            return;
+          }
+          rich = false; // не вышло — дальше обычными черновиками
+        }
+      }
       // черновик показываем уже отформатированным (жирный, списки, код), как будет в итоговом сообщении;
       // длинный — последним куском, который влезает в 4096 символов
       const html = !plain && text ? renderChunks(text).at(-1)?.html : null;
@@ -164,7 +177,7 @@ export function createChat(D) {
       const pid = uid();
       await store.addProposal(pid, 'owner', fact, D.now());
       markup = {
-        inline_keyboard: [[{ text: '💾 Запомнить', callback_data: 'mem:y:' + pid }, { text: '✖️ Не надо', callback_data: 'mem:n:' + pid }]],
+        inline_keyboard: [[{ text: '💾 Запомнить', callback_data: 'mem:y:' + pid, style: 'success' }, { text: '✖️ Не надо', callback_data: 'mem:n:' + pid }]],
       };
       body += `\n\n💡 Запомнить: _${fact}_`;
     }
@@ -185,7 +198,7 @@ export function createChat(D) {
       };
     }
 
-    await out.sendText({ chatId, text: body, markup });
+    await out.sendText({ chatId, text: body, markup, rich: true });
     await store.addMessage({ chatKey: key, role: 'assistant', text: saved, model: model.id, tokens: res.tokensOut, ts: D.now() });
     await store.updateChat(chatId, { lastReplyAt: D.now() });
 

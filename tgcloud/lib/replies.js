@@ -20,8 +20,8 @@ export function createReplies(D) {
 
   const keyboard = (id) =>
     kb([
-      [{ text: '📤 Отправить в группу', callback_data: 'd:s:' + id }],
-      [{ text: '🔁 Переделать', callback_data: 'd:r:' + id }, { text: '🗑 Отмена', callback_data: 'd:x:' + id }],
+      [{ text: '📤 Отправить в группу', callback_data: 'd:s:' + id, style: 'success' }],
+      [{ text: '🔁 Переделать', callback_data: 'd:r:' + id }, { text: '🗑 Отмена', callback_data: 'd:x:' + id, style: 'danger' }],
     ]);
 
   async function compose({ groupChatId, title, quote, quoteAuthor, instruction, prev }) {
@@ -139,7 +139,7 @@ export function createReplies(D) {
     } else if (act === 'r') {
       await store.setState(chatId, 'draft_rev:' + id, { card: msgId });
       await out.answerCb(cq.id);
-      await out.sendHtml(chatId, '🔁 Что поменять в ответе? Например: «короче», «жёстче», «предложи созвон в четверг». /cancel — отмена.');
+      await out.ask(chatId, '🔁 Что поменять в ответе? Например: «короче», «жёстче», «предложи созвон в четверг». /cancel — отмена.');
     }
   }
 
