@@ -2,7 +2,7 @@
 // (tgcloud run endpoints/diag). Только для владельца. Отчёт не содержит текстов переписки, id чатов и имён репозиториев:
 // workflow выводит его в лог Actions, а репозиторий публичный.
 
-import { db, fetch, EndpointError } from 'sdk';
+import { db, api, fetch, EndpointError } from 'sdk';
 import { desc, eq } from 'sdk/db';
 import * as T from '../schema.js';
 import { OWNER_IDS, CLAUDEHUB_API_KEY } from '../lib/secrets.js';
@@ -66,8 +66,30 @@ export default async function (input, ctx) {
     }),
   ];
 
+  // последние апдейты (любого статуса): доходят ли сообщения до бота и чем заканчиваются
+  const recent = await db.select().from(T.updates).orderBy(desc(T.updates.updateId)).limit(12).all();
+  // вебхук: ждёт ли Telegram доставки и какая последняя ошибка доставки (не текст переписки)
+  let webhook;
+  try {
+    const w = await api.getWebhookInfo();
+    webhook = { pending: w.pending_update_count, last_error_age_s: w.last_error_date ? now - w.last_error_date : null, last_error: String(w.last_error_message ?? '').slice(0, 200), max_conn: w.max_connections };
+  } catch (e) {
+    webhook = { error: String(e?.message ?? e).slice(0, 150) };
+  }
+  // запись в БД работает?
+  let dbWrite;
+  try {
+    await db.insert(T.journal).values({ type: 'diag', chatId: null, payload: null, ts: now }).run();
+    dbWrite = 'ok';
+  } catch (e) {
+    dbWrite = String(e?.message ?? e).slice(0, 150);
+  }
+
   return {
     now,
+    webhook,
+    db_write: dbWrite,
+    recent_updates: recent.map((u) => ({ id: u.updateId, status: u.status, age_s: now - u.ts })),
     probes,
     stuck_updates: stuck.map((u) => ({ id: u.updateId, age_s: now - u.ts })),
     journal,
