@@ -361,6 +361,30 @@ export function createChat(D) {
 
   // ───────── группы ─────────
 
+  /**
+   * Личка владельца: на что он ответил. Текст — целиком, без обрезки; выделенный в Telegram фрагмент (msg.quote) — именно он.
+   * Если в сообщении, на которое ответили, фото или файл — они уходят модели вместе с вопросом.
+   * → { prefix, items }
+   */
+  function ownerReplyContext(msg) {
+    const r = msg.reply_to_message;
+    const picked = msg.quote?.text; // выделенная часть сообщения
+    if (!r && !picked) return { prefix: '', items: [] };
+    const body = picked || r?.text || r?.caption || '';
+    const items = r ? D.attach.itemsOf(r) : [];
+    if (!body && !items.length) return { prefix: '', items: [] };
+    let who;
+    if (!r) who = 'сообщение';
+    else if (r.from?.is_bot) who = 'твоё прошлое сообщение';
+    else if (D.isOwner(r.from?.id)) who = 'моё прошлое сообщение';
+    else who = `сообщение${r.from ? ' (' + displayName(r.from) + ')' : ''}`;
+    const what = picked ? `выделенный фрагмент: ${who}` : who;
+    const head = `↪️ Я отвечаю на ${what}`;
+    const media = items.length ? ` [к нему приложено: ${D.attach.label(items)}]` : '';
+    const prefix = body ? `${head}${media}:\n«${body}»\n\n` : `${head}${media}.\n\n`;
+    return { prefix, items };
+  }
+
   const quoteOf = (msg) => {
     const r = msg.reply_to_message;
     const t = r && (r.text ?? r.caption);
@@ -442,5 +466,5 @@ export function createChat(D) {
     return 'ok';
   }
 
-  return { answerOwner, answerMedia, respondOwner, retryLast, askStrong, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
+  return { ownerReplyContext, answerOwner, answerMedia, respondOwner, retryLast, askStrong, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
 }

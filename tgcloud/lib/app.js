@@ -164,7 +164,10 @@ export function createApp(base) {
         return posts.onPhoto(msg, c);
       }
       if (chat.state) await store.setState(chatId, null);
-      return D.attach.onMedia(msg, chat, (q, items) => chatMod.answerMedia(chatId, q, items), { postButton: true });
+      // если фото/файл отправлено ответом на сообщение — подпись получает это сообщение как контекст
+      const ctx = chatMod.ownerReplyContext(msg);
+      const m2 = msg.caption && ctx.prefix ? { ...msg, caption: ctx.prefix + msg.caption } : msg;
+      return D.attach.onMedia(m2, chat, (q, items) => chatMod.answerMedia(chatId, q, items), { postButton: true });
     }
 
     const text = msg.text;
@@ -186,6 +189,9 @@ export function createApp(base) {
       if (await dispatchState(msg, chat)) return;
     }
 
+    // на какое сообщение ответил владелец (целиком, с фото/файлом, если они есть)
+    const rc = chatMod.ownerReplyContext(msg);
+
     // перед этим прислали вложение и бот спросил, что с ним сделать — текст и есть ответ
     let said = text;
     if (await D.attach.hasPending()) {
@@ -201,13 +207,14 @@ export function createApp(base) {
         const items = await D.attach.take();
         if (items) {
           await D.attach.takeCaption();
-          return chatMod.answerMedia(chatId, text, items);
+          return chatMod.answerMedia(chatId, rc.prefix + text, [...rc.items, ...items]);
         }
       }
     }
 
     if (await code.maybeAutoTask(chat, said)) return; // «создай ветку и залей код» без /code
-    await chatMod.answerOwner(msg, chat, said);
+    if (rc.items.length) return chatMod.answerMedia(chatId, rc.prefix + said, rc.items); // ответ на сообщение с фото/файлом
+    await chatMod.answerOwner(msg, chat, rc.prefix + said);
   }
 
   async function dispatchState(msg, chat) {
