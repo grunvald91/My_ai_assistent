@@ -93,8 +93,21 @@ export default async function (input, ctx) {
     dbWrite = String(e?.message ?? e).slice(0, 150);
   }
 
+  // что умеет среда выполнения (нужно для работы с файлами)
+  const env = {
+    DecompressionStream: typeof DecompressionStream,
+    CompressionStream: typeof CompressionStream,
+    TextDecoder: typeof TextDecoder,
+    TextEncoder: typeof TextEncoder,
+    atob: typeof atob,
+    btoa: typeof btoa,
+    Blob: typeof Blob,
+    setTimeout: typeof setTimeout,
+  };
+
   return {
     now,
+    env,
     webhook,
     db_write: dbWrite,
     recent_updates: recent.map((u) => ({ id: u.updateId, status: u.status, age_s: now - u.ts })),

@@ -1,0 +1,16 @@
+name: Probe media
+
+# Разовая проверка: что ClaudeHub принимает из картинок и файлов. Ручной запуск.
+on: workflow_dispatch
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/probe-media.mjs
