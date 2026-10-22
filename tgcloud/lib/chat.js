@@ -389,7 +389,7 @@ export function createChat(D) {
     const r = msg.reply_to_message;
     const t = r && (r.text ?? r.caption);
     if (!t || r.from?.is_bot) return '';
-    return `↪️ в ответ на «${truncate(t, 200)}» (${displayName(r.from)}):\n`;
+    return `↪️ в ответ на «${t}» (${displayName(r.from)}):\n`;
   };
 
   /** Один раз в сутки предупреждаем владельца о проблеме (лимит, баланс, ключ). */

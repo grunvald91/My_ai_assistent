@@ -47,3 +47,12 @@ test('без ответа на сообщение — всё как раньше
   await w.say('привет');
   assert.equal(textOf(lastUser(w.llmCalls.at(-1))), 'привет');
 });
+
+test('в группе цитата сообщения, на которое ответили, не обрезается', async () => {
+  const w = await createWorld();
+  await w.setGroupMode(-5001, 'all');
+  const long = 'Цитата из группы. '.repeat(300);
+  await w.group('что скажешь?', { replyTo: { message_id: 3, text: long, from: { id: 2002, first_name: 'Гость' } } });
+  const t = textOf(lastUser(w.llmCalls.at(-1)));
+  assert.ok(t.includes(long));
+});
