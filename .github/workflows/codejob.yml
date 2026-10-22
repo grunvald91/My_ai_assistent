@@ -1,0 +1,52 @@
+name: Code job
+
+# Тяжёлая часть /code: читает репозиторий, пишет код моделью и отправляет результат боту.
+# Запускается самим ботом (workflow_dispatch), вручную запускать не нужно.
+# Здесь нет лимита ~30 секунд на вызов, как у обработчиков бота на серверах Telegram.
+on:
+  workflow_dispatch:
+    inputs:
+      job: { description: 'id задачи', required: true }
+      mode: { description: 'run | ping', required: false, default: 'run' }
+      repo: { description: 'владелец/имя репозитория', required: false }
+      branch: { description: 'ветка', required: false }
+      task: { description: 'задание', required: false }
+      model: { description: 'модель ClaudeHub', required: false }
+      think: { description: 'off | low | medium | high', required: false, default: 'off' }
+
+concurrency:
+  group: codejob-${{ inputs.job }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TGCLOUD_TOKEN: ${{ secrets.TELEGRAM_CLI_ACCESS }}
+      CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
+      OWNER_IDS: ${{ secrets.OWNER_IDS || vars.OWNER_IDS }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+      JOB_ID: ${{ inputs.job }}
+      JOB_MODE: ${{ inputs.mode }}
+      JOB_REPO: ${{ inputs.repo }}
+      JOB_BRANCH: ${{ inputs.branch }}
+      JOB_TASK: ${{ inputs.task }}
+      JOB_MODEL: ${{ inputs.model }}
+      JOB_THINK: ${{ inputs.think }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Задача
+        run: |
+          node scripts/write-secrets.mjs
+          node scripts/codejob.mjs
+      - name: Сообщить боту о сбое
+        if: failure()
+        run: |
+          OWNER="${OWNER_IDS%%,*}"
+          npx tgcloud run endpoints/codejob_done "{ job: \"${JOB_ID}\", error: \"Задача в GitHub Actions упала — смотри лог запуска в репозитории бота (Actions → Code job).\" }" --ctx "{ initData: { user: { id: ${OWNER} } } }" || true

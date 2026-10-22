@@ -5,7 +5,7 @@
 import { db, api, fetch, EndpointError } from 'sdk';
 import { desc, eq } from 'sdk/db';
 import * as T from '../schema.js';
-import { OWNER_IDS, CLAUDEHUB_API_KEY } from '../lib/secrets.js';
+import { OWNER_IDS, CLAUDEHUB_API_KEY, GH_PAT, SELF_REPO } from '../lib/secrets.js';
 import { API_BASE } from '../lib/config.js';
 import { parseIdList } from '../lib/util.js';
 
@@ -59,6 +59,14 @@ export default async function (input, ctx) {
         body: JSON.stringify({ model: 'claude-haiku-4.5', messages: [{ role: 'user', content: 'ок' }], max_tokens: 1 }),
       });
       return { status: r.status };
+    }),
+    // может ли токен бота запускать workflow в репозитории бота (нужно для /code через Actions); mode=ping ничего не делает
+    await probe('Запуск codejob.yml токеном бота', async () => {
+      if (!GH_PAT || !SELF_REPO) return { status: 0, note: 'нет GH_PAT или имени репозитория' };
+      const h = { Authorization: 'Bearer ' + GH_PAT, Accept: 'application/vnd.github+json', 'User-Agent': 'diag', 'Content-Type': 'application/json' };
+      const repo = await (await fetch('https://api.github.com/repos/' + SELF_REPO, { headers: h })).json();
+      const r = await fetch(`https://api.github.com/repos/${SELF_REPO}/actions/workflows/codejob.yml/dispatches`, { method: 'POST', headers: h, body: JSON.stringify({ ref: repo.default_branch ?? 'main', inputs: { job: 'diagping', mode: 'ping' } }) });
+      return { status: r.status, note: r.ok ? '' : String((await r.text()).slice(0, 150)) };
     }),
     await probe('GitHub API', async () => {
       const r = await fetch('https://api.github.com/zen', { headers: { 'User-Agent': 'diag' } });

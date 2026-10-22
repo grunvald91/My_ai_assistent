@@ -14,7 +14,8 @@ import { GithubError } from './github.js';
 import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
 import { createActions, ACTION_ACTS } from './actions.js';
-import { escapeHtml, truncate, uid, safeJson, utf8Encode } from './util.js';
+import { escapeHtml, truncate, uid, safeJson, utf8Encode, dayKey } from './util.js';
+import { costUsd } from './models.js';
 
 const kb = (rows) => ({ inline_keyboard: rows });
 const MAX_FILES = 20;
@@ -123,7 +124,104 @@ export function createCode(D) {
   const saveJob = (job) => store.setSetting(JOB, job ? JSON.stringify(job) : null);
   const jobButton = (label) => ({ reply_markup: kb([[{ text: label, callback_data: 'x:cj', style: 'primary' }, { text: '✖️ Отмена', callback_data: 'x:cjx', style: 'danger' }]]) });
 
+  // ───────── тяжёлая часть в GitHub Actions ─────────
+  // Обработчик бота живёт ~30 с, GitHub Actions — до 30 минут. Бот только запускает workflow codejob.yml в СВОЁМ репозитории
+  // (для этого токену нужно право Actions: Read and write и на репозиторий бота); результат приходит обратно эндпоинтами
+  // codejob_part/codejob_done, и дальше всё как обычно: проверка на секреты, предпросмотр, кнопки владельца.
+
+  const WORKFLOW = 'codejob.yml';
+  const MAX_TASK_INPUT = 60000; // предел поля workflow_dispatch — 65535 символов
+
+  /** true — задача ушла в Actions. false — не вышло (причина уже показана), дальше идём по шагам внутри бота. */
+  async function startRemote(chatId, task) {
+    if (!cfg.codeViaActions || !D.selfRepo || task.length > MAX_TASK_INPUT) return false;
+    const full = await store.getSetting('gh_repo');
+    let repo;
+    try {
+      repo = await gh().getRepo(full);
+      if (isSelf(repo.full_name)) {
+        await out.sendHtml(chatId, '🚫 Репозиторий самого бота трогать нельзя. Выбери другой: /gh');
+        return true;
+      }
+      const selfInfo = await gh().getRepo(D.selfRepo);
+      const model = await core.ownerModel();
+      const think = await core.thinkLevel();
+      const id = uid();
+      await store.setSetting('cj:' + id, JSON.stringify({ chatId, task, repo: { full_name: repo.full_name, private: !!repo.private }, branch: repo.default_branch, ts: D.now() }));
+      try {
+        await gh().dispatch(D.selfRepo, WORKFLOW, selfInfo.default_branch, { job: id, mode: 'run', repo: repo.full_name, branch: repo.default_branch, task, model: model.id, think });
+      } catch (e) {
+        await store.setSetting('cj:' + id, null);
+        throw e;
+      }
+      await out.sendHtml(
+        chatId,
+        `🚀 Задача для <code>${escapeHtml(repo.full_name)}</code> ушла в GitHub Actions: там нет лимита в 30 секунд, поэтому код пишется целиком. Обычно это 1–5 минут. Результат придёт сюда предпросмотром, ничего не отправляется без твоей кнопки.
+` +
+          `<a href="https://github.com/${escapeHtml(D.selfRepo)}/actions/workflows/${WORKFLOW}">Ход выполнения</a>`,
+      );
+      return true;
+    } catch (e) {
+      if (e instanceof GithubError) {
+        await out.sendHtml(chatId, `⚠️ В GitHub Actions задачу запустить не вышло: ${escapeHtml(e.userMessage)}
+
+Чтобы работало без нажатий, дай токену GH_PAT права <b>Actions</b> и <b>Contents</b> (Read and write) ещё и на репозиторий бота. Пока пишу по шагам прямо в боте.`);
+        return false;
+      }
+      throw e;
+    }
+  }
+
+  async function receiveJobPart(job, i, text) {
+    if (!job || !(i >= 0) || !(await store.getSetting('cj:' + job))) return false;
+    await store.setSetting(`cj:${job}:${i}`, text);
+    return true;
+  }
+
+  /** Итог задачи из Actions: error — сообщение о сбое, иначе n частей ответа модели → разбор и предпросмотр. */
+  async function finishJob({ job, n, finish, usage, model, error }) {
+    const meta = safeJson(await store.getSetting('cj:' + job), null);
+    if (!meta) return false;
+    const drop = async () => {
+      for (let i = 0; i < n; i++) await store.setSetting(`cj:${job}:${i}`, null);
+      await store.setSetting('cj:' + job, null);
+    };
+    try {
+      if (error) {
+        await out.sendHtml(meta.chatId, `❌ Задача в GitHub Actions не удалась: ${escapeHtml(truncate(error, 600))}
+
+Можно повторить: /code`);
+        return true;
+      }
+      let text = '';
+      for (let i = 0; i < n; i++) {
+        const part = await store.getSetting(`cj:${job}:${i}`);
+        if (part == null) {
+          await out.sendHtml(meta.chatId, '❌ Ответ из GitHub Actions дошёл не полностью. Повтори задачу: /code');
+          return true;
+        }
+        text += part;
+      }
+      if (usage && (usage.in || usage.out)) {
+        const m = (await core.getModels()).find((x) => x.id === model);
+        await store.addUsage(dayKey(D.now(), core.tz()), usage.in ?? 0, usage.out ?? 0, costUsd(m, usage.in ?? 0, usage.out ?? 0));
+      }
+      const tree = await gh().getTree(meta.repo.full_name, meta.branch);
+      await prepareDraft(meta.chatId, { task: meta.task, repo: meta.repo, branch: meta.branch, tree, text, finish });
+      return true;
+    } catch (e) {
+      if (e instanceof GithubError || e instanceof LlmError || e instanceof LimitError) {
+        await out.sendHtml(meta.chatId, escapeHtml(e.userMessage));
+        return true;
+      }
+      throw e;
+    } finally {
+      await drop();
+    }
+  }
+
   async function runTask(chatId, task) {
+    if (await startRemote(chatId, task)) return;
     const t0 = D.t0 ?? Date.now();
     const full = await store.getSetting('gh_repo');
     try {
@@ -665,5 +763,5 @@ export function createCode(D) {
     }
   }
 
-  return { showGh, setRepo, startTask, onState, callback, runTask, runsCommand: actions.command, repoContext, maybeAutoTask };
+  return { showGh, setRepo, startTask, onState, callback, runTask, receiveJobPart, finishJob, runsCommand: actions.command, repoContext, maybeAutoTask };
 }

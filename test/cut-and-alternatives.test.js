@@ -210,3 +210,48 @@ test('/code: ошибка модели на втором шаге не теря�
   assert.match(m.text, /сохранено/);
   assert.ok(m.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'x:cj'));
 });
+
+test('/code через GitHub Actions: бот запускает codejob.yml, результат приходит эндпоинтами и превращается в предпросмотр', async () => {
+  const w = await createWorld({ cfg: { codeViaActions: true } });
+  w.gh.repos['me/site'] = { default_branch: 'main', private: true, files: { 'a.js': 'x' } };
+  w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
+  await w.say('/repo me/site');
+  w.clear();
+  await w.say('/code добавь b.js');
+  assert.equal(w.llmCalls.length, 0, 'модель в боте не вызывалась: всё делает Actions');
+  const d = w.gh.dispatches.find((x) => x.workflow === 'codejob.yml');
+  assert.ok(d, 'workflow codejob.yml запущен');
+  assert.equal(d.repo, 'grunvald91/my_ai_assistent');
+  assert.equal(d.inputs.repo, 'me/site');
+  assert.equal(d.inputs.task, 'добавь b.js');
+  assert.match(w.last(OWNER).text, /ушла в GitHub Actions/);
+
+  // Actions присылает ответ модели двумя частями и итог
+  const job = d.inputs.job;
+  const raw = '@@@ COMMIT: add b\n@@@ SUMMARY: готово\n@@@ FILE create b.js\nconsole.log(1)\n@@@ END';
+  assert.equal(await w.app.code.receiveJobPart(job, 0, raw.slice(0, 40)), true);
+  assert.equal(await w.app.code.receiveJobPart(job, 1, raw.slice(40)), true);
+  assert.equal(await w.app.code.finishJob({ job, n: 2, finish: 'stop', usage: { in: 1000, out: 500 }, model: 'claude-sonnet-5-5', error: null }), true);
+  const preview = w.last(OWNER);
+  assert.match(preview.text, /b\.js/);
+  assert.ok(preview.reply_markup.inline_keyboard.flat().some((b) => b.callback_data?.startsWith('x:pr:')));
+  assert.equal(await w.app.code.receiveJobPart(job, 2, 'x'), false, 'задача закрыта');
+});
+
+test('/code через Actions: ошибка из Actions доходит до владельца; нет прав на запуск — подсказка и запасной путь по шагам', async () => {
+  const w = await createWorld({ cfg: { codeViaActions: true } });
+  w.gh.repos['me/site'] = { default_branch: 'main', files: { 'a.js': 'x' } };
+  w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: {} };
+  await w.say('/repo me/site');
+  await w.say('/code задача');
+  const job = w.gh.dispatches.at(-1).inputs.job;
+  await w.app.code.finishJob({ job, n: 0, error: 'модель недоступна' });
+  assert.match(w.last(OWNER).text, /Задача в GitHub Actions не удалась: модель недоступна/);
+
+  w.gh.repos['grunvald91/my_ai_assistent'].actionsDenied = true;
+  w.clear();
+  w.llmReplies.push('NONE', '@@@ COMMIT: x\n@@@ SUMMARY: y\n@@@ FILE create b.js\nconsole.log(1)\n@@@ END');
+  await w.say('/code ещё задача');
+  assert.ok(w.sent(OWNER).some((m) => /запустить не вышло/.test(m.text) && /Actions/.test(m.text)));
+  assert.ok(w.last(OWNER).reply_markup.inline_keyboard.flat().some((b) => b.callback_data?.startsWith('x:pr:')), 'запасной путь довёл до предпросмотра');
+});

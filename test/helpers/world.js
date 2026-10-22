@@ -172,7 +172,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
     api: new Proxy({}, { get: (_, m) => (typeof m === 'string' && m !== 'then' ? (p) => globalThis.__tg(m, p ?? {}) : undefined) }),
     store,
     llm,
-    cfg: { ...DEFAULTS, richMessages: false, ...cfg },
+    cfg: { ...DEFAULTS, richMessages: false, codeViaActions: false, ...cfg },
     now: () => w.now,
     sleep: async () => {},
     InputFile,
@@ -293,10 +293,10 @@ function fakeGithub(w, path, opts) {
     return res(200, { workflow_runs: g.dispatches.length ? r : [] });
   }
   if (rest.startsWith('/actions/workflows') && method === 'GET') return repo.actionsDenied ? res(403, { message: 'Resource not accessible by personal access token' }) : res(200, { workflows: repo.workflows ?? [] });
-  if ((m = /^\/actions\/workflows\/(\d+)\/dispatches$/.exec(rest))) {
+  if ((m = /^\/actions\/workflows\/([\w.%-]+)\/dispatches$/.exec(rest))) {
     if (repo.actionsDenied) return res(403, { message: 'Resource not accessible by personal access token' });
     if (repo.dispatchFails) return res(422, { message: repo.dispatchFails });
-    g.dispatches.push({ repo: key, workflow: Number(m[1]), ref: body.ref, inputs: body.inputs });
+    g.dispatches.push({ repo: key, workflow: /^\d+$/.test(m[1]) ? Number(m[1]) : decodeURIComponent(m[1]), ref: body.ref, inputs: body.inputs });
     return res(204, null);
   }
   if (rest.startsWith('/actions/runs') && method === 'GET' && rest.endsWith('/jobs')) return res(200, { jobs: repo.jobs ?? [] });
