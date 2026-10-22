@@ -4,6 +4,7 @@ import { ownerSystem, groupSystem } from './persona.js';
 import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
+import { renderChunks } from './format.js';
 import { displayName, escapeHtml, randomDraftId, truncate, uid } from './util.js';
 
 // ───────── «запомнить?» — предложение бота в конце ответа ─────────
@@ -54,11 +55,20 @@ export function createChat(D) {
     let lastAt = 0;
     let lastPing = 0;
     let pausedUntil = 0;
+    let plain = false; // Telegram не принял HTML черновика — дальше шлём простым текстом
 
     const push = async (text) => {
+      // черновик показываем уже отформатированным (жирный, списки, код), как будет в итоговом сообщении;
+      // длинный — последним куском, который влезает в 4096 символов
+      const html = !plain && text ? renderChunks(text).at(-1)?.html : null;
       try {
-        await D.api.sendMessageDraft({ chat_id: chatId, draft_id: draftId, text, can_stop: true });
+        if (html) await D.api.sendMessageDraft({ chat_id: chatId, draft_id: draftId, text: html, parse_mode: 'HTML', can_stop: true });
+        else await D.api.sendMessageDraft({ chat_id: chatId, draft_id: draftId, text: text.length > 4000 ? '…' + text.slice(-3990) : text, can_stop: true });
       } catch (e) {
+        if (html && e?.code === 400) {
+          plain = true; // разметку не приняли — дальше простым текстом
+          return push(text);
+        }
         if (e?.code === 429) pausedUntil = Date.now() + Number(e.parameters?.retry_after ?? 2) * 1000; // flood control: просто пропускаем обновления
         else failed = true;
       }
@@ -90,7 +100,7 @@ export function createChat(D) {
         if (vis.length - lastLen >= 120 || (vis.length > lastLen && t - lastAt >= 1200)) {
           lastLen = vis.length;
           lastAt = t;
-          await push(vis.length > 4000 ? '…' + vis.slice(-3990) : vis);
+          await push(vis);
           if (failed) return false;
           return store.isStopped(stopKey);
         }
@@ -111,6 +121,9 @@ export function createChat(D) {
   const CONTINUE_PROMPT = 'Твой предыдущий ответ оборвался на полуслове. Продолжи ровно с того места, где он закончился: не повторяй уже написанное, не здоровайся и не поясняй — просто пиши дальше.';
 
   async function respondOwner(chatId, text, { cont = false } = {}) {
+    // срок считаем от начала ЭТОГО вызова бота (запоминаем сразу: параллельный апдейт может переписать D.t0)
+    const t0 = D.t0 ?? Date.now();
+    const deadline = cfg.cutAfterMs ? t0 + cfg.cutAfterMs : null;
     const chat = await store.getChat(chatId);
     const key = String(chatId);
     const model = await core.resolveModel(chat);
@@ -132,7 +145,7 @@ export function createChat(D) {
 
     let res;
     try {
-      res = await core.generate({ model, messages, maxTokens: cfg.maxTokensChat, stream: true, onProgress: streamer.onProgress, think: await core.thinkLevel() });
+      res = await core.generate({ model, messages, maxTokens: cfg.maxTokensChat, stream: true, onProgress: streamer.onProgress, think: await core.thinkLevel(), deadline });
     } catch (e) {
       return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)) });
     }
@@ -178,7 +191,7 @@ export function createChat(D) {
 
     try {
       // сжатие истории — ещё один вызов ИИ: делаем его, только пока вызов бота «молодой» (иначе платформа оборвёт и его, и сам апдейт)
-      if (!D.t0 || Date.now() - D.t0 < (cfg.summarizeOnlyBeforeMs ?? Infinity)) await core.maybeSummarize(await store.getChat(chatId));
+      if (Date.now() - t0 < (cfg.summarizeOnlyBeforeMs ?? Infinity)) await core.maybeSummarize(await store.getChat(chatId));
     } catch (e) {
       console.warn('summarize failed', e?.message ?? e); // не критично: сводка сделается в следующий раз
     }
@@ -219,7 +232,8 @@ export function createChat(D) {
     if (!m) return false;
     await store.updateChat(chatId, { model: m.id });
     await out.sendHtml(chatId, `✅ Модель этого чата: <code>${escapeHtml(m.id)}</code>. Отвечаю на то же сообщение…`);
-    return retryLast(chatId);
+    // упала не первая часть, а «Продолжить» — продолжаем уже новой моделью
+    return (await retryLast(chatId)) || continueLast(chatId);
   }
 
   /** Кнопки под ошибкой: модели-замены (одним нажатием), «Повторить» и копия текста для ручной вставки. */

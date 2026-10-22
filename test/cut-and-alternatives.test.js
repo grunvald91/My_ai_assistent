@@ -66,3 +66,51 @@ test('flood control при стриминге не отключает черно
   await w.say('Привет');
   assert.match(w.last(OWNER).text, /после сбоя черновика/);
 });
+
+test('черновик стрима уходит с разметкой HTML; если Telegram её не принял — дальше простым текстом', async () => {
+  const w = await createWorld();
+  w.llmReplies.push('**Жирный** заголовок и ещё немного текста');
+  await w.say('Привет');
+  const drafts = w.calls('sendMessageDraft').filter((d) => d.text);
+  assert.ok(drafts.some((d) => d.parse_mode === 'HTML' && /<b>Жирный<\/b>/.test(d.text)));
+
+  const w2 = await createWorld();
+  const orig = globalThis.__tg;
+  globalThis.__tg = async (method, params) => {
+    if (method === 'sendMessageDraft' && params.parse_mode) throw Object.assign(new Error('bad'), { code: 400, description: "can't parse entities" });
+    return orig(method, params);
+  };
+  w2.llmReplies.push('**Жирный** заголовок и ещё немного текста');
+  await w2.say('Привет');
+  assert.ok(w2.calls('sendMessageDraft').some((d) => !d.parse_mode && /Жирный/.test(d.text)), 'перешли на простой текст');
+  assert.match(w2.last(OWNER).text, /Жирный/);
+});
+
+test('«Продолжить» убирает только свои кнопки, «Запомнить» остаётся', async () => {
+  const w = await createWorld({ cfg: { cutAfterMs: 300 } });
+  w.llmReplies.push({ stall: 'Часть ответа' });
+  await w.say('Длинно');
+  const m = w.last(OWNER);
+  const markup = { inline_keyboard: [[{ text: '💾 Запомнить', callback_data: 'mem:y:1' }], [{ text: '▶️ Продолжить', callback_data: 'r:c' }]] };
+  w.clear();
+  w.llmReplies.push('дальше');
+  await w.press('r:c', { messageId: m.message_id, markup });
+  const edit = w.calls('editMessageReplyMarkup')[0];
+  assert.deepEqual(edit.reply_markup.inline_keyboard, [[{ text: '💾 Запомнить', callback_data: 'mem:y:1' }]]);
+});
+
+test('упало «Продолжить» → кнопка другой модели продолжает ответ уже новой моделью', async () => {
+  const w = await createWorld({ cfg: { cutAfterMs: 300 } });
+  await w.say('/model claude-sonnet-5-5');
+  w.llmReplies.push({ stall: 'Первая часть' });
+  await w.say('Длинно');
+  w.clear();
+  w.llmReplies.push({ status: 403, body: { error: { message: 'disabled' } } });
+  await w.press('r:c');
+  const alt = w.last(OWNER).reply_markup.inline_keyboard.flat().find((b) => b.callback_data?.startsWith('r:m:'));
+  w.clear();
+  w.llmReplies.push('вторая часть');
+  await w.press(alt.callback_data);
+  assert.match(w.llmCalls[0].messages.at(-1).content, /Продолжи/);
+  assert.match(w.last(OWNER).text, /вторая часть/);
+});

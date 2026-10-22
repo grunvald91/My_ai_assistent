@@ -280,7 +280,15 @@ export function createApp(base) {
           return await code.callback(cq, parts.slice(1));
         case 'r': {
           const chatId = cq.message.chat.id;
-          await out.dropButtons(chatId, cq.message.message_id);
+          // убираем только кнопки «Продолжить/Повторить/модели»; «Запомнить» и «Убрать репозиторий» остаются
+          const rows = (cq.message.reply_markup?.inline_keyboard ?? []).filter((row) => !row.some((b) => b.callback_data?.startsWith('r:') || b.copy_text));
+          if (rows.length) {
+            try {
+              await out.call('editMessageReplyMarkup', { chat_id: chatId, message_id: cq.message.message_id, reply_markup: { inline_keyboard: rows } });
+            } catch {
+              /* сообщение изменилось или удалено — не страшно */
+            }
+          } else await out.dropButtons(chatId, cq.message.message_id);
           if (parts[1] === 'c') {
             await out.answerCb(cq.id, 'Дописываю…');
             if (!(await chatMod.continueLast(chatId))) await out.sendHtml(chatId, 'Нечего продолжать — напиши сообщение ещё раз.');
