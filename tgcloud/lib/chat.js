@@ -47,7 +47,7 @@ export function createChat(D) {
   // Черновик живёт ~30 секунд как «живое превью»; итоговое сообщение отправляем обычным sendMessage.
   // Если Telegram не принимает черновики — просто молча отвечаем целиком.
 
-  function draftStreamer(chatId) {
+  function draftStreamer(chatId, { rich: richDraft = true } = {}) {
     const draftId = randomDraftId();
     const stopKey = `${chatId}:${draftId}`;
     let failed = false;
@@ -56,7 +56,7 @@ export function createChat(D) {
     let lastPing = 0;
     let pausedUntil = 0;
     let plain = false; // Telegram не принял HTML черновика — дальше шлём простым текстом
-    let rich = !!cfg.richMessages; // черновик Rich-сообщением (sendRichMessageDraft); при отказе — обычный
+    let rich = !!cfg.richMessages && richDraft; // черновик Rich-сообщением (sendRichMessageDraft); при отказе — обычный
 
     const push = async (text) => {
       if (rich && text) {

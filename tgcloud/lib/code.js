@@ -113,7 +113,18 @@ export function createCode(D) {
     return true;
   }
 
+  // Вызов бота живёт ~30 с, а код пишется минуту и больше. Поэтому задача идёт шагами:
+  // подготовка (репозиторий, файлы) → кусок кода (до cfg.cutAfterMs) → кнопка «Дописать» → … → предпросмотр.
+  // Состояние задачи — в настройке code_job: что прочитано и сколько кода уже написано.
+
+  const JOB = 'code_job';
+  const CONTINUE_CODE = 'Твой ответ оборвался на полуслове (кончилось время вызова). Продолжи РОВНО с того места, где он закончился: не повторяй уже написанное, не начинай заново, сохраняй тот же формат с маркерами @@@. Если ты уже закончил — выведи только последнюю строку «@@@ END», если файл открыт, иначе ничего.';
+  const loadJob = async () => safeJson(await store.getSetting(JOB), null);
+  const saveJob = (job) => store.setSetting(JOB, job ? JSON.stringify(job) : null);
+  const jobButton = (label) => ({ reply_markup: kb([[{ text: label, callback_data: 'x:cj', style: 'primary' }, { text: '✖️ Отмена', callback_data: 'x:cjx', style: 'danger' }]]) });
+
   async function runTask(chatId, task) {
+    const t0 = D.t0 ?? Date.now();
     const full = await store.getSetting('gh_repo');
     try {
       const repo = await gh().getRepo(full);
@@ -145,24 +156,105 @@ export function createCode(D) {
       const contents = [];
       for (const p of readPaths) contents.push({ path: p, text: await gh().getFile(repo.full_name, p, branch) });
 
-      // 2) изменения
-      await out.sendHtml(chatId, `✍️ Читал файлов: ${contents.length}. Пишу код — это может занять минуту…`);
-      await out.typing(chatId);
       const user =
         `ЗАДАНИЕ:\n${task}\n\n` +
         `ВСЕ ФАЙЛЫ (пути):\n${cands.map((f) => f.path).join('\n') || '(пусто)'}\n\n` +
         contents.map((c) => `=== СОДЕРЖИМОЕ ${c.path} ===\n${c.text}\n=== КОНЕЦ ${c.path} ===`).join('\n\n');
-      const res = await core.generate({
-        model,
-        messages: [{ role: 'system', content: codeSystem({ repo: repo.full_name, branch, empty: tree.empty }) }, { role: 'user', content: user }],
-        maxTokens: cfg.maxTokensCode,
-        stream: true,
-        think: await core.thinkLevel(),
-      });
-      await prepareDraft(chatId, { task, repo, branch, tree, text: res.text, finish: res.finish });
+      const job = {
+        task,
+        repo: { full_name: repo.full_name, private: !!repo.private, default_branch: branch },
+        branch,
+        tree: { empty: !!tree.empty, files: tree.files.map((f) => ({ path: f.path })) },
+        user,
+        text: '',
+        steps: 0,
+        files: contents.length,
+      };
+      await saveJob(job);
+
+      // на подготовку ушло много времени — не начинаем писать код, который всё равно оборвётся
+      if (cfg.cutAfterMs && Date.now() - t0 > cfg.cutAfterMs * 0.6) {
+        await out.sendHtml(chatId, `✅ Подготовлено: прочитано файлов — ${contents.length}. Теперь писать код:`, jobButton('✍️ Писать код'));
+        return;
+      }
+      await out.sendHtml(chatId, `✍️ Читал файлов: ${contents.length}. Пишу код…`);
+      await writeSlice(chatId, job);
     } catch (e) {
       await fail(chatId, e);
     }
+  }
+
+  /** Один кусок кода (до срока вызова). Закончили — предпросмотр; нет — сохраняем написанное и даём кнопку «Дописать». */
+  async function writeSlice(chatId, job) {
+    const model = await core.ownerModel();
+    const messages = [
+      { role: 'system', content: codeSystem({ repo: job.repo.full_name, branch: job.branch, empty: job.tree.empty }) },
+      { role: 'user', content: job.user },
+    ];
+    if (job.text) messages.push({ role: 'assistant', content: job.text }, { role: 'user', content: CONTINUE_CODE });
+    const streamer = D.draftStreamer ? D.draftStreamer(chatId, { rich: false }) : null;
+    if (streamer) await streamer.start();
+    let res;
+    try {
+      res = await core.generate({
+        model,
+        messages,
+        maxTokens: cfg.maxTokensCode,
+        stream: true,
+        onProgress: streamer?.onProgress,
+        think: job.steps ? null : await core.thinkLevel(), // размышления — только на первом куске
+      });
+    } catch (e) {
+      // уже написанное не теряем: можно повторить шаг
+      if ((e instanceof LlmError || e instanceof LimitError) && job.text) {
+        await out.sendHtml(chatId, escapeHtml(e.userMessage) + `\n\nУже написано ~${kb1(utf8Encode(job.text).length)} кода — оно сохранено.`, jobButton('🔄 Повторить шаг'));
+        return;
+      }
+      if (e instanceof LlmError && e.kind === 'timeout') {
+        await out.sendHtml(chatId, escapeHtml(e.userMessage), jobButton('🔄 Повторить'));
+        return;
+      }
+      throw e;
+    }
+    if (res.cut) {
+      job.text += res.text;
+      job.steps = (job.steps ?? 0) + 1;
+      await saveJob(job);
+      await out.sendHtml(chatId, `⏱ Шаг ${job.steps}: написано ~${kb1(utf8Encode(job.text).length)} кода, модель ещё пишет (вызов бота ограничен ~30 секундами). Жми «Дописать».`, jobButton('▶️ Дописать'));
+      return;
+    }
+    const text = job.text + res.text;
+    await saveJob(null);
+    await prepareDraft(chatId, { task: job.task, repo: job.repo, branch: job.branch, tree: job.tree, text, finish: res.finish });
+  }
+
+  async function continueJob(chatId) {
+    const job = await loadJob();
+    if (!job) return false;
+    // защита от двойного нажатия: два куска одновременно испортили бы текст
+    if (job.busy && Date.now() - job.busy < 60000) {
+      await out.sendHtml(chatId, '⏳ Уже пишу — подожди результата.');
+      return true;
+    }
+    job.busy = Date.now();
+    await saveJob(job);
+    try {
+      job.busy = undefined;
+      await writeSlice(chatId, job);
+    } catch (e) {
+      const j = await loadJob();
+      if (j) {
+        j.busy = undefined;
+        await saveJob(j);
+      }
+      await fail(chatId, e);
+    }
+    const j = await loadJob();
+    if (j?.busy) {
+      j.busy = undefined;
+      await saveJob(j);
+    }
+    return true;
   }
 
   async function prepareDraft(chatId, { task, repo, branch, tree, text, finish }) {
@@ -462,6 +554,17 @@ export function createCode(D) {
     const chatId = cq.message.chat.id;
 
     if (ACTION_ACTS.has(act)) return actions.callback(cq, parts);
+
+    if (act === 'cj' || act === 'cjx') {
+      await out.dropButtons(chatId, cq.message.message_id);
+      if (act === 'cjx') {
+        await saveJob(null);
+        return out.answerCb(cq.id, 'Задача отменена');
+      }
+      await out.answerCb(cq.id, 'Пишу…');
+      if (!(await continueJob(chatId))) await out.sendHtml(chatId, 'Нет начатой задачи — опиши её заново: /code');
+      return;
+    }
 
     if (act === 'r') {
       const names = safeJson(await store.getSetting('gh_repos'), []);

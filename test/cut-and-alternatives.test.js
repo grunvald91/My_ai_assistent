@@ -169,3 +169,44 @@ test('цвета кнопок: подтверждение памяти — зе�
   const btn = w.last(OWNER).reply_markup.inline_keyboard.flat().find((b) => b.callback_data?.startsWith('mem:y:'));
   assert.equal(btn.style, 'success');
 });
+
+test('/code идёт шагами: кусок кода оборвали по сроку → «Дописать» → продолжение → предпросмотр с кнопками', async () => {
+  const w = await createWorld({ cfg: { cutAfterMs: 400 } });
+  w.gh.repos['me/site'] = { default_branch: 'main', private: true, files: { 'a.js': 'x' } };
+  await w.say('/repo me/site');
+  w.clear();
+  w.llmReplies.push('NONE', { stall: '@@@ COMMIT: add b\n@@@ SUMMARY: делаю\n@@@ FILE create b.js\nconsole.log(1)\n' });
+  await w.say('/code добавь b.js');
+  const m = w.last(OWNER);
+  assert.match(m.text, /Шаг 1/);
+  const cont = m.reply_markup.inline_keyboard.flat().find((b) => b.callback_data === 'x:cj');
+  assert.ok(cont, 'кнопка «Дописать»');
+
+  w.clear();
+  w.llmReplies.push('console.log(2)\n@@@ END');
+  await w.press('x:cj');
+  const sent = w.llmCalls[0].messages;
+  assert.match(sent.at(-2).content, /FILE create b\.js/, 'модель видит уже написанное');
+  const preview = w.last(OWNER);
+  assert.match(preview.text, /b\.js/);
+  assert.ok(preview.reply_markup.inline_keyboard.flat().some((b) => b.callback_data?.startsWith('x:pr:')));
+
+  // задача закрыта: повторное нажатие не воскрешает её
+  w.clear();
+  await w.press('x:cj');
+  assert.match(w.last(OWNER).text, /Нет начатой задачи/);
+});
+
+test('/code: ошибка модели на втором шаге не теряет написанное — кнопка повторить шаг', async () => {
+  const w = await createWorld({ cfg: { cutAfterMs: 400 } });
+  w.gh.repos['me/site'] = { default_branch: 'main', files: { 'a.js': 'x' } };
+  await w.say('/repo me/site');
+  w.llmReplies.push('NONE', { stall: '@@@ FILE create b.js\nчасть' });
+  await w.say('/code добавь b.js');
+  w.clear();
+  w.llmReplies.push({ status: 400, body: { error: { message: 'bad' } } });
+  await w.press('x:cj');
+  const m = w.last(OWNER);
+  assert.match(m.text, /сохранено/);
+  assert.ok(m.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'x:cj'));
+});

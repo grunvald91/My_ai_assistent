@@ -31,6 +31,7 @@ export function createApp(base) {
   const { out, core } = D;
   const chatMod = createChat(D);
   D.notifyOwnerOnce = chatMod.notifyOwnerOnce;
+  D.draftStreamer = chatMod.draftStreamer; // стрим-черновик нужен и /code
   const posts = createPosts(D);
   const business = createBusiness(D);
   const replies = createReplies(D);

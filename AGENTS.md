@@ -181,3 +181,4 @@ Architecture and setup are in [README.md](README.md); requirements in [tz-telegr
 - Ответы владельцу уходят `sendRichMessage` (`rich_message.markdown`, до 32768 симв., таблицы/цитаты/код), стрим — `sendRichMessageDraft`; `cfg.richMessages` выключает. При любой ошибке — обычный HTML-путь (`out.sendText({ rich: true })`). `richMarkdown()` экранирует «$» вне кода. В тестах Rich по умолчанию выключен (`world.js`).
 - `out.ask()` — вопрос с `force_reply` в inline-клавиатуре + кнопка «Отмена» (`r:x`).
 - Цвета кнопок — поле `style`: `success` (отправить/опубликовать/запомнить), `danger` (отмена/стереть), `primary`.
+- `/code` идёт шагами (`code_job` в settings): подготовка → куски кода по `cfg.cutAfterMs` → кнопка `x:cj` «Дописать» → предпросмотр. Платформа убивает вызов за ~30 с, один вызов на всю задачу не годится.
