@@ -3,7 +3,7 @@
 // workflow выводит его в лог Actions, а репозиторий публичный.
 
 import { db, api, fetch, EndpointError } from 'sdk';
-import { desc, eq } from 'sdk/db';
+import { desc, eq, sql } from 'sdk/db';
 import * as T from '../schema.js';
 import { OWNER_IDS, CLAUDEHUB_API_KEY, GH_PAT, SELF_REPO } from '../lib/secrets.js';
 import { API_BASE } from '../lib/config.js';
@@ -125,25 +125,42 @@ export default async function (input, ctx) {
     }
   });
 
-  // Atomics.waitAsync как таймер: обычных таймеров в среде нет
+  // Atomics.waitAsync как таймер: обычных таймеров в среде нет. Проверяем без риска зависнуть: ждём не await'ом, а опросом БД (до 3 с)
   const atomicsTimer = await probe('Atomics.waitAsync как таймер', async () => {
     if (typeof SharedArrayBuffer === 'undefined') return { note: 'нет SharedArrayBuffer' };
-    const ia = new Int32Array(new SharedArrayBuffer(4));
-    const t1 = Date.now();
-    const r1 = Atomics.waitAsync(ia, 0, 0, 300);
-    const v1 = await r1.value;
-    const e1 = Date.now() - t1;
-    const t2 = Date.now();
-    const r2 = Atomics.waitAsync(ia, 0, 0, 5000);
-    Atomics.notify(ia, 0);
-    const v2 = await r2.value;
-    const e2 = Date.now() - t2;
-    // гонка: долгий запрос против таймера 500 мс
-    const t3 = Date.now();
-    const ia3 = new Int32Array(new SharedArrayBuffer(4));
-    const slow = fetch('https://httpbin.org/delay/4').then(() => 'fetch').catch(() => 'fetch_err');
-    const win = await Promise.race([slow, Atomics.waitAsync(ia3, 0, 0, 500).value.then(() => 'timer')]);
-    return { wait300: { result: v1, ms: e1 }, notify_wakes: { result: v2, ms: e2 }, race: { winner: win, ms: Date.now() - t3 } };
+    const out = {};
+    const poll = async (flag, limitMs) => {
+      const t = Date.now();
+      let n = 0;
+      while (!flag.done && Date.now() - t < limitMs) {
+        await db.get(sql`SELECT 1 AS x`);
+        n++;
+      }
+      return n;
+    };
+    // 1) таймер 200 мс
+    {
+      const ia = new Int32Array(new SharedArrayBuffer(4));
+      const flag = { done: false };
+      const t = Date.now();
+      const r = Atomics.waitAsync(ia, 0, 0, 200);
+      out.sync_result = r.async ? 'async' : String(r.value);
+      Promise.resolve(r.async ? r.value : r.value).then((v) => Object.assign(flag, { done: true, v: String(v), ms: Date.now() - t }));
+      out.polls1 = await poll(flag, 3000);
+      out.timer200 = flag.done ? { fired: true, result: flag.v, ms: flag.ms } : { fired: false };
+    }
+    // 2) notify будит ожидание
+    {
+      const ia = new Int32Array(new SharedArrayBuffer(4));
+      const flag = { done: false };
+      const t = Date.now();
+      const r = Atomics.waitAsync(ia, 0, 0, 60000);
+      Promise.resolve(r.value).then((v) => Object.assign(flag, { done: true, v: String(v), ms: Date.now() - t }));
+      Atomics.notify(ia, 0);
+      out.polls2 = await poll(flag, 3000);
+      out.notify = flag.done ? { woke: true, result: flag.v, ms: flag.ms } : { woke: false };
+    }
+    return out;
   });
 
   // метаданные последних сообщений владельца (длина и модель; без текстов)

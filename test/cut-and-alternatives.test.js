@@ -290,3 +290,18 @@ test('/code: повтор после сбоя, когда ветка и PR уж�
   assert.ok(w.gh.refs.some((r) => r.kind === 'update'), 'ветка передвинута на свежий коммит, а не создана заново');
   assert.equal((await w.store.getDraft(draftId)).status, 'published');
 });
+
+test('timer: Atomics.waitAsync срабатывает по времени и снимается notify', async () => {
+  const { timeout } = await import('../tgcloud/lib/timer.js');
+  const keepAlive = setTimeout(() => {}, 3000); // в Node ожидание waitAsync само цикл событий не держит; в изоляте Telegram держит сам вызов бота
+  const t0 = Date.now();
+  await timeout(120, { mode: 'atomics' }).promise;
+  const took = Date.now() - t0;
+  assert.ok(took >= 100 && took < 1000, 'сработал примерно через 120 мс: ' + took);
+  const t1 = Date.now();
+  const t = timeout(5000, { mode: 'atomics' });
+  t.cancel();
+  await t.promise;
+  assert.ok(Date.now() - t1 < 500, 'cancel будит ожидание сразу');
+  clearTimeout(keepAlive);
+});

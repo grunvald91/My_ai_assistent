@@ -14,6 +14,7 @@
 import { createSseParser } from './sse.js';
 import { createUtf8Decoder } from './utf8.js';
 import { API_BASE } from './config.js';
+import { available as timerAvailable, timeout } from './timer.js';
 
 export class LlmError extends Error {
   constructor(kind, message, { status = 0, retryAfter = 0, retryable = false } = {}) {
@@ -149,15 +150,12 @@ function thinkBody(mode, think, maxTokens) {
   return null;
 }
 
-/** Гонка с таймером срока; таймер всегда снимается. Если setTimeout в среде нет — срок проверяется только между порциями. */
+/** Гонка с таймером срока; таймер всегда снимается. Если таймера в среде нет совсем — срок проверяется только между порциями. */
 const TIMED_OUT = Symbol('timeout');
 function withDeadline(p, ms) {
-  if (typeof setTimeout !== 'function') return p;
-  let id;
-  const t = new Promise((r) => {
-    id = setTimeout(() => r(TIMED_OUT), Math.max(0, ms));
-  });
-  return Promise.race([p, t]).finally(() => clearTimeout(id));
+  if (!timerAvailable()) return p;
+  const t = timeout(ms);
+  return Promise.race([p, t.promise.then(() => TIMED_OUT)]).finally(() => t.cancel());
 }
 
 export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => {}, retries = 2 }) {
