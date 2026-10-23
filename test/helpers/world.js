@@ -170,7 +170,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
     return jsonRes(404, {});
   };
 
-  const llm = createLlm({ fetch: globalThis.__fetch, apiKey: 'sk-hub-test', base: API_BASE, sleep: async () => {}, retries: 2 });
+  const llm = createLlm({ fetch: globalThis.__fetch, apiKey: 'sk-hub-test', base: API_BASE, sleep: async () => {}, retries: 2, pulse: store.ping });
   const app = createApp({
     api: new Proxy({}, { get: (_, m) => (typeof m === 'string' && m !== 'then' ? (p) => globalThis.__tg(m, p ?? {}) : undefined) }),
     store,

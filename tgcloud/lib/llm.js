@@ -150,15 +150,31 @@ function thinkBody(mode, think, maxTokens) {
   return null;
 }
 
-/** Гонка с таймером срока; таймер всегда снимается. Если таймера в среде нет совсем — срок проверяется только между порциями. */
+/**
+ * Гонка со сроком. В изоляте Telegram ни setTimeout, ни Atomics.waitAsync не срабатывают, пока вызов целиком висит на ожидании
+ * ответа модели (проверено диагностикой): время «идёт» только тогда, когда изолят выполняет другие обращения к платформе.
+ * Поэтому, если передан pulse (лёгкий запрос к БД), срок отслеживается циклом: pulse → проверка часов, пока ожидание не завершится.
+ * Без pulse — обычный таймер; если и его нет — срок проверяется только между порциями данных.
+ */
 const TIMED_OUT = Symbol('timeout');
-function withDeadline(p, ms) {
+function withDeadline(p, ms, pulse) {
+  if (pulse) {
+    let done = false;
+    const end = Date.now() + ms;
+    const ticker = (async () => {
+      while (!done && Date.now() < end) await pulse();
+      return TIMED_OUT;
+    })();
+    return Promise.race([p, ticker]).finally(() => {
+      done = true;
+    });
+  }
   if (!timerAvailable()) return p;
   const t = timeout(ms);
   return Promise.race([p, t.promise.then(() => TIMED_OUT)]).finally(() => t.cancel());
 }
 
-export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => {}, retries = 2 }) {
+export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => {}, retries = 2, pulse = null }) {
   const authHeaders = () => ({ Authorization: 'Bearer ' + apiKey });
 
   async function once({ model, messages, maxTokens, temperature, stream, onProgress, think, st, deadline }) {
@@ -204,7 +220,7 @@ export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => 
       const pending = fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
       if (deadline) {
         pending.catch(() => {}); // если выиграл таймер — позднюю ошибку запроса не разбираем
-        const r = await withDeadline(pending, left());
+        const r = await withDeadline(pending, left(), pulse);
         if (r === TIMED_OUT) throw late();
         res = r;
       } else res = await pending;
@@ -322,7 +338,7 @@ export function createLlm({ fetch, apiKey, base = API_BASE, sleep = async () => 
         let step;
         if (deadline) {
           next.catch(() => {});
-          step = await withDeadline(next, left());
+          step = await withDeadline(next, left(), pulse);
           if (step === TIMED_OUT) {
             cut = true;
             break;

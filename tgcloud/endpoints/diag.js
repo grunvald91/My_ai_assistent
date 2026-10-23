@@ -9,6 +9,8 @@ import { OWNER_IDS, CLAUDEHUB_API_KEY, GH_PAT, SELF_REPO } from '../lib/secrets.
 import { API_BASE } from '../lib/config.js';
 import { parseIdList } from '../lib/util.js';
 import { timeout } from '../lib/timer.js';
+import { createLlm } from '../lib/llm.js';
+import { ping } from '../lib/store.js';
 
 const MAX_PROBE_MS = 60000; // чтобы сама диагностика не повисла, если сервис молчит
 
@@ -203,6 +205,20 @@ export default async function (input, ctx) {
     return out;
   });
 
+  // Сквозная проверка: настоящий клиент модели с пульсом против медленного ответа (4 с) при сроке 1,5 с
+  const llmDeadline = await probe('Клиент модели: срок при медленном ответе', async () => {
+    const llm = createLlm({ fetch: () => fetch('https://httpbin.org/delay/4'), apiKey: 'x', base: 'https://x.invalid', retries: 0, pulse: ping });
+    const t0 = Date.now();
+    let outcome;
+    try {
+      const r = await llm.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }], deadline: Date.now() + 1500 });
+      outcome = 'вернул: ' + JSON.stringify({ cut: r.cut, finish: r.finish }).slice(0, 100);
+    } catch (e) {
+      outcome = 'ошибка: ' + String(e?.kind ?? '') + ' / ' + String(e?.message ?? e).slice(0, 80);
+    }
+    return { ms: Date.now() - t0, outcome };
+  });
+
   // метаданные последних сообщений владельца (длина и модель; без текстов)
   const lastMsgs = (await db.select().from(T.messages).where(eq(T.messages.chatKey, String(owner))).orderBy(desc(T.messages.id)).limit(8).all()).map((m) => ({
     role: m.role, chars: m.text.length, model: m.model ?? null, age_s: now - m.ts, clip: m.text.startsWith('📎'), reply: m.text.startsWith('↪️'),
@@ -219,6 +235,7 @@ export default async function (input, ctx) {
     timers,
     atomicsTimer,
     deadlineProbe,
+    llmDeadline,
     last_messages: lastMsgs,
     chat_model: ownerChat?.model ?? null,
     settings: { auto: sets.auto, think: sets.think, att_last: sets.att_last ? 'есть' : null, default_model: sets.default_model },

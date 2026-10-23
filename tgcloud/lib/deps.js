@@ -11,7 +11,7 @@ import { CLAUDEHUB_API_KEY, OWNER_IDS, GH_PAT, SELF_REPO } from './secrets.js';
 
 const sleep = (ms) => (typeof setTimeout === 'function' ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
 
-const llm = createLlm({ fetch, apiKey: CLAUDEHUB_API_KEY, base: API_BASE, sleep, retries: DEFAULTS.retries });
+const llm = createLlm({ fetch, apiKey: CLAUDEHUB_API_KEY, base: API_BASE, sleep, retries: DEFAULTS.retries, pulse: store.ping });
 
 export const app = createApp({
   api,

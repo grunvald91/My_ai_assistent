@@ -10,6 +10,11 @@ const one = (row) => row ?? null;
 
 // ───────────── настройки ─────────────
 
+/** Самый лёгкий запрос к БД: «пульс» для отслеживания срока, пока вызов ждёт ответа модели (см. llm.js withDeadline). */
+export async function ping() {
+  await db.get(sql`SELECT 1 AS x`);
+}
+
 export async function getSetting(key) {
   const r = one(await db.select().from(T.settings).where(eq(T.settings.key, key)).get());
   return r ? r.value : null;
