@@ -205,18 +205,27 @@ export default async function (input, ctx) {
     return out;
   });
 
-  // Сквозная проверка: настоящий клиент модели с пульсом против медленного ответа (4 с) при сроке 1,5 с
+  // Сквозная проверка: настоящий клиент модели с пульсом против медленного ответа (4 с) при сроке 1,5 с.
+  // Не ждём результат напрямую (вдруг зависнет): запускаем и опрашиваем БД не дольше 8 с, ведя протокол.
   const llmDeadline = await probe('Клиент модели: срок при медленном ответе', async () => {
-    const llm = createLlm({ fetch: () => fetch('https://httpbin.org/delay/4'), apiKey: 'x', base: 'https://x.invalid', retries: 0, pulse: ping });
+    const trace = [];
     const t0 = Date.now();
-    let outcome;
-    try {
-      const r = await llm.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }], deadline: Date.now() + 1500 });
-      outcome = 'вернул: ' + JSON.stringify({ cut: r.cut, finish: r.finish }).slice(0, 100);
-    } catch (e) {
-      outcome = 'ошибка: ' + String(e?.kind ?? '') + ' / ' + String(e?.message ?? e).slice(0, 80);
-    }
-    return { ms: Date.now() - t0, outcome };
+    const mark = (m) => trace.push(m + '@' + (Date.now() - t0));
+    const llm = createLlm({
+      fetch: () => {
+        mark('fetch_called');
+        return fetch('https://httpbin.org/delay/4').then((r) => { mark('fetch_resolved'); return r; });
+      },
+      apiKey: 'x', base: 'https://x.invalid', retries: 0,
+      pulse: async () => { await ping(); },
+    });
+    let outcome = null;
+    llm.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }], deadline: Date.now() + 1500 }).then(
+      (r) => { outcome = 'вернул: ' + JSON.stringify({ cut: r.cut, finish: r.finish }).slice(0, 100); mark('chat_returned'); },
+      (e) => { outcome = 'ошибка: ' + String(e?.kind ?? '') + ' / ' + String(e?.message ?? e).slice(0, 80); mark('chat_threw'); },
+    );
+    while (outcome === null && Date.now() - t0 < 8000) await ping();
+    return { ms: Date.now() - t0, outcome: outcome ?? 'не завершилось за 8 с', trace };
   });
 
   // метаданные последних сообщений владельца (длина и модель; без текстов)
