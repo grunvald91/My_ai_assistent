@@ -340,7 +340,7 @@ export function createChat(D) {
         console.warn('alternatives failed', err?.message ?? err); // кнопки замены — удобство, без них ошибка всё равно показана
       }
     }
-    if (e instanceof LlmError && ['rate', 'upstream', 'network'].includes(e.kind)) rows.push([{ text: '🔄 Повторить', callback_data: 'r:1' }]);
+    if (e instanceof LlmError && ['rate', 'upstream', 'network', 'timeout'].includes(e.kind)) rows.push([{ text: '🔄 Повторить', callback_data: 'r:1' }]);
     if (userText && userText.length <= 256) rows.push([{ text: '📋 Скопировать моё сообщение', copy_text: { text: userText } }]);
     return rows;
   }

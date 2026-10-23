@@ -8,6 +8,7 @@ import * as T from '../schema.js';
 import { OWNER_IDS, CLAUDEHUB_API_KEY, GH_PAT, SELF_REPO } from '../lib/secrets.js';
 import { API_BASE } from '../lib/config.js';
 import { parseIdList } from '../lib/util.js';
+import { timeout } from '../lib/timer.js';
 
 const MAX_PROBE_MS = 60000; // чтобы сама диагностика не повисла, если сервис молчит
 
@@ -163,6 +164,16 @@ export default async function (input, ctx) {
     return out;
   });
 
+  // боевая проверка срока: зависший запрос (httpbin отвечает через 8 с) должен быть прерван таймером за ~1 с
+  const deadlineProbe = await probe('Срок прерывает зависший запрос', async () => {
+    const t0 = Date.now();
+    const t = timeout(1000);
+    const slow = fetch('https://httpbin.org/delay/8').then(() => 'fetch', () => 'fetch_err');
+    const winner = await Promise.race([slow, t.promise.then(() => 'timer')]);
+    t.cancel();
+    return { winner, ms: Date.now() - t0, note: winner === 'timer' ? 'срок сработал раньше запроса — как и нужно' : 'выиграл запрос (сервис быстрый или недоступен) — проверка не показательна' };
+  });
+
   // метаданные последних сообщений владельца (длина и модель; без текстов)
   const lastMsgs = (await db.select().from(T.messages).where(eq(T.messages.chatKey, String(owner))).orderBy(desc(T.messages.id)).limit(8).all()).map((m) => ({
     role: m.role, chars: m.text.length, model: m.model ?? null, age_s: now - m.ts, clip: m.text.startsWith('📎'), reply: m.text.startsWith('↪️'),
@@ -178,6 +189,7 @@ export default async function (input, ctx) {
     db_write: dbWrite,
     timers,
     atomicsTimer,
+    deadlineProbe,
     last_messages: lastMsgs,
     chat_model: ownerChat?.model ?? null,
     settings: { auto: sets.auto, think: sets.think, att_last: sets.att_last ? 'есть' : null, default_model: sets.default_model },
