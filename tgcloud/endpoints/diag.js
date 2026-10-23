@@ -103,13 +103,45 @@ export default async function (input, ctx) {
     btoa: typeof btoa,
     Blob: typeof Blob,
     setTimeout: typeof setTimeout,
+    setInterval: typeof setInterval,
+    AbortController: typeof AbortController,
+    AbortSignal_timeout: typeof AbortSignal !== 'undefined' ? typeof AbortSignal.timeout : 'no AbortSignal',
+    scheduler: typeof scheduler,
+    Atomics_waitAsync: typeof Atomics !== 'undefined' ? typeof Atomics.waitAsync : 'no Atomics',
+    queueMicrotask: typeof queueMicrotask,
+    performance: typeof performance,
+    MessageChannel: typeof MessageChannel,
   };
+
+  // Есть ли в среде хоть какой-то таймер: AbortSignal.timeout обрывает долгий запрос сам, без setTimeout
+  const timers = await probe('AbortSignal.timeout обрывает запрос', async () => {
+    if (typeof AbortSignal === 'undefined' || typeof AbortSignal.timeout !== 'function') return { note: 'нет AbortSignal.timeout' };
+    const t = Date.now();
+    try {
+      await fetch('https://httpbin.org/delay/4', { signal: AbortSignal.timeout(500) });
+      return { aborted: false, took_ms: Date.now() - t, note: 'запрос дошёл до конца, таймер не сработал (или сервис недоступен)' };
+    } catch (e) {
+      return { aborted: true, took_ms: Date.now() - t, note: String(e?.name ?? '') + ' ' + String(e?.message ?? e).slice(0, 80) };
+    }
+  });
+
+  // метаданные последних сообщений владельца (длина и модель; без текстов)
+  const lastMsgs = (await db.select().from(T.messages).where(eq(T.messages.chatKey, String(owner))).orderBy(desc(T.messages.id)).limit(8).all()).map((m) => ({
+    role: m.role, chars: m.text.length, model: m.model ?? null, age_s: now - m.ts, clip: m.text.startsWith('📎'), reply: m.text.startsWith('↪️'),
+  }));
+  const ownerChat = await db.select().from(T.chats).where(eq(T.chats.chatId, owner)).get();
+  const sets = {};
+  for (const k of ['auto', 'think', 'att_last', 'default_model']) sets[k] = (await db.select().from(T.settings).where(eq(T.settings.key, k)).get())?.value ?? null;
 
   return {
     now,
     env,
     webhook,
     db_write: dbWrite,
+    timers,
+    last_messages: lastMsgs,
+    chat_model: ownerChat?.model ?? null,
+    settings: { auto: sets.auto, think: sets.think, att_last: sets.att_last ? 'есть' : null, default_model: sets.default_model },
     recent_updates: recent.map((u) => ({ id: u.updateId, status: u.status, age_s: now - u.ts })),
     probes,
     stuck_updates: stuck.map((u) => ({ id: u.updateId, age_s: now - u.ts })),
