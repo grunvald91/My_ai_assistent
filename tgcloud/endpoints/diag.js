@@ -164,14 +164,43 @@ export default async function (input, ctx) {
     return out;
   });
 
-  // боевая проверка срока: зависший запрос (httpbin отвечает через 8 с) должен быть прерван таймером за ~1 с
-  const deadlineProbe = await probe('Срок прерывает зависший запрос', async () => {
-    const t0 = Date.now();
-    const t = timeout(1000);
-    const slow = fetch('https://httpbin.org/delay/8').then(() => 'fetch', () => 'fetch_err');
-    const winner = await Promise.race([slow, t.promise.then(() => 'timer')]);
-    t.cancel();
-    return { winner, ms: Date.now() - t0, note: winner === 'timer' ? 'срок сработал раньше запроса — как и нужно' : 'выиграл запрос (сервис быстрый или недоступен) — проверка не показательна' };
+  // Боевая проверка срока: медленный запрос (httpbin отвечает через 4 с) — кто успеет раньше, срок в 1 с или ответ?
+  const slowFetch = () => fetch('https://httpbin.org/delay/4').then(() => 'fetch', () => 'fetch_err');
+  const deadlineProbe = await probe('Срок против зависшего запроса', async () => {
+    const out = {};
+    // A) только Atomics-таймер
+    {
+      const t0 = Date.now();
+      const t = timeout(1000);
+      const w = await Promise.race([slowFetch(), t.promise.then(() => 'timer')]);
+      t.cancel();
+      out.A_timer_only = { winner: w, ms: Date.now() - t0 };
+    }
+    // B) опрос БД: цикл «запрос к БД → проверка часов», пока идёт запрос
+    {
+      const t0 = Date.now();
+      let n = 0;
+      const ticker = (async () => {
+        while (Date.now() - t0 < 1000) { await db.get(sql`SELECT 1 AS x`); n++; }
+        return 'ticker';
+      })();
+      const w = await Promise.race([slowFetch(), ticker]);
+      out.B_db_ticker = { winner: w, ms: Date.now() - t0, polls: n };
+    }
+    // C) Atomics-таймер, а рядом крутится цикл опроса БД (держит «пульс»)
+    {
+      const t0 = Date.now();
+      let stop = false;
+      let n = 0;
+      const pump = (async () => { while (!stop) { await db.get(sql`SELECT 1 AS x`); n++; } })();
+      const t = timeout(1000);
+      const w = await Promise.race([slowFetch(), t.promise.then(() => 'timer')]);
+      stop = true;
+      t.cancel();
+      await pump;
+      out.C_timer_plus_pump = { winner: w, ms: Date.now() - t0, polls: n };
+    }
+    return out;
   });
 
   // метаданные последних сообщений владельца (длина и модель; без текстов)
