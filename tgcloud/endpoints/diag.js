@@ -125,6 +125,27 @@ export default async function (input, ctx) {
     }
   });
 
+  // Atomics.waitAsync как таймер: обычных таймеров в среде нет
+  const atomicsTimer = await probe('Atomics.waitAsync как таймер', async () => {
+    if (typeof SharedArrayBuffer === 'undefined') return { note: 'нет SharedArrayBuffer' };
+    const ia = new Int32Array(new SharedArrayBuffer(4));
+    const t1 = Date.now();
+    const r1 = Atomics.waitAsync(ia, 0, 0, 300);
+    const v1 = await r1.value;
+    const e1 = Date.now() - t1;
+    const t2 = Date.now();
+    const r2 = Atomics.waitAsync(ia, 0, 0, 5000);
+    Atomics.notify(ia, 0);
+    const v2 = await r2.value;
+    const e2 = Date.now() - t2;
+    // гонка: долгий запрос против таймера 500 мс
+    const t3 = Date.now();
+    const ia3 = new Int32Array(new SharedArrayBuffer(4));
+    const slow = fetch('https://httpbin.org/delay/4').then(() => 'fetch').catch(() => 'fetch_err');
+    const win = await Promise.race([slow, Atomics.waitAsync(ia3, 0, 0, 500).value.then(() => 'timer')]);
+    return { wait300: { result: v1, ms: e1 }, notify_wakes: { result: v2, ms: e2 }, race: { winner: win, ms: Date.now() - t3 } };
+  });
+
   // метаданные последних сообщений владельца (длина и модель; без текстов)
   const lastMsgs = (await db.select().from(T.messages).where(eq(T.messages.chatKey, String(owner))).orderBy(desc(T.messages.id)).limit(8).all()).map((m) => ({
     role: m.role, chars: m.text.length, model: m.model ?? null, age_s: now - m.ts, clip: m.text.startsWith('📎'), reply: m.text.startsWith('↪️'),
@@ -139,6 +160,7 @@ export default async function (input, ctx) {
     webhook,
     db_write: dbWrite,
     timers,
+    atomicsTimer,
     last_messages: lastMsgs,
     chat_model: ownerChat?.model ?? null,
     settings: { auto: sets.auto, think: sets.think, att_last: sets.att_last ? 'есть' : null, default_model: sets.default_model },
