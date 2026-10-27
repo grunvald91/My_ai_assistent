@@ -142,7 +142,12 @@ export function createBg(D, chatMod) {
       for (let i = 0; i < meta.an; i++) text += (await store.getSetting(`bg:${job}:a${i}`)) ?? '';
       const tokensOut = meta.usage?.out ?? estimateTokens(text);
       const tokensIn = meta.usage?.in ?? meta.estIn ?? 0;
-      await core.recordUsage(meta.model, tokensIn, tokensOut);
+      if (!meta.billed) {
+        // расход — ровно один раз, даже если выдача сорвётся и ответ потом заберут кнопкой
+        await core.recordUsage(meta.model, tokensIn, tokensOut);
+        meta.billed = true;
+        await saveMeta(job, { ...meta, state: 'delivering' });
+      }
       await chatMod.publishOwnerReply(meta.chatId, { text, finish: meta.why, tokensOut }, { model: { id: meta.model }, repoLen: meta.repoLen });
       await store.trimMessages(String(meta.chatId), 300);
       if (meta.statusMsg) await out.editHtml(meta.chatId, meta.statusMsg, `✅ <b>${escapeHtml(meta.model)}</b>: ответ готов — он ниже.`, null).catch(() => {});
@@ -167,7 +172,9 @@ export function createBg(D, chatMod) {
     const meta = await metaOf(id);
     if (act === 'x') {
       if (!meta || meta.state === 'delivering') return void (await out.answerCb(cq.id, 'Уже поздно: ответ выдан или задачи нет', true));
-      await saveMeta(id, { ...meta, state: 'canceled' });
+      // готовый, но не выданный ответ задача уже не пришлёт повторно — убираем сразу; идущую помечаем, поздний итог выбросим
+      if (meta.state === 'run') await saveMeta(id, { ...meta, state: 'canceled' });
+      else await clear(id, meta);
       await out.answerCb(cq.id, 'Отменено');
       await out.editHtml(chatId, cq.message.message_id, '✖️ Отменено. Если модель уже что-то написала — этот ответ просто выброшу.', null);
       return undefined;

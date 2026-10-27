@@ -68,9 +68,23 @@ test('фон: ответ можно забрать кнопкой, если ав
   await w.app.bg.receivePart(job, 0, 'Готовый ответ');
   w.fail('sendMessage', 1); // Telegram на секунду отказал
   await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'claude-opus-5-5', error: null });
+  const before = (await w.app.core.todayUsage()).tokensOut;
   w.clear();
   await w.press('bg:g:' + job);
   assert.equal(w.last(OWNER).text.trim(), 'Готовый ответ');
+  assert.equal((await w.app.core.todayUsage()).tokensOut, before, 'расход не посчитан второй раз');
+});
+
+test('фон: отмена готового, но не выданного ответа убирает следы', async () => {
+  const w = await heavyWorld();
+  await w.say('Вопрос');
+  const job = w.gh.dispatches.at(-1).inputs.job;
+  await w.app.bg.receivePart(job, 0, 'Ответ');
+  w.fail('sendMessage', 1);
+  await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'claude-opus-5-5', error: null });
+  await w.press('bg:x:' + job);
+  assert.equal(await w.store.getSetting('bg:' + job), null);
+  assert.equal(await w.store.getSetting(`bg:${job}:a0`), null);
 });
 
 test('фон: ошибка задачи — понятное сообщение и «Повторить»', async () => {
@@ -120,8 +134,9 @@ test('фон: лёгкая модель, выключенный /bg и влож�
   // вложение: картинки/файлы в фон не уходят
   w = await heavyWorld();
   w.llmReplies.push('вижу файл');
-  await w.doc?.('note.txt', 'привет из файла', 'Что тут?');
-  assert.equal(w.gh.dispatches.length, 0);
+  await w.doc('F1', { name: 'note.txt', bytes: 'привет из файла', caption: 'Что тут?' });
+  assert.equal(w.gh.dispatches.length, 0, 'с вложением — не в фон');
+  assert.equal(w.llmCalls.length, 1, 'ответила модель прямо в боте');
 });
 
 test('фон: Actions недоступны — понятное сообщение и обычный ответ', async () => {
