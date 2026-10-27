@@ -19,11 +19,16 @@ function callBot(name, payload) {
     const r = spawnSync('npx', ['--no-install', 'tgcloud', 'run', `endpoints/${name}`, JSON.stringify(payload), '--ctx', ctx], { encoding: 'utf8', env: process.env, maxBuffer: 64 * 1024 * 1024 });
     if (r.status === 0) {
       const lines = String(r.stdout).split('\n');
-      const at = lines.findIndex((l) => l.startsWith('< '));
-      if (at < 0) return {};
+      const at = lines.findIndex((l) => l.replace(/\u001b\[[0-9;]*m/g, '').startsWith('< '));
+      if (at < 0) {
+        // содержимое не печатаем — только форма вывода
+        console.error(`endpoints/${name}: нет строки результата; строк ${lines.length}, начала: ${lines.slice(0, 8).map((l) => JSON.stringify(l.slice(0, 4))).join(' ')}; stderr ${String(r.stderr).length} симв.`);
+        return {};
+      }
       try {
-        return JSON5.parse(lines.slice(at).join('\n').slice(2).trim());
-      } catch {
+        return JSON5.parse(lines.slice(at).join('\n').replace(/\u001b\[[0-9;]*m/g, '').trim().slice(2));
+      } catch (e) {
+        console.error(`endpoints/${name}: результат не разобрался (${String(e?.message).slice(0, 120)}); строк ${lines.length - at}, длина ${lines.slice(at).join('\n').length}`);
         return {};
       }
     }
