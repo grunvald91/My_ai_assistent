@@ -4,3 +4,7 @@ node_modules/
 *.tmp.mjs
 # генерируется скриптом scripts/write-secrets.mjs (ключи из GitHub Secrets) — НИКОГДА не коммитить
 tgcloud/lib/secrets.js
+
+# скачанные логи Actions и прочий мусор диагностики
+*_dl/
+bgl*/

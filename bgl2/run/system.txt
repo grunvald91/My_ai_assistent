@@ -1,8 +1,0 @@
-2026-10-27T04:39:34.3670000Z Evaluating run.if
-2026-10-27T04:39:34.3670000Z Evaluating: success()
-2026-10-27T04:39:34.3670000Z Result: true
-2026-10-27T04:39:34.3780000Z Requested labels: ubuntu-latest
-2026-10-27T04:39:34.3780000Z Job defined at: grunvald91/My_ai_assistent/.github/workflows/bgjob.yml@refs/heads/main
-2026-10-27T04:39:34.3780000Z Waiting for a runner to pick up this job...
-2026-10-27T04:39:34.6630000Z Job is about to start running on the hosted runner: GitHub Actions 1000002191
-2026-10-27T04:39:34.6640000Z Job is waiting for a hosted runner to come online.
