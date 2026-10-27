@@ -2,7 +2,10 @@ name: Diagnostics
 
 # Ручной запуск (Actions → Diagnostics → Run workflow): заглядывает в бота на серверах Telegram и печатает отчёт
 # без текстов переписки: замеры доступа к ClaudeHub и GitHub, зависшие апдейты, ошибки и время вызовов ИИ из журнала.
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      bgtest: { description: 'проверить фоновый ответ через Actions (1-й запуск стартует, 2-й сообщает итог)', required: false, default: false, type: boolean }
 
 jobs:
   diag:
@@ -23,7 +26,7 @@ jobs:
         run: |
           node scripts/write-secrets.mjs
           OWNER="${OWNER_IDS%%,*}"
-          npx tgcloud run endpoints/diag '{}' --ctx "{ initData: { user: { id: ${OWNER} } } }"
+          npx tgcloud run endpoints/diag "{ bgtest: ${{ inputs.bgtest }} }" --ctx "{ initData: { user: { id: ${OWNER} } } }"
       - name: Probe handler (чужой пользователь, ничего владельцу не отправляется)
         if: always()
         run: |

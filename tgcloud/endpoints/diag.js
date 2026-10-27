@@ -11,6 +11,7 @@ import { parseIdList } from '../lib/util.js';
 import { timeout } from '../lib/timer.js';
 import { createLlm } from '../lib/llm.js';
 import { ping } from '../lib/store.js';
+import { app } from '../lib/deps.js';
 
 const MAX_PROBE_MS = 60000; // чтобы сама диагностика не повисла, если сервис молчит
 
@@ -228,6 +229,9 @@ export default async function (input, ctx) {
     return { ms: Date.now() - t0, outcome: outcome ?? 'не завершилось за 8 с', trace };
   });
 
+  // Фоновый ответ через Actions, весь путь без Telegram: первый запуск стартует проверочную задачу, следующий сообщает итог
+  const bgTest = input?.bgtest ? await probe('Фоновый ответ (Actions)', async () => ({ ...(await app.bg.selfTest()) })) : undefined;
+
   // метаданные последних сообщений владельца (длина и модель; без текстов)
   const lastMsgs = (await db.select().from(T.messages).where(eq(T.messages.chatKey, String(owner))).orderBy(desc(T.messages.id)).limit(8).all()).map((m) => ({
     role: m.role, chars: m.text.length, model: m.model ?? null, age_s: now - m.ts, clip: m.text.startsWith('📎'), reply: m.text.startsWith('↪️'),
@@ -245,6 +249,7 @@ export default async function (input, ctx) {
     atomicsTimer,
     deadlineProbe,
     llmDeadline,
+    ...(bgTest ? { bgTest } : {}),
     last_messages: lastMsgs,
     chat_model: ownerChat?.model ?? null,
     settings: { auto: sets.auto, think: sets.think, att_last: sets.att_last ? 'есть' : null, default_model: sets.default_model },

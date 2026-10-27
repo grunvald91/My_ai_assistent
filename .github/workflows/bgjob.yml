@@ -1,0 +1,40 @@
+name: Background answer
+
+# Фоновый ответ тяжёлой модели (/bg): забирает у бота запрос, ждёт модель сколько нужно и отдаёт ответ боту.
+# Запускается самим ботом (workflow_dispatch), вручную запускать не нужно.
+# Репозиторий публичный, поэтому в параметрах запуска только id задачи, а сам текст в логи не попадает.
+on:
+  workflow_dispatch:
+    inputs:
+      job: { description: 'id задачи', required: true }
+
+concurrency:
+  group: bgjob-${{ inputs.job }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TGCLOUD_TOKEN: ${{ secrets.TELEGRAM_CLI_ACCESS }}
+      CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
+      OWNER_IDS: ${{ secrets.OWNER_IDS || vars.OWNER_IDS }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+      JOB_ID: ${{ inputs.job }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Ответ
+        run: |
+          node scripts/write-secrets.mjs
+          node scripts/bgjob.mjs
+      - name: Сообщить боту о сбое
+        if: failure()
+        run: |
+          OWNER="${OWNER_IDS%%,*}"
+          npx tgcloud run endpoints/bgjob_done "{ job: \"${JOB_ID}\", error: \"Задача в GitHub Actions упала — смотри лог запуска в репозитории бота (Actions → Background answer).\" }" --ctx "{ initData: { user: { id: ${OWNER} } } }" > /dev/null 2>&1 || true

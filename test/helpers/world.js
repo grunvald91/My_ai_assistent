@@ -175,7 +175,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
     api: new Proxy({}, { get: (_, m) => (typeof m === 'string' && m !== 'then' ? (p) => globalThis.__tg(m, p ?? {}) : undefined) }),
     store,
     llm,
-    cfg: { ...DEFAULTS, richMessages: false, codeViaActions: false, ...cfg },
+    cfg: { ...DEFAULTS, richMessages: false, codeViaActions: false, bgViaActions: false, ...cfg },
     now: () => w.now,
     sleep: async () => {},
     InputFile,

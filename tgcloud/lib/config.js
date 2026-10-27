@@ -58,17 +58,20 @@ export const DEFAULTS = {
   pdfModels: ['claude-opus-5-5', 'claude-opus-4.8'],
   visionModels: ['claude-sonnet-5-5', 'gemini-flash-3.8', 'kimi-k3', 'glm-5.3', 'claude-opus-5-5'],
   codeViaActions: true, // /code: тяжёлую часть (чтение репозитория, написание кода) делает GitHub Actions — там нет лимита ~30 с; при отказе — по шагам в самом боте
+  bgViaActions: true, // тяжёлые модели отвечают в фоне через GitHub Actions (/bg): там нет лимита ~30 с
+  bgHeavy: 'opus', // какие модели считаются тяжёлыми: id модели содержит это слово
   cutAfterMs: 24000,
   summarizeOnlyBeforeMs: 12000, // сжатие истории (лишний вызов ИИ) делаем, только если вызов ещё «молодой»
 };
 
 // Меню команд владельца. Менять список — поднимай COMMANDS_VERSION: бот сам обновит меню.
-export const COMMANDS_VERSION = 8;
+export const COMMANDS_VERSION = 9;
 export const OWNER_COMMANDS = [
   ['start', 'Начало и справка'],
   ['model', 'Выбрать модель ИИ'],
   ['think', 'Уровень размышлений ИИ'],
   ['auto', 'Автоподбор модели: простые вопросы — быстрой'],
+  ['bg', 'Тяжёлые модели отвечают в фоне'],
   ['post', 'Подготовить пост в канал'],
   ['channels', 'Мои каналы и их стиль'],
   ['memory', 'Что я помню'],

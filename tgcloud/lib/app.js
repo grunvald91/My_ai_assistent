@@ -12,6 +12,7 @@ import { createBusiness } from './business.js';
 import { createReplies } from './replies.js';
 import { createCommands } from './commands.js';
 import { createCode } from './code.js';
+import { createBg } from './bg.js';
 import { createGithub } from './github.js';
 import { displayName, escapeHtml, parseCommand } from './util.js';
 
@@ -38,6 +39,7 @@ export function createApp(base) {
   const business = createBusiness(D);
   const replies = createReplies(D);
   const code = createCode(D);
+  D.bg = createBg(D, chatMod); // тяжёлые модели в фоне (GitHub Actions)
   D.repoContext = code.repoContext; // чат читает репозиторий по просьбе владельца
   const commands = createCommands(D, { posts, business, replies, code });
 
@@ -317,6 +319,8 @@ export function createApp(base) {
           return await replies.callback(cq, parts.slice(1));
         case 'x':
           return await code.callback(cq, parts.slice(1));
+        case 'bg':
+          return await D.bg.callback(cq, parts.slice(1));
         case 'a': {
           const chatId = cq.message.chat.id;
           await out.dropButtons(chatId, cq.message.message_id);
@@ -433,5 +437,5 @@ export function createApp(base) {
     }
   }
 
-  return { handle, dispatch, commands, posts, business, replies, code, chat: chatMod, core, out, D };
+  return { handle, dispatch, commands, posts, business, replies, code, bg: D.bg, chat: chatMod, core, out, D };
 }

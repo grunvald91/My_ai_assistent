@@ -132,6 +132,12 @@ export function createCore(D) {
     return { ...res, tokensIn, tokensOut, thinkAsked: !!level, thinkDropped: !!level && !res.thinkUsed };
   }
 
+  /** Учёт расхода для ответов, полученных не через generate (фоновые, из GitHub Actions). */
+  async function recordUsage(modelId, tokensIn, tokensOut) {
+    const model = (await getModels()).find((m) => m.id === modelId);
+    await store.addUsage(dayKey(D.now(), tz()), tokensIn, tokensOut, costUsd(model, tokensIn, tokensOut));
+  }
+
   // ───────── память ─────────
 
   async function memoryTexts(scopes) {
@@ -192,6 +198,6 @@ export function createCore(D) {
 
   return {
     setting, getModels, resolveModel, ownerModel, dailyLimit, todayUsage, assertLimits,
-    generate, thinkLevel, memoryTexts, maybeSummarize, contextFor, paused, ownerName, tz,
+    generate, recordUsage, thinkLevel, memoryTexts, maybeSummarize, contextFor, paused, ownerName, tz,
   };
 }

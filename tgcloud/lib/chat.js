@@ -212,6 +212,17 @@ export function createChat(D) {
     }
     if (cont) messages.push({ role: 'user', content: CONTINUE_PROMPT });
 
+    // тяжёлая модель: в фоне через GitHub Actions (без лимита ~30 с); с вложениями — обычным путём
+    if (!media && D.bg && (await D.bg.shouldRun(model))) {
+      let started = false;
+      try {
+        started = await D.bg.start(chatId, { model, messages, think: await core.thinkLevel(), repoLen: repo?.text?.length ?? 0 });
+      } catch (e) {
+        return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)) });
+      }
+      if (started) return;
+    }
+
     const streamer = draftStreamer(chatId);
     await streamer.start();
 
@@ -222,6 +233,20 @@ export function createChat(D) {
       return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null });
     }
 
+    await publishOwnerReply(chatId, res, { model, mediaNote, fastNote, strongId, repoLen: repo?.text?.length ?? 0 });
+
+    try {
+      // сжатие истории — ещё один вызов ИИ: делаем его, только пока вызов бота «молодой» (иначе платформа оборвёт и его, и сам апдейт)
+      if (Date.now() - t0 < (cfg.summarizeOnlyBeforeMs ?? Infinity)) await core.maybeSummarize(await store.getChat(chatId));
+    } catch (e) {
+      console.warn('summarize failed', e?.message ?? e); // не критично: сводка сделается в следующий раз
+    }
+    await store.trimMessages(key, 300);
+  }
+
+  /** Показывает готовый ответ модели владельцу (кнопки «Продолжить», «Запомнить» и т. д.) и сохраняет его в историю. */
+  async function publishOwnerReply(chatId, res, { model, mediaNote = '', fastNote = '', strongId = null, repoLen = 0 } = {}) {
+    const key = String(chatId);
     const { text: clean, fact } = extractProposal(res.text.trim());
     let body = clean || '…';
     const saved = body;
@@ -250,9 +275,9 @@ export function createChat(D) {
       markup = { inline_keyboard: [...(markup?.inline_keyboard ?? []), [{ text: ('🧠 Ответить сильной: ' + strongId).slice(0, 60), callback_data: 'r:s' }]] };
     }
 
-    if (repo?.text) {
+    if (repoLen) {
       // репозиторий сидит в контексте и оплачивается с каждым сообщением — даём способ его убрать
-      const k = Math.max(1, Math.round(repo.text.length / 3000));
+      const k = Math.max(1, Math.round(repoLen / 3000));
       markup = {
         inline_keyboard: [
           ...(markup?.inline_keyboard ?? []),
@@ -265,14 +290,6 @@ export function createChat(D) {
     await out.sendText({ chatId, text: body, markup, rich: true });
     await store.addMessage({ chatKey: key, role: 'assistant', text: saved, model: model.id, tokens: res.tokensOut, ts: D.now() });
     await store.updateChat(chatId, { lastReplyAt: D.now() });
-
-    try {
-      // сжатие истории — ещё один вызов ИИ: делаем его, только пока вызов бота «молодой» (иначе платформа оборвёт и его, и сам апдейт)
-      if (Date.now() - t0 < (cfg.summarizeOnlyBeforeMs ?? Infinity)) await core.maybeSummarize(await store.getChat(chatId));
-    } catch (e) {
-      console.warn('summarize failed', e?.message ?? e); // не критично: сводка сделается в следующий раз
-    }
-    await store.trimMessages(key, 300);
   }
 
   async function lastUserText(key, chat) {
@@ -466,5 +483,5 @@ export function createChat(D) {
     return 'ok';
   }
 
-  return { ownerReplyContext, answerOwner, answerMedia, respondOwner, retryLast, askStrong, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
+  return { ownerReplyContext, answerOwner, answerMedia, respondOwner, publishOwnerReply, retryLast, askStrong, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
 }
