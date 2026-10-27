@@ -25,12 +25,18 @@ function callBot(name, payload) {
         console.error(`endpoints/${name}: нет строки результата; строк ${lines.length}, начала: ${lines.slice(0, 8).map((l) => JSON.stringify(l.slice(0, 4))).join(' ')}; stderr ${String(r.stderr).length} симв.`);
         return {};
       }
-      try {
-        return JSON5.parse(lines.slice(at).join('\n').replace(/\u001b\[[0-9;]*m/g, '').trim().slice(2));
-      } catch (e) {
-        console.error(`endpoints/${name}: результат не разобрался (${String(e?.message).slice(0, 120)}); строк ${lines.length - at}, длина ${lines.slice(at).join('\n').length}`);
-        return {};
+      // результат — одна строка «< {…}», после неё платформа дописывает служебную строку (время); на случай переноса пробуем добавлять строки
+      const clean = lines.slice(at).map((l) => l.replace(/\u001b\[[0-9;]*m/g, ''));
+      let lastErr = '';
+      for (let k = 1; k <= clean.length; k++) {
+        try {
+          return JSON5.parse(clean.slice(0, k).join('\n').trim().slice(2));
+        } catch (e) {
+          lastErr = String(e?.message).slice(0, 120);
+        }
       }
+      console.error(`endpoints/${name}: результат не разобрался (${lastErr}); строк ${clean.length}`);
+      return {};
     }
     console.error(`endpoints/${name}: попытка ${attempt} не удалась (код ${r.status})`);
   }
