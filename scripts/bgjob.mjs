@@ -12,6 +12,25 @@ const JOB = env('JOB_ID');
 const OWNER = env('OWNER_IDS').split(/[,;\s]+/)[0];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+
+/** Начало строки до конца первого сбалансированного {…} или […] (с учётом кавычек); иначе строка целиком. */
+function balanced(text) {
+  const open = text[0];
+  if (open !== '{' && open !== '[') return text.split(/\s/)[0];
+  let depth = 0;
+  let quote = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'" || c === '`') quote = c;
+    else if (c === '{' || c === '[') depth++;
+    else if ((c === '}' || c === ']') && --depth === 0) return text.slice(0, i + 1);
+  }
+  return text;
+}
+
 /** Вызов эндпоинта бота (с повторами). Возвращает разобранный результат или null. Вывод не печатаем. */
 function callBot(name, payload) {
   const ctx = `{ initData: { user: { id: ${OWNER} } } }`;
@@ -25,18 +44,14 @@ function callBot(name, payload) {
         console.error(`endpoints/${name}: нет строки результата; строк ${lines.length}, начала: ${lines.slice(0, 8).map((l) => JSON.stringify(l.slice(0, 4))).join(' ')}; stderr ${String(r.stderr).length} симв.`);
         return {};
       }
-      // результат — одна строка «< {…}», после неё платформа дописывает служебную строку (время); на случай переноса пробуем добавлять строки
-      const clean = lines.slice(at).map((l) => l.replace(/\u001b\[[0-9;]*m/g, ''));
-      let lastErr = '';
-      for (let k = 1; k <= clean.length; k++) {
-        try {
-          return JSON5.parse(clean.slice(0, k).join('\n').trim().slice(2));
-        } catch (e) {
-          lastErr = String(e?.message).slice(0, 120);
-        }
+      // результат — «< {…}», за ним на той же строке платформа дописывает служебную пометку (время): берём только сбалансированный объект
+      const line = lines[at].replace(/\u001b\[[0-9;]*m/g, '').trim().slice(2);
+      try {
+        return JSON5.parse(balanced(line));
+      } catch (e) {
+        console.error(`endpoints/${name}: результат не разобрался (${String(e?.message).slice(0, 120)}); длина ${line.length}`);
+        return {};
       }
-      console.error(`endpoints/${name}: результат не разобрался (${lastErr}); строк ${clean.length}`);
-      return {};
     }
     console.error(`endpoints/${name}: попытка ${attempt} не удалась (код ${r.status})`);
   }

@@ -1,0 +1,15 @@
+﻿2026-10-27T04:39:34.3116681Z ##[group]Run npx tgcloud webhook || true
+2026-10-27T04:39:34.3117148Z [36;1mnpx tgcloud webhook || true[0m
+2026-10-27T04:39:34.3153091Z shell: /usr/bin/bash -e {0}
+2026-10-27T04:39:34.3153425Z env:
+2026-10-27T04:39:34.3154216Z   TGCLOUD_TOKEN: ***
+2026-10-27T04:39:34.3154792Z   CLAUDEHUB_API_KEY: ***
+2026-10-27T04:39:34.3155118Z   OWNER_IDS: ***
+2026-10-27T04:39:34.3155681Z   GH_PAT: ***
+2026-10-27T04:39:34.3155950Z ##[endgroup]
+2026-10-27T04:39:34.5653864Z - Checking webhook...
+2026-10-27T04:39:34.9986158Z Webhook:
+2026-10-27T04:39:34.9987083Z   url:              https://cloud.telegram.org/app8919114467/webhook
+2026-10-27T04:39:34.9988455Z   allowed updates:  message, callback_query, my_chat_member, business_connection, business_message, stopped_message_generation
+2026-10-27T04:39:34.9989475Z   pending updates:  0
+2026-10-27T04:39:34.9990386Z   ✓ in sync with your deployed handlers

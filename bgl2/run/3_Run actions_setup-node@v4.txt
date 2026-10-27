@@ -1,0 +1,31 @@
+﻿2026-10-27T04:39:39.4846478Z ##[group]Run actions/setup-node@v4
+2026-10-27T04:39:39.4846889Z with:
+2026-10-27T04:39:39.4847168Z   node-version: 22
+2026-10-27T04:39:39.4847456Z   cache: npm
+2026-10-27T04:39:39.4847742Z   always-auth: false
+2026-10-27T04:39:39.4848048Z   check-latest: false
+2026-10-27T04:39:39.4850664Z   token: ***
+2026-10-27T04:39:39.4851190Z env:
+2026-10-27T04:39:39.4851682Z   TGCLOUD_TOKEN: ***
+2026-10-27T04:39:39.4852077Z   CLAUDEHUB_API_KEY: ***
+2026-10-27T04:39:39.4852401Z   OWNER_IDS: ***
+2026-10-27T04:39:39.4852986Z   GH_PAT: ***
+2026-10-27T04:39:39.4853278Z   JOB_ID: mvq74v854hsneg
+2026-10-27T04:39:39.4853589Z ##[endgroup]
+2026-10-27T04:39:39.6210824Z Found in cache @ /opt/hostedtoolcache/node/22.23.3/x64
+2026-10-27T04:39:39.6215837Z (node:2269) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T04:39:39.6216858Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T04:39:39.6218322Z ##[group]Environment details
+2026-10-27T04:39:39.9517917Z node: v22.23.3
+2026-10-27T04:39:39.9519191Z npm: 10.9.9
+2026-10-27T04:39:39.9519788Z yarn: 1.22.22
+2026-10-27T04:39:39.9520445Z ##[endgroup]
+2026-10-27T04:39:39.9562487Z [command]/opt/hostedtoolcache/node/22.23.3/x64/bin/npm config get cache
+2026-10-27T04:39:40.0691708Z /home/runner/.npm
+2026-10-27T04:39:40.1864254Z Cache hit for: node-cache-Linux-x64-npm-7651e3054a67f00b632ce2ed6a7f60699db6cef404873b776477b012522edf3f
+2026-10-27T04:39:40.1959238Z (node:2269) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-27T04:39:40.7300549Z Received 10798646 of 10798646 (100.0%), 23.8 MBs/sec
+2026-10-27T04:39:40.7301337Z Cache Size: ~10 MB (10798646 B)
+2026-10-27T04:39:40.7326168Z [command]/usr/bin/tar -xf /home/runner/work/_temp/d504e6df-b16b-472a-9578-77dbc44455f1/cache.tzst -P -C /home/runner/work/My_ai_assistent/My_ai_assistent --use-compress-program unzstd
+2026-10-27T04:39:40.7633692Z Cache restored successfully
+2026-10-27T04:39:40.7642830Z Cache restored from key: node-cache-Linux-x64-npm-7651e3054a67f00b632ce2ed6a7f60699db6cef404873b776477b012522edf3f

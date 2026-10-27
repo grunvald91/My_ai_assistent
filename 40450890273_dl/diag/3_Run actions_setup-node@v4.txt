@@ -1,0 +1,30 @@
+﻿2026-10-27T04:39:05.9876540Z ##[group]Run actions/setup-node@v4
+2026-10-27T04:39:05.9877387Z with:
+2026-10-27T04:39:05.9877882Z   node-version: 22
+2026-10-27T04:39:05.9878417Z   cache: npm
+2026-10-27T04:39:05.9878919Z   always-auth: false
+2026-10-27T04:39:05.9879426Z   check-latest: false
+2026-10-27T04:39:05.9883196Z   token: ***
+2026-10-27T04:39:05.9883697Z env:
+2026-10-27T04:39:05.9884421Z   TGCLOUD_TOKEN: ***
+2026-10-27T04:39:05.9885262Z   CLAUDEHUB_API_KEY: ***
+2026-10-27T04:39:05.9885849Z   OWNER_IDS: ***
+2026-10-27T04:39:05.9886802Z   GH_PAT: ***
+2026-10-27T04:39:05.9887345Z ##[endgroup]
+2026-10-27T04:39:06.1051546Z Found in cache @ /opt/hostedtoolcache/node/22.23.3/x64
+2026-10-27T04:39:06.1053478Z (node:2106) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-27T04:39:06.1055738Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-27T04:39:06.1057623Z ##[group]Environment details
+2026-10-27T04:39:10.8543678Z node: v22.23.3
+2026-10-27T04:39:10.8544833Z npm: 10.9.9
+2026-10-27T04:39:10.8545387Z yarn: 1.22.22
+2026-10-27T04:39:10.8546917Z ##[endgroup]
+2026-10-27T04:39:10.8581091Z [command]/opt/hostedtoolcache/node/22.23.3/x64/bin/npm config get cache
+2026-10-27T04:39:11.2008010Z /home/runner/.npm
+2026-10-27T04:39:11.3649858Z Cache hit for: node-cache-Linux-x64-npm-7651e3054a67f00b632ce2ed6a7f60699db6cef404873b776477b012522edf3f
+2026-10-27T04:39:11.3730569Z (node:2106) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-27T04:39:12.4906340Z Received 10798646 of 10798646 (100.0%), 10.8 MBs/sec
+2026-10-27T04:39:12.4907489Z Cache Size: ~10 MB (10798646 B)
+2026-10-27T04:39:12.4932755Z [command]/usr/bin/tar -xf /home/runner/work/_temp/aebf79b3-9f32-4341-9150-e74c0b89312d/cache.tzst -P -C /home/runner/work/My_ai_assistent/My_ai_assistent --use-compress-program unzstd
+2026-10-27T04:39:12.5125134Z Cache restored successfully
+2026-10-27T04:39:12.5132229Z Cache restored from key: node-cache-Linux-x64-npm-7651e3054a67f00b632ce2ed6a7f60699db6cef404873b776477b012522edf3f

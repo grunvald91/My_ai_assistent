@@ -1,0 +1,8 @@
+2026-10-27T04:41:23.6850000Z Requested labels: ubuntu-latest
+2026-10-27T04:41:23.6850000Z Job defined at: grunvald91/My_ai_assistent/.github/workflows/diag.yml@refs/heads/main
+2026-10-27T04:41:23.6850000Z Waiting for a runner to pick up this job...
+2026-10-27T04:41:23.6830000Z Evaluating diag.if
+2026-10-27T04:41:23.6830000Z Evaluating: success()
+2026-10-27T04:41:23.6830000Z Result: true
+2026-10-27T04:41:23.7100000Z Job is waiting for a hosted runner to come online.
+2026-10-27T04:41:24.0970000Z Job is about to start running on the hosted runner: GitHub Actions 1000002192

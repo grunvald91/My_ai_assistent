@@ -1,0 +1,34 @@
+﻿2026-10-27T04:39:04.6651909Z Current runner version: '2.338.0'
+2026-10-27T04:39:04.6672804Z ##[group]Runner Image Provisioner
+2026-10-27T04:39:04.6673633Z Hosted Compute Agent
+2026-10-27T04:39:04.6674147Z Version: 20261021.618
+2026-10-27T04:39:04.6674901Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-27T04:39:04.6675627Z Build Date: 2026-10-21T00:45:21Z
+2026-10-27T04:39:04.6676259Z Worker ID: {95c45deb-e322-4c77-9dc3-b1d14b1702e4}
+2026-10-27T04:39:04.6676897Z Region: centralus
+2026-10-27T04:39:04.6677409Z Cloud: Azure
+2026-10-27T04:39:04.6677912Z ##[endgroup]
+2026-10-27T04:39:04.6679054Z ##[group]Operating System
+2026-10-27T04:39:04.6679620Z Ubuntu
+2026-10-27T04:39:04.6680095Z 24.04.5
+2026-10-27T04:39:04.6680590Z LTS
+2026-10-27T04:39:04.6681044Z ##[endgroup]
+2026-10-27T04:39:04.6681578Z ##[group]Runner Image
+2026-10-27T04:39:04.6682210Z Image: ubuntu-24.04
+2026-10-27T04:39:04.6682699Z Version: 20261012.334.1
+2026-10-27T04:39:04.6683942Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-27T04:39:04.6685759Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+2026-10-27T04:39:04.6686590Z ##[endgroup]
+2026-10-27T04:39:04.6687608Z ##[group]GITHUB_TOKEN Permissions
+2026-10-27T04:39:04.6689577Z Contents: read
+2026-10-27T04:39:04.6690085Z Metadata: read
+2026-10-27T04:39:04.6690597Z Packages: read
+2026-10-27T04:39:04.6691089Z ##[endgroup]
+2026-10-27T04:39:04.6692823Z Secret source: Actions
+2026-10-27T04:39:04.6693575Z Cache mode: write
+2026-10-27T04:39:04.6694230Z Prepare workflow directory
+2026-10-27T04:39:04.7168276Z Prepare all required actions
+2026-10-27T04:39:04.7226291Z Getting action download info
+2026-10-27T04:39:04.9489892Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-27T04:39:05.0533528Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-10-27T04:39:05.2935803Z Complete job name: diag
