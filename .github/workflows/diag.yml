@@ -5,7 +5,7 @@ name: Diagnostics
 on:
   workflow_dispatch:
     inputs:
-      bgtest: { description: 'проверить фоновый ответ через Actions (1-й запуск стартует, 2-й сообщает итог)', required: false, default: false, type: boolean }
+      bgtest: { description: 'фоновый ответ через Actions: no | yes | big (большой запрос ~3 МБ); 1-й запуск стартует, 2-й сообщает итог', required: false, default: 'no', type: choice, options: ['no', 'yes', 'big'] }
 
 jobs:
   diag:
@@ -26,7 +26,7 @@ jobs:
         run: |
           node scripts/write-secrets.mjs
           OWNER="${OWNER_IDS%%,*}"
-          npx tgcloud run endpoints/diag "{ bgtest: ${{ inputs.bgtest }} }" --ctx "{ initData: { user: { id: ${OWNER} } } }"
+          npx tgcloud run endpoints/diag "{ bgtest: '${{ inputs.bgtest }}' }" --ctx "{ initData: { user: { id: ${OWNER} } } }"
       - name: Probe handler (чужой пользователь, ничего владельцу не отправляется)
         if: always()
         run: |

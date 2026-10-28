@@ -131,12 +131,44 @@ test('фон: лёгкая модель, выключенный /bg и влож�
   await w.say('/bg вкл');
   assert.match(w.last(OWNER).text, /включено/);
 
-  // вложение: картинки/файлы в фон не уходят
+  // вложение: сначала спрашиваем (и «Сразу в чате» отвечает как раньше)
   w = await heavyWorld();
-  w.llmReplies.push('вижу файл');
   await w.doc('F1', { name: 'note.txt', bytes: 'привет из файла', caption: 'Что тут?' });
-  assert.equal(w.gh.dispatches.length, 0, 'с вложением — не в фон');
-  assert.equal(w.llmCalls.length, 1, 'ответила модель прямо в боте');
+  assert.equal(w.gh.dispatches.length, 0, 'без согласия — не в фон');
+  assert.equal(w.llmCalls.length, 0, 'и в чате ещё не отвечала');
+  const offer = w.last(OWNER);
+  assert.match(offer.text, /Вопрос с файлом/);
+  assert.deepEqual(buttons(offer).map((b) => b.callback_data), ['bg:go', 'bg:now']);
+  w.llmReplies.push('вижу файл');
+  await w.press('bg:now');
+  assert.equal(w.gh.dispatches.length, 0);
+  assert.match(w.last(OWNER).text, /вижу файл/);
+});
+
+test('фон: «В фоне» для вопроса с файлом — файл уходит боту-задаче, ответ приходит сам', async () => {
+  const w = await heavyWorld();
+  await w.doc('F1', { name: 'задание.txt', bytes: 'Пункт 5: посчитай налог', caption: 'Сделай пункт 5' });
+  await w.press('bg:go');
+  assert.equal(w.llmCalls.length, 0);
+  const d = w.gh.dispatches.find((x) => x.workflow === 'bgjob.yml');
+  assert.deepEqual(Object.keys(d.inputs), ['job'], 'в публичных параметрах — только id');
+  const req = JSON.parse((await w.app.bg.getRequest(d.inputs.job, 0)).text);
+  assert.match(JSON.stringify(req.messages), /Пункт 5: посчитай налог/, 'текст файла в запросе');
+  await w.app.bg.receivePart(d.inputs.job, 0, 'Налог посчитан.');
+  await w.app.bg.finish({ job: d.inputs.job, n: 1, finish: 'stop', usage: null, model: 'claude-opus-5-5', error: null });
+  assert.match(w.last(OWNER).text, /Налог посчитан/);
+});
+
+test('фон: «Сразу в чате» с файлом оборвался по времени — в ошибке есть кнопка «Ответить в фоне»', async () => {
+  const w = await heavyWorld({ cutAfterMs: 300 });
+  await w.doc('F1', { name: 'a.txt', bytes: 'текст', caption: 'Вопрос' });
+  w.llmReplies.push({ stall: '' });
+  await w.press('bg:now');
+  const err = w.last(OWNER);
+  assert.match(err.text, /Модель не успела/);
+  assert.ok(buttons(err).find((b) => b.callback_data === 'bg:go'), 'есть кнопка фона');
+  await w.press('bg:go');
+  assert.ok(w.gh.dispatches.find((x) => x.workflow === 'bgjob.yml'), 'ушло в фон');
 });
 
 test('фон: Actions недоступны — понятное сообщение и обычный ответ', async () => {

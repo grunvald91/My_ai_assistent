@@ -152,7 +152,7 @@ export function createChat(D) {
     return respondOwner(chatId, q || undefined, { media, question: q });
   }
 
-  async function respondOwner(chatId, text, { cont = false, media = null, question, strong = false } = {}) {
+  async function respondOwner(chatId, text, { cont = false, media = null, question, strong = false, mode = null } = {}) {
     // срок считаем от начала ЭТОГО вызова бота (запоминаем сразу: параллельный апдейт может переписать D.t0)
     const t0 = D.t0 ?? Date.now();
     const deadline = cfg.cutAfterMs ? t0 + cfg.cutAfterMs : null;
@@ -212,13 +212,23 @@ export function createChat(D) {
     }
     if (cont) messages.push({ role: 'user', content: CONTINUE_PROMPT });
 
-    // тяжёлая модель: в фоне через GitHub Actions (без лимита ~30 с); с вложениями — обычным путём
-    if (!media && D.bg && (await D.bg.shouldRun(model))) {
+    // тяжёлая модель: в фоне через GitHub Actions (там нет лимита ~30 с).
+    // Без вложений уходит в фон сама; с вложением (читать файл дольше) — сначала спрашиваем, как ответить.
+    const heavy = !!D.bg && (await D.bg.shouldRun(model));
+    if (heavy && media && !cont && !mode) {
+      await out.sendHtml(
+        chatId,
+        `📎 Вопрос с файлом к тяжёлой модели (<b>${escapeHtml(model.id)}</b>): ответ может занять больше 30 секунд — в чате платформа тогда оборвёт его.\nКак ответить?`,
+        { reply_markup: { inline_keyboard: [[{ text: '📥 В фоне', callback_data: 'bg:go', style: 'primary' }, { text: '⚡ Сразу в чате', callback_data: 'bg:now' }]] } },
+      );
+      return;
+    }
+    if (heavy && (mode === 'bg' || (!media && mode !== 'now'))) {
       let started = false;
       try {
-        started = await D.bg.start(chatId, { model, messages, think: await core.thinkLevel(), repoLen: repo?.text?.length ?? 0 });
+        started = await D.bg.start(chatId, { model, messages, think: await core.thinkLevel(), repoLen: repo?.text?.length ?? 0, note: mediaNote });
       } catch (e) {
-        return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)) });
+        return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null });
       }
       if (started) return;
     }
@@ -357,6 +367,7 @@ export function createChat(D) {
         console.warn('alternatives failed', err?.message ?? err); // кнопки замены — удобство, без них ошибка всё равно показана
       }
     }
+    if (e instanceof LlmError && e.kind === 'timeout' && modelId && D.bg && (await D.bg.shouldRun({ id: modelId }))) rows.push([{ text: '📥 Ответить в фоне (без лимита 30 с)', callback_data: 'bg:go', style: 'primary' }]);
     if (e instanceof LlmError && ['rate', 'upstream', 'network', 'timeout'].includes(e.kind)) rows.push([{ text: '🔄 Повторить', callback_data: 'r:1' }]);
     if (userText && userText.length <= 256) rows.push([{ text: '📋 Скопировать моё сообщение', copy_text: { text: userText } }]);
     return rows;

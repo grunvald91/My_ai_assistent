@@ -14,7 +14,8 @@ import { estimateTokens } from './tokens.js';
 
 const kb = (rows) => ({ inline_keyboard: rows });
 const WORKFLOW = 'bgjob.yml';
-const CHUNK = 25000; // символов в одной части запроса/ответа: аргумент командной строки ограничен ~128 КБ
+const CHUNK = 25000; // символов в одной части ОТВЕТА: аргумент командной строки ограничен ~128 КБ
+const REQ_CHUNK = 400000; // символов в одной части ЗАПРОСА (с файлами он большой; задача забирает его выводом, а не аргументом)
 
 /** Делит текст на части, не разрывая суррогатные пары (эмодзи). */
 export function splitSafe(text, size = CHUNK) {
@@ -57,14 +58,14 @@ export function createBg(D, chatMod) {
     'Ответ придёт сюда сам. Кнопка — проверить и забрать вручную.';
 
   /** true — вопрос ушёл в Actions. false — не вышло (причина показана), дальше отвечаем обычным путём. */
-  async function start(chatId, { model, messages, think, repoLen = 0 }) {
+  async function start(chatId, { model, messages, think, repoLen = 0, note = '' }) {
     await core.assertLimits();
     const level = think && think !== 'off' && model.thinking ? think : null;
     const cap = cfg.maxTokensChat === 'max' ? model.maxOut || cfg.maxTokensFallback : cfg.maxTokensChat;
-    const parts = splitSafe(JSON.stringify({ model: model.id, messages, maxTokens: cap, think: level }));
+    const parts = splitSafe(JSON.stringify({ model: model.id, messages, maxTokens: cap, think: level }), REQ_CHUNK);
     const id = uid();
     for (let i = 0; i < parts.length; i++) await store.setSetting(`bg:${id}:q${i}`, parts[i]);
-    const meta = { chatId, model: model.id, ts: D.now(), repoLen, n: parts.length, an: 0, state: 'run', estIn: promptTokens(messages) };
+    const meta = { chatId, model: model.id, ts: D.now(), repoLen, note, n: parts.length, an: 0, state: 'run', estIn: promptTokens(messages) };
     await saveMeta(id, meta);
     try {
       const selfInfo = await gh().getRepo(D.selfRepo);
@@ -148,7 +149,7 @@ export function createBg(D, chatMod) {
         meta.billed = true;
         await saveMeta(job, { ...meta, state: 'delivering' });
       }
-      await chatMod.publishOwnerReply(meta.chatId, { text, finish: meta.why, tokensOut }, { model: { id: meta.model }, repoLen: meta.repoLen });
+      await chatMod.publishOwnerReply(meta.chatId, { text, finish: meta.why, tokensOut }, { model: { id: meta.model }, repoLen: meta.repoLen, mediaNote: meta.note ?? '' });
       await store.trimMessages(String(meta.chatId), 300);
       if (meta.statusMsg) await out.editHtml(meta.chatId, meta.statusMsg, `✅ <b>${escapeHtml(meta.model)}</b>: ответ готов — он ниже.`, null).catch(() => {});
     } catch (e) {
@@ -164,6 +165,13 @@ export function createBg(D, chatMod) {
   async function callback(cq, parts) {
     const chatId = cq.message.chat.id;
     const [act, id] = parts;
+    if (act === 'go' || act === 'now') {
+      // «В фоне» / «Сразу в чате» — выбор для вопроса с файлом или кнопка после обрыва по времени
+      await out.dropButtons(chatId, cq.message.message_id);
+      await out.answerCb(cq.id, act === 'go' ? 'Отправляю в фон…' : 'Отвечаю…');
+      await chatMod.respondOwner(chatId, undefined, { mode: act === 'go' ? 'bg' : 'now' });
+      return undefined;
+    }
     if (act === 'on' || act === 'off') {
       await store.setSetting('bg', act === 'off' ? '0' : null);
       await out.answerCb(cq.id, act === 'off' ? 'Выключено' : 'Включено');
@@ -233,7 +241,7 @@ export function createBg(D, chatMod) {
    * Проверка всего пути без Telegram (для диагностики): первый вызов запускает проверочную задачу в Actions,
    * следующий сообщает, дошёл ли ответ, и убирает следы. Владельцу ничего не отправляется.
    */
-  async function selfTest() {
+  async function selfTest({ big = false } = {}) {
     const prev = await store.getSetting('bg_test');
     if (prev) {
       const meta = await metaOf(prev);
@@ -250,9 +258,11 @@ export function createBg(D, chatMod) {
       return report;
     }
     const id = uid();
-    const body = JSON.stringify({ model: cfg.fastModels?.[0] ?? 'claude-haiku-5-5', messages: [{ role: 'user', content: 'Ответь одним словом: ок' }], maxTokens: 20, think: null });
-    await store.setSetting(`bg:${id}:q0`, body);
-    await saveMeta(id, { chatId: 0, model: 'test', ts: D.now(), repoLen: 0, n: 1, an: 0, state: 'run', estIn: 10 });
+    // big: запрос на ~3 МБ (лишнее поле pad модель не видит) — проверяем, что большие запросы с файлами проходят весь путь
+    const body = JSON.stringify({ model: cfg.fastModels?.[0] ?? 'claude-haiku-5-5', messages: [{ role: 'user', content: 'Ответь одним словом: ок' }], maxTokens: 20, think: null, ...(big ? { pad: 'я'.repeat(3_000_000) } : {}) });
+    const qs = splitSafe(body, REQ_CHUNK);
+    for (let i = 0; i < qs.length; i++) await store.setSetting(`bg:${id}:q${i}`, qs[i]);
+    await saveMeta(id, { chatId: 0, model: 'test', ts: D.now(), repoLen: 0, n: qs.length, an: 0, state: 'run', estIn: 10 });
     await store.setSetting('bg_test', id);
     const selfInfo = await gh().getRepo(D.selfRepo);
     await gh().dispatch(D.selfRepo, WORKFLOW, selfInfo.default_branch, { job: id });

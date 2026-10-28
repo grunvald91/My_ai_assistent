@@ -230,7 +230,7 @@ export default async function (input, ctx) {
   });
 
   // Фоновый ответ через Actions, весь путь без Telegram: первый запуск стартует проверочную задачу, следующий сообщает итог
-  const bgTest = input?.bgtest ? await probe('Фоновый ответ (Actions)', async () => ({ ...(await app.bg.selfTest()) })) : undefined;
+  const bgTest = input?.bgtest && input.bgtest !== 'no' ? await probe('Фоновый ответ (Actions)', async () => ({ ...(await app.bg.selfTest({ big: input?.bgtest === 'big' })) })) : undefined;
 
   // метаданные последних сообщений владельца (длина и модель; без текстов)
   const lastMsgs = (await db.select().from(T.messages).where(eq(T.messages.chatKey, String(owner))).orderBy(desc(T.messages.id)).limit(8).all()).map((m) => ({
