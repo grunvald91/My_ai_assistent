@@ -6,7 +6,7 @@ import { LimitError } from './core.js';
 import { alternatives } from './models.js';
 import { isSimple, pickFast } from './auto.js';
 import { renderChunks, richMarkdown } from './format.js';
-import { displayName, escapeHtml, randomDraftId, truncate, uid } from './util.js';
+import { dayKey, displayName, escapeHtml, randomDraftId, truncate, uid } from './util.js';
 
 // ───────── «запомнить?» — предложение бота в конце ответа ─────────
 
@@ -210,9 +210,6 @@ export function createChat(D) {
         }
       }
     }
-    // веб-поиск Exa: если вопросу нужны свежие данные — ищем и отдаём найденное модели (только в запросе, в историю не пишем)
-    let searchNote = '';
-    if (!media && !cont && D.exa) searchNote = await D.exa.augment(messages, text ?? (await lastUserText(key, chat)));
     if (cont) messages.push({ role: 'user', content: CONTINUE_PROMPT });
 
     // тяжёлая модель: в фоне через GitHub Actions (там нет лимита ~30 с).
@@ -227,14 +224,40 @@ export function createChat(D) {
       );
       return;
     }
-    if (heavy && (mode === 'bg' || (!media && mode !== 'now'))) {
+    let toBg = heavy && (mode === 'bg' || (!media && mode !== 'now'));
+    if (!toBg && mode === 'bg' && D.bg && (await D.bg.canRun())) toBg = true; // «Ответить в фоне» после обрыва — для любой модели
+
+    // веб-поиск Exa (вопросы без файлов): если нужны свежие данные — найденное уходит модели только в запросе, в историю не пишется.
+    // В фоне решение и поиск делает сама задача Actions; если в чате Exa отвечал слишком долго — вопрос уходит в фон, поиск доделается там.
+    let searchNote = '';
+    let bgSearch = null;
+    let bgReason = '';
+    if (!media && !cont && D.exa) {
+      const asked = text ?? (await lastUserText(key, chat));
+      if (toBg) bgSearch = await D.exa.forBackground(asked);
+      else {
+        const r = await D.exa.augment(messages, asked);
+        searchNote = r.note ?? '';
+        if (r.defer && D.bg && (await D.bg.canRun())) {
+          toBg = true;
+          bgSearch = { query: r.defer, date: dayKey(D.now(), core.tz()) };
+          bgReason = '🔎 Поиск в интернете отвечает долго — ищу и отвечаю в фоне.';
+          searchNote = '';
+        }
+      }
+    }
+
+    if (toBg) {
       let started = false;
       try {
-        started = await D.bg.start(chatId, { model, messages, think: await core.thinkLevel(), repoLen: repo?.text?.length ?? 0, note: mediaNote, snote: searchNote });
+        started = await D.bg.start(chatId, { model, messages, think: await core.thinkLevel(), repoLen: repo?.text?.length ?? 0, note: mediaNote, snote: searchNote, search: bgSearch, reason: bgReason });
       } catch (e) {
         return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null, qid: await lastUserId(key, chat) });
       }
       if (started) return;
+      // фон не запустился (причина показана) — отвечаем в чате; поиск, если его отдали фону, делаем здесь
+      if (bgSearch?.query) searchNote = '🔎 Поиск в интернете отвечал слишком долго — отвечаю без него.';
+      else if (bgSearch?.asked) searchNote = (await D.exa.augment(messages, bgSearch.asked)).note ?? '';
     }
 
     const streamer = draftStreamer(chatId);
@@ -379,7 +402,7 @@ export function createChat(D) {
         console.warn('alternatives failed', err?.message ?? err); // кнопки замены — удобство, без них ошибка всё равно показана
       }
     }
-    if (e instanceof LlmError && e.kind === 'timeout' && modelId && D.bg && (await D.bg.shouldRun({ id: modelId }))) rows.push([{ text: '📥 Ответить в фоне (без лимита 30 с)', callback_data: 'bg:go:' + qid, style: 'primary' }]);
+    if (e instanceof LlmError && e.kind === 'timeout' && D.bg && (await D.bg.canRun())) rows.push([{ text: '📥 Ответить в фоне (без лимита 30 с)', callback_data: 'bg:go:' + qid, style: 'primary' }]);
     if (e instanceof LlmError && ['rate', 'upstream', 'network', 'timeout'].includes(e.kind)) rows.push([{ text: '🔄 Повторить', callback_data: 'r:1' }]);
     if (userText && userText.length <= 256) rows.push([{ text: '📋 Скопировать моё сообщение', copy_text: { text: userText } }]);
     return rows;

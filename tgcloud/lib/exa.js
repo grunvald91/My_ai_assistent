@@ -4,11 +4,11 @@
 // при сбое отвечаем без поиска и говорим об этом.
 
 import { withDeadline, TIMED_OUT } from './llm.js';
-import { escapeHtml, dayKey } from './util.js';
+import { dayKey } from './util.js';
 
 const kb = (rows) => ({ inline_keyboard: rows });
 export const SEARCH_URL = 'https://api.exa.ai/search';
-const GUARD_MS = 8000;
+const GUARD_MS = 8000; // по умолчанию; cfg.searchGuardMs меняет (тесты)
 
 const DECIDE_SYSTEM = (date) =>
   'Ты решаешь, нужен ли поиск в интернете, чтобы хорошо ответить на ПОСЛЕДНЕЕ сообщение пользователя.\n' +
@@ -27,6 +27,43 @@ export function parseDecision(text) {
   } catch {
     return null;
   }
+}
+
+/** Сообщения для «решателя»: последние реплики диалога (для контекста) + вопрос. */
+export function decideMessages(messages, asked, date) {
+  const tail = messages
+    .filter((m) => m.role !== 'system')
+    .slice(-3, -1)
+    .map((m) => `${m.role === 'assistant' ? 'Ассистент' : 'Пользователь'}: ${typeof m.content === 'string' ? m.content : '[вложение]'}`);
+  const input = (tail.length ? `ДИАЛОГ ДО ЭТОГО:\n${tail.join('\n')}\n\n` : '') + `ПОСЛЕДНЕЕ СООБЩЕНИЕ:\n${asked}`;
+  return [{ role: 'system', content: DECIDE_SYSTEM(date) }, { role: 'user', content: input }];
+}
+
+/** Сам запрос к Exa (рекомендованный: только query + highlights). Возвращает promise ответа fetch. */
+export function exaRequest(fetchFn, key, query) {
+  return fetchFn(SEARCH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+    body: JSON.stringify({ query, type: 'auto', contents: { highlights: true } }),
+  });
+}
+
+/** Разбор ответа Exa → массив results; ошибка — исключение с понятным текстом. */
+export async function exaResults(res) {
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Exa ответил ${res.status}: ${t.slice(0, 120)}`);
+  }
+  const j = await res.json();
+  return Array.isArray(j?.results) ? j.results : [];
+}
+
+/** Дописывает найденное к последнему сообщению пользователя (только в запросе к модели). false — некуда дописать. */
+export function applyResults(messages, query, results, date) {
+  const i = messages.map((m) => m.role).lastIndexOf('user');
+  if (i < 0 || typeof messages[i].content !== 'string') return false;
+  messages[i] = { ...messages[i], content: messages[i].content + resultsBlock(query, results, date) };
+  return true;
 }
 
 /** Блок для модели: найденное — материал, а не инструкции. */
@@ -53,25 +90,22 @@ export function createExa(D) {
   const { store, out, core, cfg } = D;
 
   const keyOk = () => !!D.exaKey;
+  const guard = () => cfg.searchGuardMs ?? GUARD_MS;
   /** Включён ли поиск: ключ задан и он не выключен командой /search. */
   async function available() {
     return keyOk() && (await store.getSetting('search')) !== '0';
   }
 
+  /** Стоит ли вообще спрашивать «решателя» (дёшево отсекаем «ок», «спасибо»). */
+  const worthAsking = (asked) => String(asked ?? '').trim().length >= 8;
+  const today = () => dayKey(D.now(), core.tz());
+
   async function decide(messages, asked) {
     const models = await core.getModels();
     const fast = (cfg.fastModels ?? []).map((id) => models.find((m) => m.id === id && !m.down)).find(Boolean);
     if (!fast) return null;
-    const tail = messages.filter((m) => m.role !== 'system').slice(-3, -1).map((m) => `${m.role === 'assistant' ? 'Ассистент' : 'Пользователь'}: ${typeof m.content === 'string' ? m.content : '[вложение]'}`);
-    const input = (tail.length ? `ДИАЛОГ ДО ЭТОГО:\n${tail.join('\n')}\n\n` : '') + `ПОСЛЕДНЕЕ СООБЩЕНИЕ:\n${asked}`;
     try {
-      const res = await core.generate({
-        model: fast,
-        messages: [{ role: 'system', content: DECIDE_SYSTEM(dayKey(D.now(), core.tz())) }, { role: 'user', content: input }],
-        maxTokens: 150,
-        retries: 0,
-        deadline: Date.now() + GUARD_MS,
-      });
+      const res = await core.generate({ model: fast, messages: decideMessages(messages, asked, today()), maxTokens: 150, retries: 0, deadline: Date.now() + guard() });
       return parseDecision(res.text);
     } catch (e) {
       console.warn('search decide failed', e?.message ?? e); // решатель — удобство: без него просто отвечаем без поиска
@@ -79,47 +113,47 @@ export function createExa(D) {
     }
   }
 
+  /** Поиск с защитным сроком. 'slow' — Exa не уложился (тогда поиск можно доделать в фоне). */
   async function search(query) {
-    const p = D.fetch(SEARCH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': D.exaKey },
-      body: JSON.stringify({ query, type: 'auto', contents: { highlights: true } }),
-    });
+    const p = exaRequest(D.fetch, D.exaKey, query);
     p.catch?.(() => {});
-    const res = D.pulse ? await withDeadline(p, GUARD_MS, D.pulse) : await p;
-    if (res === TIMED_OUT) throw new Error('Exa не ответил вовремя');
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      throw new Error(`Exa ответил ${res.status}: ${t.slice(0, 120)}`);
-    }
-    const j = await res.json();
-    return Array.isArray(j?.results) ? j.results : [];
+    const res = D.pulse ? await withDeadline(p, guard(), D.pulse) : await p;
+    if (res === TIMED_OUT) return 'slow';
+    return exaResults(res);
   }
 
   /**
    * Если вопросу нужен поиск — ищем и дописываем найденное к последнему сообщению пользователя (только в запросе к модели,
-   * в историю не попадает). Возвращает подпись для ответа ('' — поиска не было).
+   * в историю не попадает). → { note } — подпись под ответом ('' — поиска не было);
+   * { defer: query } — Exa отвечал слишком долго: поиск и ответ лучше доделать в фоне (GitHub Actions).
    */
   async function augment(messages, asked) {
-    if (!(await available())) return '';
-    const text = String(asked ?? '').trim();
-    if (text.length < 8) return '';
+    if (!(await available()) || !worthAsking(asked)) return { note: '' };
+    const text = String(asked).trim();
     const d = await decide(messages, text);
-    if (!d?.search) return '';
+    if (!d?.search) return { note: '' };
     let results;
     try {
       results = await search(d.query);
     } catch (e) {
       console.warn('exa search failed', e?.message ?? e);
       await D.log('search_fail', null, { message: String(e?.message ?? e).slice(0, 200) });
-      return '🔎 Поиск в интернете не получился — отвечаю без него.';
+      return { note: '🔎 Поиск в интернете не получился — отвечаю без него.' };
+    }
+    if (results === 'slow') {
+      await D.log('search_slow', null, {});
+      return { defer: d.query, note: '🔎 Поиск в интернете отвечал слишком долго — отвечаю без него.' };
     }
     await D.log('search', null, { results: results.length });
-    if (!results.length) return `🔎 Искал в интернете «${d.query}» — ничего не нашлось, отвечаю без поиска.`;
-    const i = messages.map((m) => m.role).lastIndexOf('user');
-    if (i < 0 || typeof messages[i].content !== 'string') return '';
-    messages[i] = { ...messages[i], content: messages[i].content + resultsBlock(d.query, results, dayKey(D.now(), core.tz())) };
-    return sourcesNote(d.query, results);
+    if (!results.length) return { note: `🔎 Искал в интернете «${d.query}» — ничего не нашлось, отвечаю без поиска.` };
+    if (!applyResults(messages, d.query, results, today())) return { note: '' };
+    return { note: sourcesNote(d.query, results) };
+  }
+
+  /** Для вопроса, который уходит в фон целиком: решение и поиск сделает задача Actions. null — поиск не нужен/выключен. */
+  async function forBackground(asked) {
+    if (!(await available()) || !worthAsking(asked)) return null;
+    return { asked: String(asked).trim(), date: today() };
   }
 
   // ───────── /search ─────────
@@ -167,5 +201,5 @@ export function createExa(D) {
     return undefined;
   }
 
-  return { available, augment, command, callback, search };
+  return { available, augment, forBackground, command, callback, search };
 }

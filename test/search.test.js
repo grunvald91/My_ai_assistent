@@ -90,17 +90,45 @@ test('поиск: короткие реплики и вопросы с файл�
   assert.equal(w.exaCalls.length, 0);
 });
 
-test('поиск: тяжёлая модель в фоне получает найденное в запросе, подпись приходит с ответом', async () => {
+test('поиск: тяжёлая модель в фоне — решение и поиск делает задача Actions, подпись приходит с ответом', async () => {
   const w = await mk({ cfg: { bgViaActions: true } });
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
   await w.say('/start');
   await w.store.updateChat(OWNER, { model: 'claude-opus-5-5' });
-  w.llmReplies.push(YES);
   await w.say('Какой сейчас курс доллара?');
+  assert.equal(w.llmCalls.length, 0, 'в боте модель не вызывалась вовсе — бот сразу ушёл в фон');
+  assert.equal(w.exaCalls.length, 0);
   const job = w.gh.dispatches.at(-1).inputs.job;
   const req = JSON.parse((await w.app.bg.getRequest(job, 0)).text);
-  assert.match(JSON.stringify(req.messages), /Доллар стоит 91 рубль/);
+  assert.deepEqual(req.search, { asked: 'Какой сейчас курс доллара?', date: '2027-01-15' });
   await w.app.bg.receivePart(job, 0, 'Около 91 рубля.');
-  await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'claude-opus-5-5', error: null });
-  assert.match(w.last(OWNER).text, /🔎 Искал в интернете/);
+  await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'claude-opus-5-5', error: null, snote: '🔎 Искал в интернете: «курс»\n1. [Источник](https://example.com/rub)' });
+  const m = w.last(OWNER).text;
+  assert.match(m, /Около 91 рубля/);
+  assert.match(m, /🔎 Искал в интернете/);
+});
+
+test('поиск: Exa отвечает долго — вопрос уходит в фон (и с лёгкой моделью), поиск доделается там', async () => {
+  const w = await mk({ cfg: { bgViaActions: true, searchGuardMs: 200 } });
+  w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
+  w.exaReply = 'stall';
+  w.llmReplies.push(YES);
+  await w.say('Какой сейчас курс доллара?');
+  assert.equal(w.llmCalls.length, 1, 'только решатель: отвечать в чате не стали');
+  const d = w.gh.dispatches.find((x) => x.workflow === 'bgjob.yml');
+  assert.ok(d, 'ушло в фон');
+  const req = JSON.parse((await w.app.bg.getRequest(d.inputs.job, 0)).text);
+  assert.equal(req.model, 'claude-sonnet-5-5');
+  assert.deepEqual(req.search, { query: 'курс доллара к рублю сегодня', date: '2027-01-15' }, 'решение уже принято — задача только ищет');
+  assert.match(w.last(OWNER).text, /Поиск в интернете отвечает долго — ищу и отвечаю в фоне/);
+});
+
+test('поиск: Exa долго, а фон выключен — отвечаем в чате без поиска и честно пишем почему', async () => {
+  const w = await mk({ cfg: { searchGuardMs: 200 } });
+  w.exaReply = 'stall';
+  w.llmReplies.push(YES, 'Отвечаю без поиска.');
+  await w.say('Какой сейчас курс доллара?');
+  const m = w.last(OWNER).text;
+  assert.match(m, /Отвечаю без поиска/);
+  assert.match(m, /отвечал слишком долго/);
 });

@@ -13,6 +13,7 @@ export default async function (input, ctx) {
     usage: input?.usage ?? null,
     model: String(input?.model ?? ''),
     error: input?.error ? String(input.error) : null,
+    snote: input?.snote ? String(input.snote) : null,
   });
   if (!r) throw new EndpointError('Неизвестная задача', { code: 'NO_JOB' });
   return { ok: true };

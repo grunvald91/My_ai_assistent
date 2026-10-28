@@ -5,7 +5,7 @@
 import { db, api, fetch, EndpointError } from 'sdk';
 import { desc, eq, sql } from 'sdk/db';
 import * as T from '../schema.js';
-import { OWNER_IDS, CLAUDEHUB_API_KEY, GH_PAT, SELF_REPO } from '../lib/secrets.js';
+import { OWNER_IDS, CLAUDEHUB_API_KEY, GH_PAT, SELF_REPO, EXA_API_KEY } from '../lib/secrets.js';
 import { API_BASE } from '../lib/config.js';
 import { parseIdList } from '../lib/util.js';
 import { timeout } from '../lib/timer.js';
@@ -236,6 +236,15 @@ export default async function (input, ctx) {
     return { status: r.status, body_start: t.slice(0, 120) };
   });
 
+  // Настоящий поиск Exa с ключом бота (печатаем только число результатов и время, без содержимого)
+  const exaSearch = EXA_API_KEY
+    ? await probe('Exa поиск с ключом', async () => {
+        const r = await fetch('https://api.exa.ai/search', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': EXA_API_KEY }, body: JSON.stringify({ query: 'курс доллара к рублю', type: 'auto', contents: { highlights: true } }) });
+        const j = r.ok ? await r.json().catch(() => null) : null;
+        return { status: r.status, results: Array.isArray(j?.results) ? j.results.length : null, with_highlights: Array.isArray(j?.results) ? j.results.filter((x) => x.highlights?.length).length : null };
+      })
+    : { name: 'Exa поиск с ключом', ok: false, error: 'EXA_API_KEY не задан в secrets.js (секрет не добавлен или бот не перевыложен)' };
+
   // Фоновый ответ через Actions, весь путь без Telegram: первый запуск стартует проверочную задачу, следующий сообщает итог
   const bgTest = input?.bgtest && input.bgtest !== 'no' ? await probe('Фоновый ответ (Actions)', async () => ({ ...(await app.bg.selfTest({ big: input?.bgtest === 'big' })) })) : undefined;
 
@@ -257,6 +266,8 @@ export default async function (input, ctx) {
     deadlineProbe,
     llmDeadline,
     exaReach,
+    exaSearch,
+    search_setting: (await db.select().from(T.settings).where(eq(T.settings.key, 'search')).get())?.value ?? 'вкл',
     ...(bgTest ? { bgTest } : {}),
     last_messages: lastMsgs,
     chat_model: ownerChat?.model ?? null,

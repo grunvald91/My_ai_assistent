@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import JSON5 from 'json5';
 import { createLlm } from '../tgcloud/lib/llm.js';
 import { splitSafe } from '../tgcloud/lib/bg.js';
+import { decideMessages, parseDecision, exaRequest, exaResults, applyResults, sourcesNote } from '../tgcloud/lib/exa.js';
 import { API_BASE, DEFAULTS } from '../tgcloud/lib/config.js';
 
 const env = (k) => (process.env[k] ?? '').trim();
@@ -58,12 +59,49 @@ function callBot(name, payload) {
   return null;
 }
 
-async function deliver({ text = '', finish = null, usage = null, model = '', error = null }) {
+async function deliver({ text = '', finish = null, usage = null, model = '', error = null, snote = null }) {
   const parts = splitSafe(text);
   for (let i = 0; i < parts.length; i++) {
     if (!callBot('bgjob_part', { job: JOB, i, text: parts[i] })) throw new Error('не удалось передать боту часть ' + (i + 1));
   }
-  if (!callBot('bgjob_done', { job: JOB, n: parts.length, finish, usage, model, error })) throw new Error('не удалось сообщить боту итог');
+  if (!callBot('bgjob_done', { job: JOB, n: parts.length, finish, usage, model, error, ...(snote ? { snote } : {}) })) throw new Error('не удалось сообщить боту итог');
+}
+
+/**
+ * Поиск в интернете (Exa) для фонового ответа: при { asked } сначала быстрая модель решает, нужен ли он; при { query } — уже решено.
+ * Найденное дописывается к последнему сообщению пользователя в запросе. Возвращает подпись под ответом или null. Содержимое не печатаем.
+ */
+async function webSearch(llm, req, extra) {
+  const key = env('EXA_API_KEY');
+  if (!key) return null;
+  let query = req.search.query ?? '';
+  if (!query) {
+    let decision = null;
+    for (const id of DEFAULTS.fastModels) {
+      try {
+        const r = await llm.chat({ model: id, messages: decideMessages(req.messages, req.search.asked ?? '', req.search.date ?? ''), maxTokens: 150, retries: 1 });
+        extra.in += r.usage?.in ?? 0;
+        extra.out += r.usage?.out ?? 0;
+        decision = parseDecision(r.text);
+        break;
+      } catch (e) {
+        console.error('Решатель поиска: модель', id, 'не ответила:', String(e?.kind ?? e?.message ?? e).slice(0, 80));
+      }
+    }
+    console.log('Поиск нужен:', !!decision?.search);
+    if (!decision?.search) return null;
+    query = decision.query;
+  }
+  try {
+    const results = await exaResults(await exaRequest(fetch, key, query));
+    console.log('Поиск: найдено', results.length);
+    if (!results.length) return `🔎 Искал в интернете «${query}» — ничего не нашлось, отвечаю без поиска.`;
+    if (!applyResults(req.messages, query, results, req.search.date ?? '')) return null;
+    return sourcesNote(query, results);
+  } catch (e) {
+    console.error('Поиск не получился:', String(e?.message ?? e).slice(0, 120));
+    return '🔎 Поиск в интернете не получился — отвечаю без него.';
+  }
 }
 
 async function main() {
@@ -80,6 +118,8 @@ async function main() {
   console.log('Запрос получен: модель', req.model, ', сообщений', req.messages?.length ?? 0, ', размышления', req.think ?? 'off');
 
   const llm = createLlm({ fetch, apiKey: env('CLAUDEHUB_API_KEY'), base: API_BASE, sleep, retries: 3 });
+  const extra = { in: 0, out: 0 }; // расход «решателя» поиска — добавим к итогу
+  const snote = req.search ? await webSearch(llm, req, extra) : null;
   let n = 0;
   const res = await llm.chat({
     model: req.model,
@@ -93,7 +133,8 @@ async function main() {
     },
   });
   console.log('Готово. Символов:', res.text.length, 'finish:', res.finish);
-  await deliver({ text: res.text, finish: res.finish, usage: res.usage, model: req.model });
+  const usage = res.usage ? { in: (res.usage.in ?? 0) + extra.in, out: (res.usage.out ?? 0) + extra.out } : null;
+  await deliver({ text: res.text, finish: res.finish, usage, model: req.model, snote });
 }
 
 try {

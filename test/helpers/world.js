@@ -138,6 +138,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
     if (url === 'https://api.exa.ai/search') {
       w.exaCalls.push({ headers: opts.headers, body: JSON.parse(opts.body) });
       if (w.exaReply === 'fail') return jsonRes(500, { error: 'boom' });
+      if (w.exaReply === 'stall') return new Promise(() => {}); // Exa «завис»
       return jsonRes(200, { results: w.exaReply ?? [{ title: 'Курс рубля сегодня', url: 'https://example.com/rub', publishedDate: '2027-01-15T08:00:00Z', highlights: ['Доллар стоит 91 рубль.'] }] });
     }
     if (url.startsWith('https://api.github.com')) return fakeGithub(w, url.slice('https://api.github.com'.length), opts);

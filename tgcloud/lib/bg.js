@@ -37,11 +37,15 @@ export function createBg(D, chatMod) {
 
   const heavyRe = () => new RegExp(cfg.bgHeavy || '$^', 'i');
 
-  /** Идёт ли ответ этой модели через Actions. */
-  async function shouldRun(model) {
+  /** Можно ли вообще отвечать в фоне (Actions настроены и /bg не выключен). */
+  async function canRun() {
     if (!cfg.bgViaActions || !D.selfRepo || !D.github) return false;
-    if ((await store.getSetting('bg')) === '0') return false;
-    return heavyRe().test(model?.id ?? '');
+    return (await store.getSetting('bg')) !== '0';
+  }
+
+  /** Идёт ли ответ этой модели через Actions (тяжёлая модель). */
+  async function shouldRun(model) {
+    return heavyRe().test(model?.id ?? '') && (await canRun());
   }
 
   const metaOf = async (id) => safeJson(await store.getSetting('bg:' + id), null);
@@ -53,16 +57,21 @@ export function createBg(D, chatMod) {
     await store.setSetting('bg:' + id, null);
   }
 
-  const statusHtml = (model) =>
+  const statusHtml = (model, reason) =>
+    (reason ? reason + '\n' : '') +
     `⏳ <b>${escapeHtml(model)}</b> готовит ответ в фоне (GitHub Actions) — там нет лимита в 30 секунд. Обычно 1–3 минуты.\n` +
     'Ответ придёт сюда сам. Кнопка — проверить и забрать вручную.';
 
   /** true — вопрос ушёл в Actions. false — не вышло (причина показана), дальше отвечаем обычным путём. */
-  async function start(chatId, { model, messages, think, repoLen = 0, note = '', snote = '' }) {
+  /**
+   * search: поиск в интернете делает задача Actions — { asked, date } (сначала решить, нужен ли) или { query, date } (уже решено).
+   * reason: строка над статусом (почему в фоне).
+   */
+  async function start(chatId, { model, messages, think, repoLen = 0, note = '', snote = '', search = null, reason = '' }) {
     await core.assertLimits();
     const level = think && think !== 'off' && model.thinking ? think : null;
     const cap = cfg.maxTokensChat === 'max' ? model.maxOut || cfg.maxTokensFallback : cfg.maxTokensChat;
-    const parts = splitSafe(JSON.stringify({ model: model.id, messages, maxTokens: cap, think: level }), REQ_CHUNK);
+    const parts = splitSafe(JSON.stringify({ model: model.id, messages, maxTokens: cap, think: level, ...(search ? { search } : {}) }), REQ_CHUNK);
     const id = uid();
     for (let i = 0; i < parts.length; i++) await store.setSetting(`bg:${id}:q${i}`, parts[i]);
     const meta = { chatId, model: model.id, ts: D.now(), repoLen, note, snote, n: parts.length, an: 0, state: 'run', estIn: promptTokens(messages) };
@@ -81,7 +90,7 @@ export function createBg(D, chatMod) {
       }
       throw e;
     }
-    const sent = await out.sendHtml(chatId, statusHtml(model.id), {
+    const sent = await out.sendHtml(chatId, statusHtml(model.id, reason), {
       reply_markup: kb([[{ text: '📥 Забрать ответ', callback_data: 'bg:g:' + id, style: 'primary' }, { text: '✖️ Отмена', callback_data: 'bg:x:' + id, style: 'danger' }]]),
     });
     if (sent?.message_id) await saveMeta(id, { ...meta, statusMsg: sent.message_id });
@@ -104,7 +113,7 @@ export function createBg(D, chatMod) {
     return true;
   }
 
-  async function finish({ job, n, finish: why, usage, model, error }) {
+  async function finish({ job, n, finish: why, usage, model, error, snote = null }) {
     const meta = await metaOf(job);
     if (!meta) return false;
     if (meta.state === 'canceled') {
@@ -124,7 +133,7 @@ export function createBg(D, chatMod) {
       });
       return true;
     }
-    await saveMeta(job, { ...meta, state: 'ready', an: n, why: why ?? null, usage: usage ?? null, model: model || meta.model });
+    await saveMeta(job, { ...meta, state: 'ready', an: n, why: why ?? null, usage: usage ?? null, model: model || meta.model, snote: snote || meta.snote || '' });
     try {
       await deliver(job);
     } catch (e) {
@@ -221,7 +230,7 @@ export function createBg(D, chatMod) {
       'Включено: когда выбрана тяжёлая модель (сейчас — семейство Opus), вопрос уходит в GitHub Actions. ' +
       'Бот сразу пишет, что ответ готовится, а готовый ответ присылает сам; кнопка «Забрать ответ» проверяет готовность. ' +
       'Так модель может думать сколько нужно, а не 30 секунд. Обычно ответ приходит через 1–3 минуты.\n\n' +
-      'Вопросы с фото и файлами и все остальные модели отвечают как обычно.\n\n' +
+      'С фото или файлом бот спросит: «В фоне» или «Сразу в чате». Если поиск в интернете отвечает слишком долго — вопрос тоже уходит в фон (для любой модели), поиск доделывается там.\n\n' +
       'Выключено: тяжёлые модели отвечают прямо в чате, за ~30 секунд (дольше платформа не даёт).';
     const markup = kb([[{ text: on ? '⚪ Выключить' : '🟢 Включить', callback_data: 'bg:' + (on ? 'off' : 'on'), style: on ? undefined : 'success' }]]);
     if (editMsgId) {
@@ -279,5 +288,5 @@ export function createBg(D, chatMod) {
     return { stage: 'started', job: id };
   }
 
-  return { selfTest, shouldRun, start, getRequest, receivePart, finish, deliver, callback, command };
+  return { selfTest, canRun, shouldRun, start, getRequest, receivePart, finish, deliver, callback, command };
 }
