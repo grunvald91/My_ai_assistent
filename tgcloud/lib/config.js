@@ -65,13 +65,14 @@ export const DEFAULTS = {
 };
 
 // Меню команд владельца. Менять список — поднимай COMMANDS_VERSION: бот сам обновит меню.
-export const COMMANDS_VERSION = 9;
+export const COMMANDS_VERSION = 10;
 export const OWNER_COMMANDS = [
   ['start', 'Начало и справка'],
   ['model', 'Выбрать модель ИИ'],
   ['think', 'Уровень размышлений ИИ'],
   ['auto', 'Автоподбор модели: простые вопросы — быстрой'],
   ['bg', 'Тяжёлые модели отвечают в фоне'],
+  ['search', 'Поиск в интернете (Exa): вкл/выкл'],
   ['post', 'Подготовить пост в канал'],
   ['channels', 'Мои каналы и их стиль'],
   ['memory', 'Что я помню'],

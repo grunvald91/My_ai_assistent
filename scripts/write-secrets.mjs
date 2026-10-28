@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 const key = (process.env.CLAUDEHUB_API_KEY ?? '').trim();
 const owners = (process.env.OWNER_IDS ?? '').trim();
 const ghPat = (process.env.GH_PAT ?? '').trim();
+const exaKey = (process.env.EXA_API_KEY ?? '').trim(); // необязательный: без него веб-поиск выключен
 // Репозиторий бота: GitHub Actions сам задаёт GITHUB_REPOSITORY. Код в нём бот менять не вправе.
 const selfRepo = (process.env.GITHUB_REPOSITORY || 'grunvald91/my_ai_assistent').trim();
 
@@ -28,6 +29,7 @@ writeFileSync(
     `export const CLAUDEHUB_API_KEY = ${JSON.stringify(key)};\n` +
     `export const OWNER_IDS = ${JSON.stringify(owners)};\n` +
     `export const GH_PAT = ${JSON.stringify(ghPat)};\n` +
-    `export const SELF_REPO = ${JSON.stringify(selfRepo)};\n`,
+    `export const SELF_REPO = ${JSON.stringify(selfRepo)};\n` +
+    `export const EXA_API_KEY = ${JSON.stringify(exaKey)};\n`,
 );
-console.log('secrets.js записан (ключ, владельцы' + (ghPat ? ', GitHub-токен' : '; GH_PAT не задан — режим /code выключен') + ').');
+console.log('secrets.js записан (ключ, владельцы' + (ghPat ? ', GitHub-токен' : '; GH_PAT не задан — режим /code выключен') + (exaKey ? ', ключ Exa' : '; EXA_API_KEY не задан — веб-поиск выключен') + ').');

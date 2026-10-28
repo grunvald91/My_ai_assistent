@@ -13,6 +13,7 @@ import { createReplies } from './replies.js';
 import { createCommands } from './commands.js';
 import { createCode } from './code.js';
 import { createBg } from './bg.js';
+import { createExa } from './exa.js';
 import { createGithub } from './github.js';
 import { displayName, escapeHtml, parseCommand } from './util.js';
 
@@ -31,6 +32,8 @@ export function createApp(base) {
   D.out = createOut(D);
   D.core = createCore(D);
   const { out, core } = D;
+  D.exaKey = base.exaKey ?? '';
+  D.exa = createExa(D); // веб-поиск Exa (/search)
   D.attach = createAttach(D);
   const chatMod = createChat(D);
   D.notifyOwnerOnce = chatMod.notifyOwnerOnce;
@@ -321,6 +324,8 @@ export function createApp(base) {
           return await code.callback(cq, parts.slice(1));
         case 'bg':
           return await D.bg.callback(cq, parts.slice(1));
+        case 'sr':
+          return await D.exa.callback(cq, parts.slice(1));
         case 'a': {
           const chatId = cq.message.chat.id;
           await out.dropButtons(chatId, cq.message.message_id);

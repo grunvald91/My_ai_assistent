@@ -91,11 +91,13 @@ function sseAnthropic(text, usage, { thinking = false, stop = 'end_turn' } = {})
 }
 const jsonRes = (status, obj) => ({ ok: status < 400, status, headers: { get: () => null }, json: async () => obj, text: async () => JSON.stringify(obj) });
 
-export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true } = {}) {
+export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true, exaKey = '' } = {}) {
   await resetDb();
   const w = {
     now: 1_800_000_000, // 2027-01-15, фиксированное «сейчас»
     tg: [], // все вызовы Bot API: { method, params }
+    exaCalls: [], // запросы к Exa
+    exaReply: null, // ответ Exa: массив results или 'fail'
     llmCalls: [], // тела запросов к ClaudeHub
     llmPaths: [], // путь каждого запроса (/v1/chat/completions или /v1/messages)
     llmReplies: [], // очередь ответов: строка или функция (body) => строка | { status, body }
@@ -133,6 +135,11 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
   };
 
   globalThis.__fetch = async (url, opts = {}) => {
+    if (url === 'https://api.exa.ai/search') {
+      w.exaCalls.push({ headers: opts.headers, body: JSON.parse(opts.body) });
+      if (w.exaReply === 'fail') return jsonRes(500, { error: 'boom' });
+      return jsonRes(200, { results: w.exaReply ?? [{ title: 'Курс рубля сегодня', url: 'https://example.com/rub', publishedDate: '2027-01-15T08:00:00Z', highlights: ['Доллар стоит 91 рубль.'] }] });
+    }
     if (url.startsWith('https://api.github.com')) return fakeGithub(w, url.slice('https://api.github.com'.length), opts);
     const path = url.replace(API_BASE, '');
     if (path === '/v1/models') {
@@ -182,6 +189,8 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true 
     fetch: globalThis.__fetch,
     ghToken: github ? 'ghp_testtoken' : '',
     selfRepo: 'grunvald91/my_ai_assistent',
+    exaKey,
+    pulse: store.ping,
     ownerIds,
   });
   w.app = app;

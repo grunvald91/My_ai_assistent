@@ -156,8 +156,8 @@ function thinkBody(mode, think, maxTokens) {
  * Поэтому, если передан pulse (лёгкий запрос к БД), срок отслеживается циклом: pulse → проверка часов, пока ожидание не завершится.
  * Без pulse — обычный таймер; если и его нет — срок проверяется только между порциями данных.
  */
-const TIMED_OUT = Symbol('timeout');
-function withDeadline(p, ms, pulse) {
+export const TIMED_OUT = Symbol('timeout');
+export function withDeadline(p, ms, pulse) {
   if (pulse) {
     let done = false;
     const end = Date.now() + ms;

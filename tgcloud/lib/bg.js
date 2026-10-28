@@ -58,14 +58,14 @@ export function createBg(D, chatMod) {
     'Ответ придёт сюда сам. Кнопка — проверить и забрать вручную.';
 
   /** true — вопрос ушёл в Actions. false — не вышло (причина показана), дальше отвечаем обычным путём. */
-  async function start(chatId, { model, messages, think, repoLen = 0, note = '' }) {
+  async function start(chatId, { model, messages, think, repoLen = 0, note = '', snote = '' }) {
     await core.assertLimits();
     const level = think && think !== 'off' && model.thinking ? think : null;
     const cap = cfg.maxTokensChat === 'max' ? model.maxOut || cfg.maxTokensFallback : cfg.maxTokensChat;
     const parts = splitSafe(JSON.stringify({ model: model.id, messages, maxTokens: cap, think: level }), REQ_CHUNK);
     const id = uid();
     for (let i = 0; i < parts.length; i++) await store.setSetting(`bg:${id}:q${i}`, parts[i]);
-    const meta = { chatId, model: model.id, ts: D.now(), repoLen, note, n: parts.length, an: 0, state: 'run', estIn: promptTokens(messages) };
+    const meta = { chatId, model: model.id, ts: D.now(), repoLen, note, snote, n: parts.length, an: 0, state: 'run', estIn: promptTokens(messages) };
     await saveMeta(id, meta);
     try {
       const selfInfo = await gh().getRepo(D.selfRepo);
@@ -149,7 +149,7 @@ export function createBg(D, chatMod) {
         meta.billed = true;
         await saveMeta(job, { ...meta, state: 'delivering' });
       }
-      await chatMod.publishOwnerReply(meta.chatId, { text, finish: meta.why, tokensOut }, { model: { id: meta.model }, repoLen: meta.repoLen, mediaNote: meta.note ?? '' });
+      await chatMod.publishOwnerReply(meta.chatId, { text, finish: meta.why, tokensOut }, { model: { id: meta.model }, repoLen: meta.repoLen, mediaNote: meta.note ?? '', searchNote: meta.snote ?? '' });
       await store.trimMessages(String(meta.chatId), 300);
       if (meta.statusMsg) await out.editHtml(meta.chatId, meta.statusMsg, `✅ <b>${escapeHtml(meta.model)}</b>: ответ готов — он ниже.`, null).catch(() => {});
     } catch (e) {

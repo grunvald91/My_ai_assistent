@@ -15,6 +15,7 @@ jobs:
       CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
       OWNER_IDS: ${{ secrets.OWNER_IDS || vars.OWNER_IDS }}
       GH_PAT: ${{ secrets.GH_PAT }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

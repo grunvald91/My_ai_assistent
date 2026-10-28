@@ -210,6 +210,9 @@ export function createChat(D) {
         }
       }
     }
+    // веб-поиск Exa: если вопросу нужны свежие данные — ищем и отдаём найденное модели (только в запросе, в историю не пишем)
+    let searchNote = '';
+    if (!media && !cont && D.exa) searchNote = await D.exa.augment(messages, text ?? (await lastUserText(key, chat)));
     if (cont) messages.push({ role: 'user', content: CONTINUE_PROMPT });
 
     // тяжёлая модель: в фоне через GitHub Actions (там нет лимита ~30 с).
@@ -227,7 +230,7 @@ export function createChat(D) {
     if (heavy && (mode === 'bg' || (!media && mode !== 'now'))) {
       let started = false;
       try {
-        started = await D.bg.start(chatId, { model, messages, think: await core.thinkLevel(), repoLen: repo?.text?.length ?? 0, note: mediaNote });
+        started = await D.bg.start(chatId, { model, messages, think: await core.thinkLevel(), repoLen: repo?.text?.length ?? 0, note: mediaNote, snote: searchNote });
       } catch (e) {
         return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null, qid: await lastUserId(key, chat) });
       }
@@ -244,7 +247,7 @@ export function createChat(D) {
       return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null, qid: await lastUserId(key, chat) });
     }
 
-    await publishOwnerReply(chatId, res, { model, mediaNote, fastNote, strongId, repoLen: repo?.text?.length ?? 0 });
+    await publishOwnerReply(chatId, res, { model, mediaNote, fastNote, strongId, searchNote, repoLen: repo?.text?.length ?? 0 });
 
     try {
       // сжатие истории — ещё один вызов ИИ: делаем его, только пока вызов бота «молодой» (иначе платформа оборвёт и его, и сам апдейт)
@@ -256,7 +259,7 @@ export function createChat(D) {
   }
 
   /** Показывает готовый ответ модели владельцу (кнопки «Продолжить», «Запомнить» и т. д.) и сохраняет его в историю. */
-  async function publishOwnerReply(chatId, res, { model, mediaNote = '', fastNote = '', strongId = null, repoLen = 0 } = {}) {
+  async function publishOwnerReply(chatId, res, { model, mediaNote = '', fastNote = '', strongId = null, repoLen = 0, searchNote = '' } = {}) {
     const key = String(chatId);
     const { text: clean, fact } = extractProposal(res.text.trim());
     let body = clean || '…';
@@ -267,6 +270,7 @@ export function createChat(D) {
     if (res.error) body += '\n\n⚠️ Связь с моделью оборвалась — ответ может быть неполным.';
     if (mediaNote) body += `\n\nℹ️ ${mediaNote}`;
     if (fastNote) body += `\n\n${fastNote}`;
+    if (searchNote) body += `\n\n${searchNote}`;
     if (res.thinkDropped) body += '\n\nℹ️ Эта модель не приняла режим размышлений — ответила без него.';
 
     let markup;

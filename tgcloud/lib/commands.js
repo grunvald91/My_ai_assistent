@@ -41,6 +41,7 @@ export function createCommands(D, mods) {
     '/model — выбрать модель ИИ\n' +
     '/think — уровень размышлений: выкл / низкий / средний / высокий\n' +
     '/auto — автоподбор модели: простые вопросы отвечает быстрая дешёвая, сложные — выбранная\n' +
+    '/search — поиск в интернете (Exa): бот сам решает, когда он нужен\n' +
     '/bg — тяжёлые модели (Opus) отвечают в фоне, без лимита 30 секунд\n' +
     '/post — пост в канал (пришли фото и описание)\n' +
     '📎 Пришли фото или файл (PDF, Word, Excel, PowerPoint, текст, код) с вопросом в подписи — разберу. Без подписи — напиши вопрос следом. Для поста: подпись со словом «пост».\n' +
@@ -108,6 +109,8 @@ export function createCommands(D, mods) {
         return auto(chatId, arg);
       case 'bg':
         return D.bg.command(chatId, arg);
+      case 'search':
+        return D.exa.command(chatId, arg);
       case 'memory':
         return memory(msg);
       case 'remember':
