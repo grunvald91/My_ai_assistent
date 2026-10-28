@@ -173,6 +173,10 @@ export function createBg(D, chatMod) {
         await out.dropButtons(chatId, cq.message.message_id);
         return void (await out.answerCb(cq.id, 'Кнопка устарела: после этого вопроса были другие сообщения. Задай вопрос с файлом ещё раз (или ответь на сообщение с файлом).', true));
       }
+      // двойное нажатие (кнопка «не сработала», нажал ещё раз) — второй раз ничего не запускаем
+      if (Number(id) && !(await store.claimOnce(`bg:${act}:${chatId}:${id}`, D.now()))) {
+        return void (await out.answerCb(cq.id, act === 'go' ? 'Уже отправлено в фон — ответ придёт сам.' : 'Уже отвечаю.'));
+      }
       await out.dropButtons(chatId, cq.message.message_id);
       await out.answerCb(cq.id, act === 'go' ? 'Отправляю в фон…' : 'Отвечаю…');
       await chatMod.respondOwner(chatId, undefined, { mode: act === 'go' ? 'bg' : 'now' });

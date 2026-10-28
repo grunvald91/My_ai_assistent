@@ -215,3 +215,13 @@ test('фон: старая кнопка «В фоне» после нового 
   assert.equal(w.gh.dispatches.length, before, 'новой задачи нет');
   assert.match(w.calls('answerCallbackQuery').at(-1).text, /устарела/);
 });
+
+test('фон: двойное нажатие «В фоне» запускает одну задачу', async () => {
+  const w = await heavyWorld();
+  await w.doc('F1', { name: 'a.txt', bytes: 'текст', caption: 'Вопрос по файлу' });
+  const go = buttons(w.last(OWNER))[0].callback_data;
+  await Promise.all([w.press(go), w.press(go)]);
+  await w.press(go);
+  assert.equal(w.gh.dispatches.filter((x) => x.workflow === 'bgjob.yml').length, 1, 'одна задача');
+  assert.match(w.calls('answerCallbackQuery').at(-1).text, /Уже отправлено/);
+});

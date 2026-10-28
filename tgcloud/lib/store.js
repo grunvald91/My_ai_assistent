@@ -398,6 +398,16 @@ export async function recentJournal(limit = 20) {
 // ───────────── защита от повторной обработки апдейта ─────────────
 
 /** true — апдейт наш, обрабатываем; false — уже обработан или обрабатывается другим вызовом. */
+/** Однократное действие: true — только у первого вызова с этим ключом (вставка строки; повторная упрётся в ключ). */
+export async function claimOnce(key, now) {
+  try {
+    await db.insert(T.rates).values({ key, win: now, n: 1 }).run();
+    return true;
+  } catch {
+    return false; // уже было (или параллельный вызов успел раньше)
+  }
+}
+
 export async function beginUpdate(updateId, now, lockSec) {
   const row = one(await db.select().from(T.updates).where(eq(T.updates.updateId, updateId)).get());
   if (row) {
