@@ -229,6 +229,13 @@ export default async function (input, ctx) {
     return { ms: Date.now() - t0, outcome: outcome ?? 'не завершилось за 8 с', trace };
   });
 
+  // Доступен ли с серверов Telegram поиск Exa (без ключа: ждём отказ по ключу — значит, до сервиса дошли)
+  const exaReach = await probe('Exa api.exa.ai доступен', async () => {
+    const r = await fetch('https://api.exa.ai/search', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': 'probe-no-key' }, body: JSON.stringify({ query: 'test', contents: { highlights: true } }) });
+    const t = await r.text().catch(() => '');
+    return { status: r.status, body_start: t.slice(0, 120) };
+  });
+
   // Фоновый ответ через Actions, весь путь без Telegram: первый запуск стартует проверочную задачу, следующий сообщает итог
   const bgTest = input?.bgtest && input.bgtest !== 'no' ? await probe('Фоновый ответ (Actions)', async () => ({ ...(await app.bg.selfTest({ big: input?.bgtest === 'big' })) })) : undefined;
 
@@ -249,6 +256,7 @@ export default async function (input, ctx) {
     atomicsTimer,
     deadlineProbe,
     llmDeadline,
+    exaReach,
     ...(bgTest ? { bgTest } : {}),
     last_messages: lastMsgs,
     chat_model: ownerChat?.model ?? null,
