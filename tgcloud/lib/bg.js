@@ -122,7 +122,7 @@ export function createBg(D, chatMod) {
     }
     if (!meta.chatId) {
       // проверочная задача диагностики: чата нет, владельцу ничего не показываем — только запоминаем итог
-      await saveMeta(job, { ...meta, state: error ? 'error' : 'ready', an: n, why: why ?? null, usage: usage ?? null, err: error ? String(error).slice(0, 200) : null });
+      await saveMeta(job, { ...meta, state: error ? 'error' : 'ready', an: n, why: why ?? null, usage: usage ?? null, err: error ? String(error).slice(0, 200) : null, snote: snote ?? null });
       return true;
     }
     if (error) {
@@ -269,7 +269,7 @@ export function createBg(D, chatMod) {
         return { stage: 'check', job: prev, state: 'следов нет (уже убрано)' };
       }
       const age = D.now() - meta.ts;
-      const report = { stage: 'check', job: prev, state: meta.state, answer_parts: meta.an, usage: meta.usage ?? null, err: meta.err ?? null, age_s: age };
+      const report = { stage: 'check', job: prev, state: meta.state, answer_parts: meta.an, usage: meta.usage ?? null, err: meta.err ?? null, search_note: meta.snote ? meta.snote.split('\n')[0].slice(0, 60) : null, age_s: age };
       if (meta.state !== 'run' || age > 900) {
         await clear(prev, meta);
         await store.setSetting('bg_test', null);
@@ -278,7 +278,7 @@ export function createBg(D, chatMod) {
     }
     const id = uid();
     // big: запрос на ~3 МБ (лишнее поле pad модель не видит) — проверяем, что большие запросы с файлами проходят весь путь
-    const body = JSON.stringify({ model: cfg.fastModels?.[0] ?? 'claude-haiku-5-5', messages: [{ role: 'user', content: 'Ответь одним словом: ок' }], maxTokens: 20, think: null, ...(big ? { pad: 'я'.repeat(3_000_000) } : {}) });
+    const body = JSON.stringify({ model: cfg.fastModels?.[0] ?? 'claude-haiku-5-5', messages: [{ role: 'user', content: 'Ответь одним словом: ок' }], maxTokens: 20, think: null, ...(D.exaKey ? { search: { query: 'курс доллара к рублю', date: '' } } : {}), ...(big ? { pad: 'я'.repeat(3_000_000) } : {}) });
     const qs = splitSafe(body, REQ_CHUNK);
     for (let i = 0; i < qs.length; i++) await store.setSetting(`bg:${id}:q${i}`, qs[i]);
     await saveMeta(id, { chatId: 0, model: 'test', ts: D.now(), repoLen: 0, n: qs.length, an: 0, state: 'run', estIn: 10 });
