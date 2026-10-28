@@ -216,10 +216,11 @@ export function createChat(D) {
     // Без вложений уходит в фон сама; с вложением (читать файл дольше) — сначала спрашиваем, как ответить.
     const heavy = !!D.bg && (await D.bg.shouldRun(model));
     if (heavy && media && !cont && !mode) {
+      const qid = await lastUserId(key, chat);
       await out.sendHtml(
         chatId,
         `📎 Вопрос с файлом к тяжёлой модели (<b>${escapeHtml(model.id)}</b>): ответ может занять больше 30 секунд — в чате платформа тогда оборвёт его.\nКак ответить?`,
-        { reply_markup: { inline_keyboard: [[{ text: '📥 В фоне', callback_data: 'bg:go', style: 'primary' }, { text: '⚡ Сразу в чате', callback_data: 'bg:now' }]] } },
+        { reply_markup: { inline_keyboard: [[{ text: '📥 В фоне', callback_data: 'bg:go:' + qid, style: 'primary' }, { text: '⚡ Сразу в чате', callback_data: 'bg:now:' + qid }]] } },
       );
       return;
     }
@@ -228,7 +229,7 @@ export function createChat(D) {
       try {
         started = await D.bg.start(chatId, { model, messages, think: await core.thinkLevel(), repoLen: repo?.text?.length ?? 0, note: mediaNote });
       } catch (e) {
-        return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null });
+        return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null, qid: await lastUserId(key, chat) });
       }
       if (started) return;
     }
@@ -240,7 +241,7 @@ export function createChat(D) {
     try {
       res = await core.generate({ model, messages, maxTokens: cfg.maxTokensChat, stream: true, onProgress: streamer.onProgress, think: await core.thinkLevel(), deadline });
     } catch (e) {
-      return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null });
+      return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null, qid: await lastUserId(key, chat) });
     }
 
     await publishOwnerReply(chatId, res, { model, mediaNote, fastNote, strongId, repoLen: repo?.text?.length ?? 0 });
@@ -302,6 +303,13 @@ export function createChat(D) {
     await store.updateChat(chatId, { lastReplyAt: D.now() });
   }
 
+  /** id последнего сообщения владельца в истории (если последнее — его): к нему привязываем кнопки «В фоне / Сразу». */
+  async function lastUserId(key, chat) {
+    const hist = await store.getHistory(key, chat?.summaryUpto ?? 0, 1);
+    const last = hist[hist.length - 1];
+    return last?.role === 'user' ? last.id : 0;
+  }
+
   async function lastUserText(key, chat) {
     const hist = await store.getHistory(key, chat?.summaryUpto ?? 0, 1);
     const last = hist[hist.length - 1];
@@ -352,7 +360,7 @@ export function createChat(D) {
   }
 
   /** Кнопки под ошибкой: модели-замены (одним нажатием), «Повторить» и копия текста для ручной вставки. */
-  async function errorButtons(e, { modelId, userText, needs }) {
+  async function errorButtons(e, { modelId, userText, needs, qid = 0 }) {
     const rows = [];
     const kinds = ['forbidden', 'notfound', 'upstream', 'rate', 'network', 'timeout', 'bad_request', 'budget'];
     if (e instanceof LlmError && modelId && kinds.includes(e.kind)) {
@@ -367,7 +375,7 @@ export function createChat(D) {
         console.warn('alternatives failed', err?.message ?? err); // кнопки замены — удобство, без них ошибка всё равно показана
       }
     }
-    if (e instanceof LlmError && e.kind === 'timeout' && modelId && D.bg && (await D.bg.shouldRun({ id: modelId }))) rows.push([{ text: '📥 Ответить в фоне (без лимита 30 с)', callback_data: 'bg:go', style: 'primary' }]);
+    if (e instanceof LlmError && e.kind === 'timeout' && modelId && D.bg && (await D.bg.shouldRun({ id: modelId }))) rows.push([{ text: '📥 Ответить в фоне (без лимита 30 с)', callback_data: 'bg:go:' + qid, style: 'primary' }]);
     if (e instanceof LlmError && ['rate', 'upstream', 'network', 'timeout'].includes(e.kind)) rows.push([{ text: '🔄 Повторить', callback_data: 'r:1' }]);
     if (userText && userText.length <= 256) rows.push([{ text: '📋 Скопировать моё сообщение', copy_text: { text: userText } }]);
     return rows;
@@ -494,5 +502,5 @@ export function createChat(D) {
     return 'ok';
   }
 
-  return { ownerReplyContext, answerOwner, answerMedia, respondOwner, publishOwnerReply, retryLast, askStrong, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
+  return { ownerReplyContext, answerOwner, answerMedia, respondOwner, publishOwnerReply, lastUserId, retryLast, askStrong, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
 }

@@ -138,9 +138,11 @@ test('фон: лёгкая модель, выключенный /bg и влож�
   assert.equal(w.llmCalls.length, 0, 'и в чате ещё не отвечала');
   const offer = w.last(OWNER);
   assert.match(offer.text, /Вопрос с файлом/);
-  assert.deepEqual(buttons(offer).map((b) => b.callback_data), ['bg:go', 'bg:now']);
+  const [go, now] = buttons(offer).map((b) => b.callback_data);
+  assert.match(go, /^bg:go:\d+$/);
+  assert.match(now, /^bg:now:\d+$/);
   w.llmReplies.push('вижу файл');
-  await w.press('bg:now');
+  await w.press(now);
   assert.equal(w.gh.dispatches.length, 0);
   assert.match(w.last(OWNER).text, /вижу файл/);
 });
@@ -148,7 +150,7 @@ test('фон: лёгкая модель, выключенный /bg и влож�
 test('фон: «В фоне» для вопроса с файлом — файл уходит боту-задаче, ответ приходит сам', async () => {
   const w = await heavyWorld();
   await w.doc('F1', { name: 'задание.txt', bytes: 'Пункт 5: посчитай налог', caption: 'Сделай пункт 5' });
-  await w.press('bg:go');
+  await w.press(buttons(w.last(OWNER))[0].callback_data);
   assert.equal(w.llmCalls.length, 0);
   const d = w.gh.dispatches.find((x) => x.workflow === 'bgjob.yml');
   assert.deepEqual(Object.keys(d.inputs), ['job'], 'в публичных параметрах — только id');
@@ -163,11 +165,12 @@ test('фон: «Сразу в чате» с файлом оборвался по
   const w = await heavyWorld({ cutAfterMs: 300 });
   await w.doc('F1', { name: 'a.txt', bytes: 'текст', caption: 'Вопрос' });
   w.llmReplies.push({ stall: '' });
-  await w.press('bg:now');
+  await w.press(buttons(w.last(OWNER))[1].callback_data);
   const err = w.last(OWNER);
   assert.match(err.text, /Модель не успела/);
-  assert.ok(buttons(err).find((b) => b.callback_data === 'bg:go'), 'есть кнопка фона');
-  await w.press('bg:go');
+  const go = buttons(err).find((b) => /^bg:go:\d+$/.test(b.callback_data ?? ''));
+  assert.ok(go, 'есть кнопка фона');
+  await w.press(go.callback_data);
   assert.ok(w.gh.dispatches.find((x) => x.workflow === 'bgjob.yml'), 'ушло в фон');
 });
 
@@ -199,4 +202,16 @@ test('фон: проверочная задача диагностики не п
   assert.equal(b.answer_parts, 1);
   assert.equal(w.sent(OWNER).length, 0, 'владельцу ничего не отправлено');
   assert.equal((await w.app.bg.selfTest()).stage, 'started', 'следы убраны, можно проверять снова');
+});
+
+test('фон: старая кнопка «В фоне» после нового сообщения не отвечает не на тот вопрос', async () => {
+  const w = await heavyWorld();
+  await w.doc('F1', { name: 'a.txt', bytes: 'текст', caption: 'Вопрос по файлу' });
+  const go = buttons(w.last(OWNER))[0].callback_data;
+  await w.say('Другой вопрос'); // без файла: сам ушёл в фон
+  const before = w.gh.dispatches.length;
+  w.clear();
+  await w.press(go);
+  assert.equal(w.gh.dispatches.length, before, 'новой задачи нет');
+  assert.match(w.calls('answerCallbackQuery').at(-1).text, /устарела/);
 });

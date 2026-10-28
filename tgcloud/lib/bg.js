@@ -166,7 +166,13 @@ export function createBg(D, chatMod) {
     const chatId = cq.message.chat.id;
     const [act, id] = parts;
     if (act === 'go' || act === 'now') {
-      // «В фоне» / «Сразу в чате» — выбор для вопроса с файлом или кнопка после обрыва по времени
+      // «В фоне» / «Сразу в чате» — выбор для вопроса с файлом или кнопка после обрыва по времени.
+      // Кнопка привязана к вопросу: если с тех пор ты написал что-то ещё, она бы ответила уже не на то — не даём.
+      const chat = await store.getChat(chatId);
+      if (Number(id) && Number(id) !== (await chatMod.lastUserId(String(chatId), chat))) {
+        await out.dropButtons(chatId, cq.message.message_id);
+        return void (await out.answerCb(cq.id, 'Кнопка устарела: после этого вопроса были другие сообщения. Задай вопрос с файлом ещё раз (или ответь на сообщение с файлом).', true));
+      }
       await out.dropButtons(chatId, cq.message.message_id);
       await out.answerCb(cq.id, act === 'go' ? 'Отправляю в фон…' : 'Отвечаю…');
       await chatMod.respondOwner(chatId, undefined, { mode: act === 'go' ? 'bg' : 'now' });
