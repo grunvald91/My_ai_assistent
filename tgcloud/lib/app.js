@@ -415,22 +415,27 @@ export function createApp(base) {
     if (chat.type === 'group' || chat.type === 'supergroup') {
       const added = status === 'member' || status === 'administrator';
       if (added) {
-        if (!D.isOwner(fromId)) {
-          await D.log('foreign_group_left', chat.id, { by: fromId });
-          try {
-            await D.api.leaveChat({ chat_id: chat.id });
-          } catch {
-            /* уже вышли */
-          }
-          return;
-        }
         const wasIn = ['member', 'administrator'].includes(upd.old_chat_member?.status);
         const row = await store.ensureChat(chat.id, { type: chat.type, title: chat.title ?? null }, D.now());
         if (!wasIn) {
-          await store.updateChat(chat.id, { groupMode: 'mention' });
-          await out.toOwner(
-            `👥 Меня добавили в «${escapeHtml(chat.title ?? '')}». Режим: <b>по запросу</b> — отвечаю, когда меня упомянут, ответят мне или напишут /ask.\nНастроить: /group`,
-          );
+          // Пригласить бота может администратор, не являющийся владельцем бота.
+          // В чужой группе не расходуем токены до разрешения владельца.
+          const byOwner = D.isOwner(fromId);
+          await store.updateChat(chat.id, { groupMode: byOwner ? 'mention' : 'off' });
+          if (byOwner) {
+            await out.toOwner(
+              `👥 Меня добавили в «${escapeHtml(chat.title ?? '')}». Режим: <b>по запросу</b> — отвечаю, когда меня упомянут, ответят мне или напишут /ask.\nНастроить: /group`,
+            );
+          } else {
+            await D.log('foreign_group_pending', chat.id, { by: fromId ?? null });
+            await out.toOwner(
+              `👥 Меня добавили в «${escapeHtml(chat.title ?? '')}» (не с твоего аккаунта). Я остался в группе, но <b>не отвечаю до твоего разрешения</b>.\nНастроить позднее: /group`,
+              { reply_markup: { inline_keyboard: [
+                [{ text: '✅ Разрешить ответы', callback_data: `g:m:${chat.id}:mention` }],
+                [{ text: '🚪 Покинуть группу', callback_data: `g:leave:${chat.id}` }],
+              ] } },
+            );
+          }
         } else if (row.groupMode === 'off') {
           return; // права поменялись — режим не трогаем
         }
