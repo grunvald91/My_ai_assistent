@@ -40,6 +40,15 @@ export const DEFAULTS = {
   // группы
   groupMinGapSec: 4, // не чаще одного ответа в N секунд в одной группе
   groupHourlyCap: 40, // не больше N ответов в час в одной группе
+  // AI-наблюдение — выключено до явного разрешения владельца для каждой группы.
+  groupObserveImagesPerHour: 6, // не больше 6 описаний изображений в час на группу
+  groupObserveVisionMaxTokens: 250,
+  groupObserveKeepMessages: 350, // локальные текстовые записи; байты фото не сохраняются
+  groupObserveReportEvery: 30, // новый отчёт не ранее 30 сообщений после предыдущего
+  groupObserveReportMinGapSec: 6 * 3600, // автоотчёты не чаще чем раз в 6 часов
+  groupObserveReportWindow: 80, // максимум новых сообщений в одном анализе
+  groupObserveReportMaxTokens: 950,
+  groupObserveAutoCutoffMs: 8000, // не запускать отчёт, если обработчик уже долго работал
 
   // Business
   bizHourlyCap: 12, // не больше N автоответов в час в одном чате
