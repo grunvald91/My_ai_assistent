@@ -534,7 +534,16 @@ export function createCommands(D, mods) {
       }
       const gid = Number(b);
       const g = await store.getChat(gid);
-      if (!g) return out.answerCb(cq.id, 'Группа не найдена', true);
+      if (!g || !['group', 'supergroup'].includes(g.type)) return out.answerCb(cq.id, 'Группа не найдена', true);
+      if (a === 'leave') {
+        await out.call('leaveChat', { chat_id: gid });
+        await store.updateChat(gid, { groupMode: 'off' });
+        await D.log('group_left_by_owner', gid, {});
+        await out.answerCb(cq.id, 'Вышел из группы');
+        await out.dropButtons(chatId, msgId);
+        await out.sendHtml(chatId, `🚪 Я вышел из группы «${escapeHtml(g.title ?? String(gid))}».`);
+        return;
+      }
       if (a === 'o') {
         await out.answerCb(cq.id);
         return groupPanel(chatId, gid, msgId);
