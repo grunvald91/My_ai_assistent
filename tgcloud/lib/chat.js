@@ -466,7 +466,7 @@ export function createChat(D) {
    * Ответ в группе. mode: 'mention' (по запросу) | 'all' (на все сообщения).
    * Участники — посторонние: личная память владельца не используется, только факты этой группы.
    */
-  async function answerGroup(msg, chat, text, mode) {
+  async function answerGroup(msg, chat, text, mode, { historyRecorded = false } = {}) {
     const chatId = msg.chat.id;
     const key = String(chatId);
     const t = D.now();
@@ -476,7 +476,7 @@ export function createChat(D) {
 
     // В режиме «на все» не частим: не чаще одного ответа в N секунд и не более N в час.
     if (mode === 'all' && t - (chat.lastReplyAt || 0) < cfg.groupMinGapSec) {
-      await store.addMessage({ chatKey: key, role: 'user', name, text: stored, ts: t });
+      if (!historyRecorded) await store.addMessage({ chatKey: key, role: 'user', name, text: stored, ts: t });
       return 'gap';
     }
     const cap = await store.hit('grp:' + chatId, Math.floor(t / 3600), cfg.groupHourlyCap);
@@ -485,7 +485,7 @@ export function createChat(D) {
       return 'cap';
     }
 
-    await store.addMessage({ chatKey: key, role: 'user', name, text: stored, ts: t });
+    if (!historyRecorded) await store.addMessage({ chatKey: key, role: 'user', name, text: stored, ts: t });
     await out.typing(chatId, { threadId });
 
     const model = await core.resolveModel(chat);
@@ -519,7 +519,7 @@ export function createChat(D) {
     await out.sendText({ chatId, text: reply, replyTo: msg.message_id, threadId, ephemeralTo: chat.ephemeral ? msg.from.id : null });
     await store.addMessage({ chatKey: key, role: 'assistant', text: reply, model: model.id, tokens: res.tokensOut, ts: D.now() });
     await store.updateChat(chatId, { lastReplyAt: D.now() });
-    await store.trimMessages(key, 120);
+    await store.trimMessages(key, (await D.observer.isEnabled(chatId)) ? cfg.groupObserveKeepMessages : 120);
 
     if (chat.notifyOwner) {
       await out.toOwner(
