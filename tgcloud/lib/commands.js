@@ -553,10 +553,21 @@ export function createCommands(D, mods) {
         return;
       }
       if (a === 'erase') {
+        await out.answerCb(cq.id);
+        await out.sendHtml(chatId,
+          '⚠️ Удалить историю наблюдения и сводки группы «' + escapeHtml(g.title ?? String(gid)) + '»? Это нельзя отменить. Наблюдение и ответы также выключатся.',
+          { reply_markup: kb([[
+            { text: '🗑 Да, удалить', callback_data: 'g:erase-confirm:' + gid },
+            { text: 'Отмена', callback_data: 'g:o:' + gid },
+          ]]) });
+        return;
+      }
+      if (a === 'erase-confirm') {
         await D.observer.erase(gid);
         await store.updateChat(gid, { groupMode: 'off' });
         await out.answerCb(cq.id, 'История удалена, наблюдение и ответы выключены');
-        return groupPanel(chatId, gid, msgId);
+        await out.dropButtons(chatId, msgId);
+        return groupPanel(chatId, gid);
       }
       if (a === 'leave') {
         await out.call('leaveChat', { chat_id: gid });
