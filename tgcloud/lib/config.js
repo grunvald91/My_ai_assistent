@@ -44,6 +44,7 @@ export const DEFAULTS = {
   groupObserveImagesPerHour: 6, // не больше 6 описаний изображений в час на группу
   groupObserveVisionMaxTokens: 250,
   groupObserveKeepMessages: 350, // локальные текстовые записи; байты фото не сохраняются
+  groupObserveRawKeepDays: 30, // исходные текстовые записи удаляются по сроку, накопительная сводка остаётся до ручного удаления
   groupObserveReportEvery: 30, // новый отчёт не ранее 30 сообщений после предыдущего
   groupObserveReportMinGapSec: 6 * 3600, // автоотчёты не чаще чем раз в 6 часов
   groupObserveReportWindow: 80, // максимум новых сообщений в одном анализе
