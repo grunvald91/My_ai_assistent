@@ -85,6 +85,8 @@ test('владелец может стереть наблюдение и ист�
   await w.press('g:observe:' + GROUP + ':on');
   await w.group('Сохранили сообщение');
   await w.press('g:erase:' + GROUP);
+  assert.equal(await w.store.getSetting(key()), '1', 'простое нажатие не стирает данные');
+  await w.press('g:erase-confirm:' + GROUP);
   assert.equal(await w.store.getSetting(key()), null);
   assert.equal(await w.store.getSetting('group_report:' + GROUP), null);
   assert.equal(await w.store.countAfter(String(GROUP), 0), 0);
