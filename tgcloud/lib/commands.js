@@ -391,15 +391,20 @@ export function createCommands(D, mods) {
       return true;
     }
     const mode = g.groupMode;
+    const observing = await D.observer.isEnabled(groupId);
     const html =
       `👥 <b>${escapeHtml(g.title ?? String(g.chatId))}</b>\n\n` +
       `Режим: <b>${MODE_SHORT[mode] ?? mode}</b>\n` +
       GROUP_MODES.map((m) => `${m === mode ? '▶️' : '▫️'} ${MODE_TEXT[m]}`).join('\n') +
       '\n\n💡 Для режима «на все» у бота должен быть отключён режим приватности (@BotFather → Group Privacy → Turn off), иначе Telegram не покажет мне обычные сообщения.' +
-      `\n\n🙈 Ответы только автору (эфемерные, бета): <b>${g.ephemeral ? 'да' : 'нет'}</b>` +
+      `\n\n🔎 AI-наблюдатель: <b>${observing ? 'включён' : 'выключен'}</b>. Анализирует доступные сообщения и фото, выводы присылает в личку.` +
+      `\n🙈 Ответы только автору (эфемерные, бета): <b>${g.ephemeral ? 'да' : 'нет'}</b>` +
       `\n🔔 Копии ответов тебе в личку: <b>${g.notifyOwner ? 'да' : 'нет'}</b>`;
     const rows = [
       GROUP_MODES.map((m) => ({ text: (m === mode ? '● ' : '') + MODE_SHORT[m], callback_data: `g:m:${groupId}:${m}` })),
+      [{ text: observing ? '🔎 Отключить наблюдение' : '🔎 Включить наблюдение', callback_data: `g:observe:${groupId}:${observing ? 'off' : 'on'}` }],
+      [{ text: '📊 Аналитический отчёт', callback_data: 'g:report:' + groupId }],
+      [{ text: '🗑 Удалить историю наблюдения', callback_data: 'g:erase:' + groupId }],
       [{ text: `🙈 Только автору: ${g.ephemeral ? 'вкл' : 'выкл'}`, callback_data: 'g:e:' + groupId }],
       [{ text: `🔔 Копии мне: ${g.notifyOwner ? 'вкл' : 'выкл'}`, callback_data: 'g:n:' + groupId }],
     ];
@@ -535,8 +540,27 @@ export function createCommands(D, mods) {
       const gid = Number(b);
       const g = await store.getChat(gid);
       if (!g || !['group', 'supergroup'].includes(g.type)) return out.answerCb(cq.id, 'Группа не найдена', true);
+      if (a === 'observe') {
+        if (!['on', 'off'].includes(c)) return out.answerCb(cq.id, 'Неизвестный режим', true);
+        if (c === 'on') await D.observer.activate(g);
+        else await D.observer.deactivate(gid);
+        await out.answerCb(cq.id, c === 'on' ? 'Наблюдение включено' : 'Наблюдение выключено');
+        return groupPanel(chatId, gid, msgId);
+      }
+      if (a === 'report') {
+        await out.answerCb(cq.id, 'Формирую отчёт');
+        await D.observer.report(g);
+        return;
+      }
+      if (a === 'erase') {
+        await D.observer.erase(gid);
+        await store.updateChat(gid, { groupMode: 'off' });
+        await out.answerCb(cq.id, 'История удалена, наблюдение и ответы выключены');
+        return groupPanel(chatId, gid, msgId);
+      }
       if (a === 'leave') {
         await out.call('leaveChat', { chat_id: gid });
+        await D.observer.deactivate(gid);
         await store.updateChat(gid, { groupMode: 'off' });
         await D.log('group_left_by_owner', gid, {});
         await out.answerCb(cq.id, 'Вышел из группы');
