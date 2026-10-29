@@ -131,6 +131,11 @@ export async function clearMessages(chatKey) {
   await db.delete(T.messages).where(eq(T.messages.chatKey, chatKey)).run();
 }
 
+/** Ограничение срока хранения исходной переписки группы. */
+export async function pruneMessagesBefore(chatKey, beforeTs) {
+  await db.delete(T.messages).where(and(eq(T.messages.chatKey, chatKey), lt(T.messages.ts, beforeTs))).run();
+}
+
 /** Жёсткий потолок размера истории чата — на случай, если сжатие в сводку не сработало. */
 export async function trimMessages(chatKey, keep) {
   const edge = one(
@@ -185,6 +190,9 @@ export async function wipeMemory() {
   await db.delete(T.messages).run();
   await db.delete(T.memories).run();
   await db.delete(T.proposals).run();
+  // Аналитические сводки — тоже память; /forget_all удаляет их и отключает наблюдение.
+  await db.delete(T.settings).where(like(T.settings.key, 'group_report:%')).run();
+  await db.delete(T.settings).where(like(T.settings.key, 'group_observe:%')).run();
   await db.update(T.chats).set({ summary: null, summaryUpto: 0 }).run();
 }
 

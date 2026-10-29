@@ -6,6 +6,7 @@
 import { createOut } from './out.js';
 import { createCore } from './core.js';
 import { createChat } from './chat.js';
+import { createGroupObserver } from './group-observer.js';
 import { createAttach, POST_INTENT, parseDecline } from './attach.js';
 import { createPosts } from './posts.js';
 import { createBusiness } from './business.js';
@@ -35,6 +36,7 @@ export function createApp(base) {
   D.exaKey = base.exaKey ?? '';
   D.exa = createExa(D); // веб-поиск Exa (/search)
   D.attach = createAttach(D);
+  D.observer = createGroupObserver(D);
   const chatMod = createChat(D);
   D.notifyOwnerOnce = chatMod.notifyOwnerOnce;
   D.draftStreamer = chatMod.draftStreamer; // стрим-черновик нужен и /code
@@ -265,6 +267,9 @@ export function createApp(base) {
       return;
     }
 
+    // Наблюдение работает только после отдельного явного разрешения владельца.
+    // Оно также может работать молча при отключённых групповых ответах.
+    const recorded = await D.observer.observe(msg, chat);
     const mode = chat.groupMode;
     if (mode === 'off' || !text) return;
     if (await core.paused()) return;
@@ -282,12 +287,14 @@ export function createApp(base) {
     if (!q) q = '(упомянули без вопроса)';
 
     if (mode === 'mention' && !addressed) {
-      // молчим, но запоминаем реплику: так ответ «по запросу» будет учитывать, о чём шёл разговор
-      await store.addMessage({ chatKey: String(chatId), role: 'user', name: displayName(msg.from), text: chatMod.quoteOf(msg) + text, ts: D.now() });
-      await store.trimMessages(String(chatId), 120);
+      // В режиме наблюдения сообщение уже сохранено с Telegram ID, дубли не нужны.
+      if (!recorded) {
+        await store.addMessage({ chatKey: String(chatId), role: 'user', name: displayName(msg.from), text: chatMod.quoteOf(msg) + text, ts: D.now() });
+        await store.trimMessages(String(chatId), 120);
+      }
       return;
     }
-    await chatMod.answerGroup(msg, chat, q, addressed ? 'mention' : 'all');
+    await chatMod.answerGroup(msg, chat, q, addressed ? 'mention' : 'all', { historyRecorded: recorded });
   }
 
   // ───────── кнопки ─────────
@@ -415,26 +422,33 @@ export function createApp(base) {
     if (chat.type === 'group' || chat.type === 'supergroup') {
       const added = status === 'member' || status === 'administrator';
       if (added) {
-        if (!D.isOwner(fromId)) {
-          await D.log('foreign_group_left', chat.id, { by: fromId });
-          try {
-            await D.api.leaveChat({ chat_id: chat.id });
-          } catch {
-            /* уже вышли */
-          }
-          return;
-        }
         const wasIn = ['member', 'administrator'].includes(upd.old_chat_member?.status);
         const row = await store.ensureChat(chat.id, { type: chat.type, title: chat.title ?? null }, D.now());
         if (!wasIn) {
-          await store.updateChat(chat.id, { groupMode: 'mention' });
-          await out.toOwner(
-            `👥 Меня добавили в «${escapeHtml(chat.title ?? '')}». Режим: <b>по запросу</b> — отвечаю, когда меня упомянут, ответят мне или напишут /ask.\nНастроить: /group`,
-          );
+          // Пригласить бота может администратор, не являющийся владельцем бота.
+          // В чужой группе не расходуем токены до разрешения владельца.
+          const byOwner = D.isOwner(fromId);
+          await store.updateChat(chat.id, { groupMode: byOwner ? 'mention' : 'off' });
+          if (byOwner) {
+            await out.toOwner(
+              `👥 Меня добавили в «${escapeHtml(chat.title ?? '')}». Режим: <b>по запросу</b> — отвечаю, когда меня упомянут, ответят мне или напишут /ask.\nНастроить: /group`,
+            );
+          } else {
+            await D.log('foreign_group_pending', chat.id, { by: fromId ?? null });
+            await out.toOwner(
+              `👥 Меня добавили в «${escapeHtml(chat.title ?? '')}» (не с твоего аккаунта). Я остался в группе, но <b>не отвечаю до твоего разрешения</b>.\nНастроить позднее: /group`,
+              { reply_markup: { inline_keyboard: [
+                [{ text: '🔎 Включить AI-наблюдение', callback_data: `g:observe:${chat.id}:on` }],
+                [{ text: '✅ Только ответы по запросу', callback_data: `g:m:${chat.id}:mention` }],
+                [{ text: '🚪 Покинуть группу', callback_data: `g:leave:${chat.id}` }],
+              ] } },
+            );
+          }
         } else if (row.groupMode === 'off') {
           return; // права поменялись — режим не трогаем
         }
       } else if (status === 'left' || status === 'kicked') {
+        await D.observer.deactivate(chat.id);
         await store.ensureChat(chat.id, { type: chat.type, title: chat.title ?? null }, D.now());
         await store.updateChat(chat.id, { groupMode: 'off' });
         await out.toOwner(`👥 Я больше не в группе «${escapeHtml(chat.title ?? '')}».`);
