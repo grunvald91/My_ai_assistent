@@ -93,6 +93,7 @@ export function createGroupObserver(D) {
     const stored = '[Telegram #' + (msg.message_id ?? '?') + ' | ' + new Date(t * 1000).toISOString() + '] ' + text;
     await store.addMessage({ chatKey: String(id), role: 'user', name, text: stored.slice(0, 5000), ts: t });
     await store.trimMessages(String(id), cfg.groupObserveKeepMessages);
+    await store.pruneMessagesBefore(String(id), t - cfg.groupObserveRawKeepDays * 86400);
     if (Date.now() - D.t0 < cfg.groupObserveAutoCutoffMs) {
       await maybeReport(chat);
     }
