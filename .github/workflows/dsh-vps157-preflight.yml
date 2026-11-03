@@ -127,5 +127,33 @@ jobs:
           echo '=== TOP HIDDEN DISK CONSUMERS FILE SIZES (path masked) ==='
           find /var/log /var/backups /opt/eunoia -xdev -type f -size +100M -printf '%s bytes\n' 2>/dev/null | sort -nr | head -20 || true
           echo '=== END TARGETED READ-ONLY AUDIT ==='
+          echo '=== DETAILED MEMORY ACCOUNTING ==='
+          free -w -h
+          grep -E '^(MemTotal|MemFree|MemAvailable|Cached|Buffers|SReclaimable|SUnreclaim|Slab|KernelStack|PageTables|AnonPages|Shmem|SwapCached|SwapTotal|SwapFree):' /proc/meminfo
+          vmstat 1 3 | tail -4
+          echo '=== TOP PROCESSES PROPORTIONAL MEMORY (kB) ==='
+          for stat in /proc/[0-9]*/smaps_rollup; do
+            pid="$(basename "$(dirname "$stat")")"
+            [ -r "$stat" ] || continue
+            pss="$(awk '/^Pss:/{print $2; exit}' "$stat" 2>/dev/null || true)"
+            [ -n "$pss" ] || continue
+            name="$(cat "/proc/$pid/comm" 2>/dev/null || true)"
+            printf '%s %s\n' "$pss" "$name"
+          done | sort -nr | head -30 || true
+          echo '=== BACKUP FILE FORMATS AND AGE (metadata only) ==='
+          find /var/backups/eunoia -type f -printf '%s %TY-%Tm-%Td %p\n' 2>/dev/null | sort -nr | head -8 | while read -r size date path; do
+            printf 'bytes=%s date=%s format=%s\n' "$size" "$date" "$(file -b "$path" 2>/dev/null | cut -c 1-90)"
+          done
+          echo '=== REPOSITORY DRIFT COUNTS ==='
+          git -C /opt/eunoia diff --name-only | wc -l
+          git -C /opt/eunoia diff --cached --name-only | wc -l
+          git -C /opt/eunoia ls-files --others --exclude-standard | wc -l
+          echo '=== CHANGED CODE PATHS (excluding sensitive names) ==='
+          git -C /opt/eunoia diff --name-only | grep -Ev '(^|/)(\.env|secret|credential|private|id_)' | head -65 || true
+          echo '=== FILE CHANGE ROOTS ==='
+          git -C /opt/eunoia status --porcelain -uall | cut -c 4- | awk -F/ '{print $1}' | sort | uniq -c | sort -nr | head -20 || true
+          echo '=== CONTAINER RESTART / OOM ==='
+          docker inspect -f '{{.Name}} OOM={{.State.OOMKilled}} restarts={{.RestartCount}}' $(docker ps -aq) || true
+          echo '=== END READ-ONLY AUDIT ==='
           echo 'RESULT: SSH audit completed (no changes made)'
           REMOTE
