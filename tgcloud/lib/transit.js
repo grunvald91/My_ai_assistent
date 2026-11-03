@@ -84,7 +84,7 @@ export async function callTutuTool(fetchFn, tool, args, url = TUTU_MCP_URL) {
 
 function localIso(value, date, tzHours) {
   const s = String(value ?? '').trim();
-  if (/^\d{4}-\d\d-\d\dT\d\d:\d\d(?:[:.]\d+)?(?:Z|[+-]\d\d:\d\d)$/i.test(s)) return s;
+  if (/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/i.test(s)) return s;
   // Time-only values have no timezone. Use the owner's timezone only for recognized Russian
   // locations in the same zone; otherwise do not invent a UTC offset.
   if (!/^(Сочи|Адлер|Москва|Хоста|Туапсе)$/i.test(String(date?.origin ?? ''))) return null;
