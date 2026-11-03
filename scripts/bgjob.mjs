@@ -141,7 +141,7 @@ async function main() {
       snote?.startsWith('🔎 Искал в интернете:') ? 'Exa выполнен; выдержки источников добавлены в запрос.' :
       snote ? 'Exa не дал проверенных данных (' + snote.slice(0, 150) + '). Не придумывай текущие цифры.' :
       'Exa не запускался по решению маршрутизатора. Не утверждай, что веб-поиск выполнен.';
-    req.messages[0].content += '\\n\\nИТОГ ВЕБ-ПОИСКА В ФОНЕ: ' + resultStatus;
+    req.messages[0].content += '\n\nИТОГ ВЕБ-ПОИСКА В ФОНЕ: ' + resultStatus;
   }
   let n = 0;
   const res = await llm.chat({
