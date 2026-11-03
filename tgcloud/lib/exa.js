@@ -10,6 +10,32 @@ const kb = (rows) => ({ inline_keyboard: rows });
 export const SEARCH_URL = 'https://api.exa.ai/search';
 const GUARD_MS = 8000; // по умолчанию; cfg.searchGuardMs меняет (тесты)
 
+/** Точное время ближайшего транспорта — меняющийся факт; решение о поиске нельзя отдавать только модели. */
+export function isLiveTransitQuestion(asked) {
+  const s = String(asked ?? '').toLowerCase();
+  return /(электричк|ласточк|поезд|автобус|аэроэкспресс|пригородн.{0,12}поезд|трамва|паром|рейс|вылет)/i.test(s) &&
+    /(ближайш|следующ|сейчас|сегодня|завтра|расписан|отправл|прибыт|во сколько|когда (ид[её]т|будет|едет|уходит|отходит)|через сколько)/i.test(s);
+}
+
+/** Подсказка Exa о дате: поисковик без неё может вернуть архивное расписание. */
+export function transitQuery(asked, date) {
+  return `${String(asked ?? '').trim()} ${date} актуальное расписание официальный источник`.trim();
+}
+
+/**
+ * Exa — поиск страниц, а не табло движения в реальном времени.
+ * Если модель всё же назвала минуту отправления или стоимость без машинной проверки
+ * у перевозчика, не отдаём такую цифру пользователю как факт.
+ */
+export function guardLiveTransitAnswer(answer, asked) {
+  if (!isLiveTransitQuestion(asked)) return answer;
+  if (!/(?:^|[^\d])(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)|\d[\d\s]*\s?₽/u.test(String(answer ?? ''))) return answer;
+  return 'Не могу подтвердить точное время ближайшего отправления или цену по найденным страницам. ' +
+    'Exa находит публикации, но не подтверждает актуальное табло. ' +
+    'Проверь маршрут и дату в официальном расписании перевозчика или на https://rasp.yandex.ru/. ' +
+    'Называть неподтверждённые минуты отправления не буду.';
+}
+
 const DECIDE_SYSTEM = (date) =>
   'Ты решаешь, нужен ли поиск в интернете, чтобы хорошо ответить на ПОСЛЕДНЕЕ сообщение пользователя.\n' +
   'Поиск НУЖЕН для: свежих новостей и событий; текущих цен, курсов, погоды, расписаний, наличия; фактов о людях, компаниях, продуктах и законах, которые могли измениться; проверки утверждений; когда прямо просят найти, погуглить, поискать, найти источник.\n' +
@@ -130,7 +156,7 @@ export function createExa(D) {
   async function augment(messages, asked) {
     if (!(await available()) || !worthAsking(asked)) return { note: '' };
     const text = String(asked).trim();
-    const d = await decide(messages, text);
+    const d = isLiveTransitQuestion(text) ? { search: true, query: transitQuery(text, today()) } : await decide(messages, text);
     if (!d?.search) return { note: '' };
     let results;
     try {
