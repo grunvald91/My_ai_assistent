@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { createWorld, assert, OWNER } from './helpers/world.js';
-import { parseDecision, sourcesNote, isLiveTransitQuestion, transitQuery, guardLiveTransitAnswer, guardSearchCapabilityAnswer } from '../tgcloud/lib/exa.js';
+import { parseDecision, sourcesNote, isLiveTransitQuestion, transitQuery, guardLiveTransitAnswer, guardSearchCapabilityAnswer, requiresFreshSearch } from '../tgcloud/lib/exa.js';
 
 const YES = '{"search": true, "query": "курс доллара к рублю сегодня"}';
 const NO = '{"search": false, "query": ""}';
@@ -172,4 +172,20 @@ test('расписания: при сбое Туту используется ф
   await w.app.bg.receivePart(job, 0, 'Туту MCP не подтвердил отправление.');
   await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'tutu-mcp', error: null });
   assert.match(w.last(OWNER).text, /Туту MCP не подтвердил/);
+});
+
+test('Exa: свежие цены/погода/новости идут на поиск без решателя', async () => {
+  assert.equal(requiresFreshSearch('Какая погода в Сочи сегодня?'), true);
+  assert.equal(requiresFreshSearch('Какой сейчас курс доллара?'), true);
+  assert.equal(requiresFreshSearch('Найди актуальные вакансии'), true);
+  assert.equal(requiresFreshSearch('Объясни, что такое диод'), false);
+  const w = await mk();
+  w.llmReplies.push('Согласно источникам, информация требует проверки.');
+  await w.say('Какая погода в Сочи сегодня?');
+  assert.equal(w.llmCalls.length, 1, 'решающая модель не нужна');
+  assert.equal(w.exaCalls.length, 1, 'Exa вызывается');
+  assert.match(w.exaCalls[0].body.query, /2027-01-15/);
+  const p = JSON.stringify(w.llmCalls[0].messages);
+  assert.match(p, /ИНСТРУМЕНТЫ: Exa настроен/);
+  assert.match(p, /ИТОГ ВЕБ-ПОИСКА: Exa ответил/);
 });
