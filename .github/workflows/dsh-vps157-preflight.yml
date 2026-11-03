@@ -101,9 +101,9 @@ jobs:
           echo '=== LARGE SYSTEM AREAS (disk use) ==='
           for p in /var/lib /var/lib/containerd /var/backups /opt/eunoia/web /opt/eunoia/data; do
             echo "SECTION $p"
-            timeout 45 du -xhd1 "$p" 2>/dev/null | sort -h | tail -18 || true
+            timeout 35 du -xhd1 "$p" 2>/dev/null | sort -h | tail -18 || true
           done
-          echo '=== BACKUP FILE SUMMARY (sizes and dates only, no names/content) ==='
+          echo '=== BACKUP FILE SUMMARY (sizes dates only; no names/content) ==='
           find /var/backups -xdev -type f -printf '%s %TY-%Tm-%Td\n' 2>/dev/null | sort -nr | head -20 || true
           echo '=== JOURNAL HISTORY AND RETENTION ==='
           journalctl --list-boots --no-pager 2>/dev/null | head -20 || true
@@ -114,9 +114,7 @@ jobs:
             git -C /opt/eunoia branch --show-current 2>/dev/null || true
             git -C /opt/eunoia rev-parse --short HEAD 2>/dev/null || true
             printf 'origin matches GitHub EUNOIA: '
-            if git -C /opt/eunoia config --get remote.origin.url 2>/dev/null | grep -Eq 'github.com[:/]grunvald91/EUNOIA([.]git)?
-          REMOTE
-; then echo yes; else echo unknown; fi
+            if git -C /opt/eunoia config --get remote.origin.url 2>/dev/null | grep -q 'grunvald91/EUNOIA'; then echo yes; else echo unknown; fi
           fi
           echo '=== IMPORTANT APPLICATION STORAGE (sizes only) ==='
           for p in /opt/eunoia/data/books /opt/eunoia/data/vosk /opt/eunoia/web/.next /opt/eunoia/web/node_modules; do
