@@ -112,7 +112,7 @@ export function normalizeDepartures(data, plan, nowSec) {
       String(requested).toLowerCase().includes(String(actual).toLowerCase());
     if (!matches(station, plan.origin) || !matches(destination, plan.destination)) continue;
     const regionIsMoscowTz = /^(Сочи|Адлер|Москва|Хоста|Туапсе|Ростов-на-Дону)$/i.test(String(plan.origin));
-    const offsetMatch = /([+-])(\\d\\d):(\\d\\d)$/.exec(iso);
+    const offsetMatch = /([+-])(\d\d):(\d\d)$/.exec(iso);
     const seconds = offsetMatch ? (offsetMatch[1] === '-' ? -1 : 1) *
       (Number(offsetMatch[2]) * 3600 + Number(offsetMatch[3]) * 60) : regionIsMoscowTz ? 10800 : 0;
     const local = new Date(ms + seconds * 1000).toISOString();
