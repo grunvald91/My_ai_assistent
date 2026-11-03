@@ -153,8 +153,8 @@ export function createBg(D, chatMod) {
       const tokensOut = meta.usage?.out ?? estimateTokens(text);
       const tokensIn = meta.usage?.in ?? meta.estIn ?? 0;
       if (!meta.billed) {
-        // расход — ровно один раз, даже если выдача сорвётся и ответ потом заберут кнопкой
-        await core.recordUsage(meta.model, tokensIn, tokensOut);
+        // Расписание Туту отформатировано кодом без LLM: токены за него не списываем.
+        if (!meta.transit) await core.recordUsage(meta.model, tokensIn, tokensOut);
         meta.billed = true;
         await saveMeta(job, { ...meta, state: 'delivering' });
       }
