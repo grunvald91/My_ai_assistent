@@ -60,7 +60,7 @@ test('/agent требует привязки и GH_PAT Issues; при ошибк
   await w.press(confirm);
   const writes = w.gh.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/issues'));
   assert.equal(writes.length, 1);
-  assert.match(w.sent(OWNER).some((m) => /Не могу подтвердить/.test(m.text)), true);
+  assert.equal(w.sent(OWNER).some((m) => /Не могу подтвердить/.test(m.text)), true);
 });
 
 test('/agent при отсутствии токена не позволяет отправлять задания', async () => {
