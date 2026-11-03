@@ -100,3 +100,32 @@ test('Туту MCP: SSE-подобный ответ и URL ограничены 
   assert.deepEqual(data.offers, []);
   assert.deepEqual(requests, [TUTU_MCP_URL, TUTU_MCP_URL, TUTU_MCP_URL]);
 });
+
+test('Туту: ближайший поезд может оказаться на второй странице выдачи, отсортированной по цене', async () => {
+  const calls = [];
+  const mockFetch = async (_url, opts) => {
+    const msg = JSON.parse(opts.body);
+    calls.push(msg);
+    if (msg.method === 'initialize') return {
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-11-25' } }),
+    };
+    if (msg.method === 'notifications/initialized') return { ok: true, status: 202 };
+    const page = msg.params.arguments.page;
+    const offers = page === 1
+      ? Array.from({ length: 30 }, (_, i) => ({ offer_id: 'cheap-' + i, departure_at: '2027-01-15T20:00:00+03:00' }))
+      : [{ offer_id: 'fast', departure_at: '2027-01-15T10:00:00+03:00' }];
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({
+      jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: JSON.stringify({
+        offers, meta: { has_more: page === 1, total_matched_exact: true },
+      }) }] },
+    }) };
+  };
+  const plan = { origin: 'Сочи', destination: 'Адлер', date: '2027-01-15', timezoneHours: 3, kind: 'search_etrain' };
+  const data = await callTutuTool(mockFetch, plan.kind, plan);
+  assert.equal(data.offers.length, 31);
+  assert.equal(data.meta.complete, true);
+  assert.deepEqual(calls.filter((x) => x.method === 'tools/call').map((x) => x.params.arguments.page), [1, 2]);
+  const results = normalizeDepartures(data, plan, Date.parse('2027-01-15T09:00:00+03:00') / 1000);
+  assert.equal(results[0].time, '10:00', 'самый ранний рейс не обязан быть самым дешёвым');
+});
