@@ -7,8 +7,8 @@ import { withDeadline, TIMED_OUT } from './llm.js';
 export const TUTU_MCP_URL = 'https://mcp.tutu.ru/mcp';
 const FOLLOWUP = /^(?:а\s+)?(?:следующ|позже|через\s+час|до\s+аэропорта|а\s+до\s+аэропорта)/i;
 const TRAIN = /электричк|ласточк|пригородн.{0,15}поезд/i;
-const RAIL = /\bпоезд(?:а|ов|ом|ы)?\b|железнодорожн/i;
-const DATE_WORD = /\bзавтра\b/i;
+const RAIL = /поезд(?:а|ов|ом|ы)?|железнодорожн/i;
+const DATE_WORD = /завтра/i;
 const MAX_AGE_SECONDS = 3600;
 
 export function parseTransitIntent(question, previous, nowSec, timezoneHours = 3) {
