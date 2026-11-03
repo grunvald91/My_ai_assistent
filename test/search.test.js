@@ -16,18 +16,18 @@ test('поиск: разбор решения модели', () => {
 
 test('поиск: нужен — ищем Exa по рекомендованному запросу, модель видит найденное, под ответом источники, в истории результатов нет', async () => {
   const w = await mk();
-  w.llmReplies.push(YES, 'Доллар стоит около 91 рубля [1].');
+  w.llmReplies.push('Доллар стоит около 91 рубля [1].');
   await w.say('Какой сейчас курс доллара?');
   assert.equal(w.exaCalls.length, 1);
-  assert.deepEqual(w.exaCalls[0].body, { query: 'курс доллара к рублю сегодня', type: 'auto', contents: { highlights: true } }, 'только query + highlights');
+  assert.deepEqual(w.exaCalls[0].body, { query: 'Какой сейчас курс доллара? 2027-01-15', type: 'auto', contents: { highlights: true } }, 'прямой поиск с датой');
   assert.equal(w.exaCalls[0].headers['x-api-key'], 'exa-test');
-  assert.equal(w.llmCalls.length, 2, 'решение + ответ');
-  const final = JSON.stringify(w.llmCalls[1].messages);
+  assert.equal(w.llmCalls.length, 1, 'для текущих данных решатель не вызываем');
+  const final = JSON.stringify(w.llmCalls[0].messages);
   assert.match(final, /РЕЗУЛЬТАТЫ ВЕБ-ПОИСКА/);
   assert.match(final, /Доллар стоит 91 рубль/);
   const m = w.last(OWNER).text;
   assert.match(m, /Доллар стоит около 91 рубля/);
-  assert.match(m, /🔎 Искал в интернете: «курс доллара к рублю сегодня»/);
+  assert.match(m, /🔎 Искал в интернете: «Какой сейчас курс доллара\? 2027-01-15»/);
   assert.match(m, /Курс рубля сегодня/);
   assert.match(m, /https:\/\/example\.com\/rub/, 'ссылка на источник');
   const hist = await w.store.getHistory(String(OWNER), 0, 5);
@@ -46,7 +46,7 @@ test('поиск: не нужен — Exa не вызывается', async () =
 test('поиск: Exa недоступен — отвечаем без него и честно говорим об этом', async () => {
   const w = await mk();
   w.exaReply = 'fail';
-  w.llmReplies.push(YES, 'Отвечаю по памяти.');
+  w.llmReplies.push('Отвечаю по памяти.');
   await w.say('Какой сейчас курс доллара?');
   const m = w.last(OWNER).text;
   assert.match(m, /Отвечаю по памяти/);
@@ -56,7 +56,7 @@ test('поиск: Exa недоступен — отвечаем без него 
 test('поиск: ничего не нашлось — говорим об этом', async () => {
   const w = await mk();
   w.exaReply = [];
-  w.llmReplies.push(YES, 'Не знаю.');
+  w.llmReplies.push('Не знаю.');
   await w.say('Какой сейчас курс доллара?');
   assert.match(w.last(OWNER).text, /ничего не нашлось/);
 });
@@ -112,21 +112,20 @@ test('поиск: Exa отвечает долго — вопрос уходит 
   const w = await mk({ cfg: { bgViaActions: true, searchGuardMs: 200 } });
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
   w.exaReply = 'stall';
-  w.llmReplies.push(YES);
   await w.say('Какой сейчас курс доллара?');
-  assert.equal(w.llmCalls.length, 1, 'только решатель: отвечать в чате не стали');
+  assert.equal(w.llmCalls.length, 0, 'при обязательном поиске решатель не нужен');
   const d = w.gh.dispatches.find((x) => x.workflow === 'bgjob.yml');
   assert.ok(d, 'ушло в фон');
   const req = JSON.parse((await w.app.bg.getRequest(d.inputs.job, 0)).text);
   assert.equal(req.model, 'claude-sonnet-5-5');
-  assert.deepEqual(req.search, { query: 'курс доллара к рублю сегодня', date: '2027-01-15' }, 'решение уже принято — задача только ищет');
+  assert.deepEqual(req.search, { query: 'Какой сейчас курс доллара? 2027-01-15', date: '2027-01-15' }, 'решение уже принято — задача только ищет');
   assert.match(w.last(OWNER).text, /Поиск в интернете отвечает долго — ищу и отвечаю в фоне/);
 });
 
 test('поиск: Exa долго, а фон выключен — отвечаем в чате без поиска и честно пишем почему', async () => {
   const w = await mk({ cfg: { searchGuardMs: 200 } });
   w.exaReply = 'stall';
-  w.llmReplies.push(YES, 'Отвечаю без поиска.');
+  w.llmReplies.push('Отвечаю без поиска.');
   await w.say('Какой сейчас курс доллара?');
   const m = w.last(OWNER).text;
   assert.match(m, /Отвечаю без поиска/);
