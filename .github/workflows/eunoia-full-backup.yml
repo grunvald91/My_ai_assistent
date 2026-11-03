@@ -1,0 +1,22 @@
+name: EUNOIA secure sync + agent staging (one-off)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/eunoia-full-backup.yml]
+permissions:
+  contents: read
+jobs:
+  synchronize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync live EUNOIA source to private GitHub branch
+        shell: bash
+        run: bash scripts/eunoia-source-sync.sh
+      - name: Encrypt recovery data, upload to private EUNOIA release, stage DSH user
+        shell: bash
+        run: bash scripts/eunoia-encrypted-recovery.sh
