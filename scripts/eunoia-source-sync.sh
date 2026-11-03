@@ -2,8 +2,8 @@
 # Synchronize source files from live EUNOIA; exclude credentials and live data.
 set -euo pipefail
 umask 077
-: "\${GH_PAT:?GH_PAT missing}"
-: "\${SSH_KEY_157:?SSH_KEY_157 missing}"
+: "${GH_PAT:?GH_PAT missing}"
+: "${SSH_KEY_157:?SSH_KEY_157 missing}"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$scratch/id"
@@ -11,19 +11,19 @@ unset SSH_KEY_157
 ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$scratch/known_hosts"
 test "$(ssh-keygen -lf "$scratch/known_hosts" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
 ssh_opts=(-i "$scratch/id" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$scratch/known_hosts" -o ConnectTimeout=10)
-remote_sha="$(ssh "\${ssh_opts[@]}" root@157.22.203.28 'git -C /opt/eunoia rev-parse HEAD')"
+remote_sha="$(ssh "${ssh_opts[@]}" root@157.22.203.28 'git -C /opt/eunoia rev-parse HEAD')"
 echo "Remote git HEAD: $remote_sha"
 auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_PAT" | base64 -w0)"
 git -c "http.extraheader=$auth_header" clone --quiet --depth 1 --branch main https://github.com/grunvald91/EUNOIA.git "$scratch/eunoia"
 test "$(git -C "$scratch/eunoia" rev-parse HEAD)" = "$remote_sha" || {
   echo "STOP: server HEAD no longer matches GitHub main. No push performed."; exit 20;
 }
-ssh "\${ssh_opts[@]}" root@157.22.203.28 'git -C /opt/eunoia diff --binary HEAD' > "$scratch/server.patch"
+ssh "${ssh_opts[@]}" root@157.22.203.28 'git -C /opt/eunoia diff --binary HEAD' > "$scratch/server.patch"
 git -C "$scratch/eunoia" apply --check "$scratch/server.patch"
 git -C "$scratch/eunoia" apply "$scratch/server.patch"
 
 # Copy source and new source files, never live secrets, private data or dependencies.
-ssh "\${ssh_opts[@]}" root@157.22.203.28 \
+ssh "${ssh_opts[@]}" root@157.22.203.28 \
   'tar -C /opt/eunoia --warning=no-file-changed --ignore-failed-read -czf - \
      --exclude=.git --exclude=node_modules --exclude=.next --exclude=data \
      --exclude=backups --exclude=_drift_backup --exclude=.deploy_bak\* \
