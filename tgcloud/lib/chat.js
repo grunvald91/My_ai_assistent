@@ -2,12 +2,13 @@
 
 import { ownerSystem, groupSystem } from './persona.js';
 import { guardLiveTransitAnswer, guardSearchCapabilityAnswer } from './exa.js';
+import { parseTransitIntent, lookupTransit } from './transit.js';
 import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
 import { isSimple, pickFast } from './auto.js';
 import { renderChunks, richMarkdown } from './format.js';
-import { dayKey, displayName, escapeHtml, randomDraftId, truncate, uid } from './util.js';
+import { dayKey, displayName, escapeHtml, randomDraftId, safeJson, truncate, uid } from './util.js';
 
 // ───────── «запомнить?» — предложение бота в конце ответа ─────────
 
@@ -165,8 +166,9 @@ export function createChat(D) {
     let system = ownerSystem({ name: await core.ownerName(), memories, nowSec: D.now(), tz: core.tz() });
     const searchEnabled = !!D.exa && (await D.exa.available());
     system += searchEnabled
-      ? '\n\nСТАТУС ПОИСКА: Exa подключён и включён. Приложение самостоятельно принимает решение о поиске и передаёт найденные результаты; не утверждай, что поиск недоступен. Отсутствие выдержки не доказывает, что Exa не существует.'
-      : '\n\nСТАТУС ПОИСКА: Exa сейчас выключен или его ключ недоступен. Проверка: /search. Не выдумывай результаты и не утверждай, что интернет был проверен.';
+      ? '\n\nИНСТРУМЕНТЫ: Exa настроен и поиск разрешён (/search). Это не означает, что в данном запросе поиск состоялся или нашёл ответ; отдельный результат будет указан далее. Не утверждай, что поиск не передан боту.'
+      : '\n\nИНСТРУМЕНТЫ: Exa выключен командой /search или отсутствует ключ. Состояние можно посмотреть через /search. Не утверждай, что интернет проверялся.'
+    system += '\nДля железнодорожных расписаний приложение отдельно поддерживает Туту MCP. Наличие этой функции не означает успешного обращения к провайдеру.';
 
     // просьба «посмотри репозиторий…» → README и главные файлы уходят модели как данные
     const repo = D.repoContext ? await D.repoContext(cont ? '' : text ?? (await lastUserText(key, chat))) : null; // при «Продолжить» берём уже прочитанный репозиторий
@@ -202,6 +204,44 @@ export function createChat(D) {
       else messages.push({ role: 'user', content });
       // файл не режем и заранее не отказываем: если модели не хватит окна, она сама вернёт ошибку — объясним её (см. replyError)
     }
+    // Расписания поездов/электричек: структурированный провайдер, без выдумывания времени моделью.
+    // Короткое «А следующая?» использует запомненный маршрут, но повторно запрашивает свежую выдачу.
+    if (!media && !cont && !repo?.text) {
+      const stateKey = 'transit:last:' + key;
+      const prev = safeJson(await store.getSetting(stateKey), null);
+      const plan = parseTransitIntent(currentQuestion, prev, D.now(), core.tz());
+      if (plan) {
+        if (!plan.origin || !plan.destination) {
+          await publishOwnerReply(chatId,
+            { text: 'Для поиска по Туту уточни две станции: откуда и куда нужно ехать?' },
+            { model, question: '', searchEnabled });
+          return;
+        }
+        await store.setSetting(stateKey, JSON.stringify(plan));
+        const result = await lookupTransit(D.fetch, plan, D.now(), { deadlineMs: cfg.tutuGuardMs ?? 6500, pulse: D.pulse });
+        if (result.text) {
+          await publishOwnerReply(chatId, { text: result.text }, { model, question: currentQuestion, searchEnabled, trustedTransit: true });
+          return;
+        }
+        if (D.bg && await D.bg.canRun()) {
+          try {
+            const started = await D.bg.start(chatId, {
+              model, messages, think: null, transit: plan, asked: currentQuestion,
+              reason: '🚆 Туту MCP отвечает медленно или недоступен в Telegram Serverless — повторяю запрос в фоне.',
+            });
+            if (started) return;
+          } catch (e) {
+            await D.log('transit_bg_fail', chatId, { reason: String(e?.message ?? e).slice(0, 120) });
+          }
+        }
+        await publishOwnerReply(chatId, {
+          text: 'Не могу подтвердить отправления: Туту MCP не ответил пригодными данными. ' +
+            'Проверь расписание перевозчика. Ошибка: ' + (result.error || 'превышен срок ожидания') + '.',
+        }, { model, question: '', searchEnabled });
+        return;
+      }
+    }
+
     // /auto: простой вопрос без файлов — быстрой дешёвой моделью (и честно говорим об этом)
     let fastNote = '';
     let strongId = null;
@@ -244,6 +284,11 @@ export function createChat(D) {
       else {
         const r = await D.exa.augment(messages, asked);
         searchNote = r.note ?? '';
+        messages[0].content += searchNote.startsWith('🔎 Искал в интернете:')
+          ? '\n\nИТОГ ВЕБ-ПОИСКА: Exa ответил, выдержки приложены в последнем сообщении. Утверждай только то, что реально следует из найденного.'
+          : searchNote
+            ? '\n\nИТОГ ВЕБ-ПОИСКА: поиск не дал подтверждённых данных (' + searchNote + '). Для изменчивых фактов не придумывай цифры или расписания.'
+            : '\n\nИТОГ ВЕБ-ПОИСКА: приложение не выполняло поиск для этого вопроса. Не утверждай, что он выполнялся.';
         if (r.defer && D.bg && (await D.bg.canRun())) {
           toBg = true;
           bgSearch = { query: r.defer, date: dayKey(D.now(), core.tz()) };
@@ -288,11 +333,11 @@ export function createChat(D) {
   }
 
   /** Показывает готовый ответ модели владельцу (кнопки «Продолжить», «Запомнить» и т. д.) и сохраняет его в историю. */
-  async function publishOwnerReply(chatId, res, { model, mediaNote = '', fastNote = '', strongId = null, repoLen = 0, searchNote = '', question = '', searchEnabled = null } = {}) {
+  async function publishOwnerReply(chatId, res, { model, mediaNote = '', fastNote = '', strongId = null, repoLen = 0, searchNote = '', question = '', searchEnabled = null, trustedTransit = false } = {}) {
     const key = String(chatId);
     const { text: clean, fact } = extractProposal(res.text.trim());
     const enabled = searchEnabled ?? (!!D.exa && (await D.exa.available()));
-    const validated = guardSearchCapabilityAnswer(guardLiveTransitAnswer(clean || '…', question), enabled);
+    const validated = guardSearchCapabilityAnswer(trustedTransit ? (clean || '…') : guardLiveTransitAnswer(clean || '…', question), enabled);
     let body = validated;
     const saved = body;
     if (res.cut) body += '\n\n⏱ Остановил на полуслове: Telegram обрывает вызов бота примерно через 30 секунд. Нажми «Продолжить» — допишу с этого места.';
