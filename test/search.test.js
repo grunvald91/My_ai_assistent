@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { createWorld, assert, OWNER } from './helpers/world.js';
-import { parseDecision, sourcesNote, isLiveTransitQuestion, transitQuery, guardLiveTransitAnswer, guardSearchCapabilityAnswer } from '../tgcloud/lib/exa.js';
+import { parseDecision, sourcesNote, isLiveTransitQuestion, transitQuery, guardLiveTransitAnswer, guardSearchCapabilityAnswer, requiresFreshSearch } from '../tgcloud/lib/exa.js';
 
 const YES = '{"search": true, "query": "курс доллара к рублю сегодня"}';
 const NO = '{"search": false, "query": ""}';
@@ -16,18 +16,18 @@ test('поиск: разбор решения модели', () => {
 
 test('поиск: нужен — ищем Exa по рекомендованному запросу, модель видит найденное, под ответом источники, в истории результатов нет', async () => {
   const w = await mk();
-  w.llmReplies.push(YES, 'Доллар стоит около 91 рубля [1].');
+  w.llmReplies.push('Доллар стоит около 91 рубля [1].');
   await w.say('Какой сейчас курс доллара?');
   assert.equal(w.exaCalls.length, 1);
-  assert.deepEqual(w.exaCalls[0].body, { query: 'курс доллара к рублю сегодня', type: 'auto', contents: { highlights: true } }, 'только query + highlights');
+  assert.deepEqual(w.exaCalls[0].body, { query: 'Какой сейчас курс доллара? 2027-01-15', type: 'auto', contents: { highlights: true } }, 'прямой поиск с датой');
   assert.equal(w.exaCalls[0].headers['x-api-key'], 'exa-test');
-  assert.equal(w.llmCalls.length, 2, 'решение + ответ');
-  const final = JSON.stringify(w.llmCalls[1].messages);
+  assert.equal(w.llmCalls.length, 1, 'для текущих данных решатель не вызываем');
+  const final = JSON.stringify(w.llmCalls[0].messages);
   assert.match(final, /РЕЗУЛЬТАТЫ ВЕБ-ПОИСКА/);
   assert.match(final, /Доллар стоит 91 рубль/);
   const m = w.last(OWNER).text;
   assert.match(m, /Доллар стоит около 91 рубля/);
-  assert.match(m, /🔎 Искал в интернете: «курс доллара к рублю сегодня»/);
+  assert.match(m, /🔎 Искал в интернете: «Какой сейчас курс доллара\? 2027-01-15»/);
   assert.match(m, /Курс рубля сегодня/);
   assert.match(m, /https:\/\/example\.com\/rub/, 'ссылка на источник');
   const hist = await w.store.getHistory(String(OWNER), 0, 5);
@@ -46,7 +46,7 @@ test('поиск: не нужен — Exa не вызывается', async () =
 test('поиск: Exa недоступен — отвечаем без него и честно говорим об этом', async () => {
   const w = await mk();
   w.exaReply = 'fail';
-  w.llmReplies.push(YES, 'Отвечаю по памяти.');
+  w.llmReplies.push('Отвечаю по памяти.');
   await w.say('Какой сейчас курс доллара?');
   const m = w.last(OWNER).text;
   assert.match(m, /Отвечаю по памяти/);
@@ -56,7 +56,7 @@ test('поиск: Exa недоступен — отвечаем без него 
 test('поиск: ничего не нашлось — говорим об этом', async () => {
   const w = await mk();
   w.exaReply = [];
-  w.llmReplies.push(YES, 'Не знаю.');
+  w.llmReplies.push('Не знаю.');
   await w.say('Какой сейчас курс доллара?');
   assert.match(w.last(OWNER).text, /ничего не нашлось/);
 });
@@ -112,43 +112,41 @@ test('поиск: Exa отвечает долго — вопрос уходит 
   const w = await mk({ cfg: { bgViaActions: true, searchGuardMs: 200 } });
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
   w.exaReply = 'stall';
-  w.llmReplies.push(YES);
   await w.say('Какой сейчас курс доллара?');
-  assert.equal(w.llmCalls.length, 1, 'только решатель: отвечать в чате не стали');
+  assert.equal(w.llmCalls.length, 0, 'при обязательном поиске решатель не нужен');
   const d = w.gh.dispatches.find((x) => x.workflow === 'bgjob.yml');
   assert.ok(d, 'ушло в фон');
   const req = JSON.parse((await w.app.bg.getRequest(d.inputs.job, 0)).text);
   assert.equal(req.model, 'claude-sonnet-5-5');
-  assert.deepEqual(req.search, { query: 'курс доллара к рублю сегодня', date: '2027-01-15' }, 'решение уже принято — задача только ищет');
+  assert.deepEqual(req.search, { query: 'Какой сейчас курс доллара? 2027-01-15', date: '2027-01-15' }, 'решение уже принято — задача только ищет');
   assert.match(w.last(OWNER).text, /Поиск в интернете отвечает долго — ищу и отвечаю в фоне/);
 });
 
 test('поиск: Exa долго, а фон выключен — отвечаем в чате без поиска и честно пишем почему', async () => {
   const w = await mk({ cfg: { searchGuardMs: 200 } });
   w.exaReply = 'stall';
-  w.llmReplies.push(YES, 'Отвечаю без поиска.');
+  w.llmReplies.push('Отвечаю без поиска.');
   await w.say('Какой сейчас курс доллара?');
   const m = w.last(OWNER).text;
   assert.match(m, /Отвечаю без поиска/);
   assert.match(m, /отвечал слишком долго/);
 });
 
-test('расписания: ближайшая электричка требует поиска независимо от решения дешёвой модели', async () => {
+test('расписания: электричка идёт через структурированный Туту, а не архивный Exa', async () => {
   assert.equal(isLiveTransitQuestion('Когда ближайшая электричка из Сочи в Адлер?'), true);
   assert.equal(isLiveTransitQuestion('Покажи расписание автобусов на завтра'), true);
   assert.equal(isLiveTransitQuestion('Почему электрички бывают медленными?'), false);
   assert.match(transitQuery('Когда ближайшая электричка?', '2026-11-03'), /2026-11-03/);
   const w = await mk();
   w.exaReply = [{ title: 'Старое расписание', url: 'https://example.com/old', publishedDate: '2026-02-03', highlights: ['Поезд в 15:49'] }];
-  w.llmReplies.push('Ближайшая электричка из Сочи в Адлер в 15:49, стоимость 168 ₽ [1].');
+  w.llmReplies.push('Ближайшая электричка в 15:49, стоимость 168 ₽ [1].');
   await w.say('Когда ближайшая электричка из Сочи в Адлер?');
-  assert.equal(w.exaCalls.length, 1);
-  assert.match(w.exaCalls[0].body.query, /2027-01-15/, 'в Exa передана локальная дата');
-  assert.equal(w.llmCalls.length, 1, 'для изменяющегося расписания модель не решает, нужен ли поиск');
+  assert.equal(w.exaCalls.length, 0);
+  assert.equal(w.tutuCalls.filter((c) => c.method === 'tools/call').length, 1);
+  assert.equal(w.llmCalls.length, 0, 'расписание не генерирует ИИ');
   const answer = w.last(OWNER).text;
-  assert.match(answer, /Не могу подтвердить точное время/);
-  assert.doesNotMatch(answer, /15:49|168 ₽/, 'не выдаём время или тариф из старой страницы');
-  assert.match(answer, /https:\/\/example.com\/old/, 'показываем реально полученный источник');
+  assert.match(answer, /Туту MCP: Сочи → Адлер/);
+  assert.doesNotMatch(answer, /example.com\/old|168 ₽/, 'старое расписание не использовано');
 });
 
 test('защита: не отрицаем настроенный Exa и не меняем обычные ответы', () => {
@@ -158,17 +156,35 @@ test('защита: не отрицаем настроенный Exa и не м�
   assert.equal(guardLiveTransitAnswer('Выезжаю в 15:49.', 'Почему электрички медленные?'), 'Выезжаю в 15:49.');
 });
 
-test('расписания: в фоне вопрос сохраняется и точное время тоже не публикуется', async () => {
+test('расписания: при сбое Туту используется фон, не генерация ИИ', async () => {
   const w = await mk({ cfg: { bgViaActions: true } });
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
+  w.tutuReply = 'fail';
   await w.say('/start');
   await w.store.updateChat(OWNER, { model: 'claude-opus-5-5' });
   await w.say('Когда ближайшая электричка из Сочи в Адлер?');
   const job = w.gh.dispatches.at(-1).inputs.job;
   const req = JSON.parse((await w.app.bg.getRequest(job, 0)).text);
-  assert.equal(req.search.asked, 'Когда ближайшая электричка из Сочи в Адлер?');
-  await w.app.bg.receivePart(job, 0, '15:49 — ближайшая электричка [1].');
-  await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'claude-opus-5-5', error: null });
-  assert.match(w.last(OWNER).text, /Не могу подтвердить точное время/);
-  assert.doesNotMatch(w.last(OWNER).text, /15:49/);
+  assert.equal(req.transit.origin, 'Сочи');
+  assert.equal(req.transit.kind, 'search_etrain');
+  assert.equal(w.llmCalls.length, 0);
+  await w.app.bg.receivePart(job, 0, 'Туту MCP не подтвердил отправление.');
+  await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'tutu-mcp', error: null });
+  assert.match(w.last(OWNER).text, /Туту MCP не подтвердил/);
+});
+
+test('Exa: свежие цены/погода/новости идут на поиск без решателя', async () => {
+  assert.equal(requiresFreshSearch('Какая погода в Сочи сегодня?'), true);
+  assert.equal(requiresFreshSearch('Какой сейчас курс доллара?'), true);
+  assert.equal(requiresFreshSearch('Найди актуальные вакансии'), true);
+  assert.equal(requiresFreshSearch('Объясни, что такое диод'), false);
+  const w = await mk();
+  w.llmReplies.push('Согласно источникам, информация требует проверки.');
+  await w.say('Какая погода в Сочи сегодня?');
+  assert.equal(w.llmCalls.length, 1, 'решающая модель не нужна');
+  assert.equal(w.exaCalls.length, 1, 'Exa вызывается');
+  assert.match(w.exaCalls[0].body.query, /2027-01-15/);
+  const p = JSON.stringify(w.llmCalls[0].messages);
+  assert.match(p, /ИНСТРУМЕНТЫ: Exa настроен/);
+  assert.match(p, /ИТОГ ВЕБ-ПОИСКА: Exa ответил/);
 });

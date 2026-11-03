@@ -5,8 +5,9 @@ import { spawnSync } from 'node:child_process';
 import JSON5 from 'json5';
 import { createLlm } from '../tgcloud/lib/llm.js';
 import { splitSafe } from '../tgcloud/lib/bg.js';
-import { decideMessages, parseDecision, exaRequest, exaResults, applyResults, sourcesNote, isLiveTransitQuestion, transitQuery } from '../tgcloud/lib/exa.js';
+import { decideMessages, parseDecision, exaRequest, exaResults, applyResults, sourcesNote, isLiveTransitQuestion, transitQuery, requiresFreshSearch, freshSearchQuery } from '../tgcloud/lib/exa.js';
 import { API_BASE, DEFAULTS } from '../tgcloud/lib/config.js';
+import { lookupTransit } from '../tgcloud/lib/transit.js';
 
 const env = (k) => (process.env[k] ?? '').trim();
 const JOB = env('JOB_ID');
@@ -73,11 +74,15 @@ async function deliver({ text = '', finish = null, usage = null, model = '', err
  */
 async function webSearch(llm, req, extra) {
   const key = env('EXA_API_KEY');
-  if (!key) return null;
+  if (!key) return '🔎 Exa не выполнен в фоновой задаче: ключ EXA_API_KEY недоступен.';
   let query = req.search.query ?? '';
   if (!query && isLiveTransitQuestion(req.search.asked ?? '')) {
     query = transitQuery(req.search.asked, req.search.date ?? '');
     console.log('Поиск расписания обязателен; решатель пропущен');
+  }
+  if (!query && requiresFreshSearch(req.search.asked ?? '')) {
+    query = freshSearchQuery(req.search.asked, req.search.date ?? '');
+    console.log('Свежие данные: поиск обязателен');
   }
   if (!query) {
     let decision = null;
@@ -121,9 +126,25 @@ async function main() {
   const req = JSON.parse(raw);
   console.log('Запрос получен: модель', req.model, ', сообщений', req.messages?.length ?? 0, ', размышления', req.think ?? 'off');
 
+  if (req.transit) {
+    // Deterministic provider response, no language model and no invented departures.
+    const signal = AbortSignal.timeout(65000); // maximum total for all provider pages
+    const lookup = await lookupTransit((url, opts) => fetch(url, { ...opts, signal }), req.transit,
+      Math.floor(Date.now() / 1000), { deadlineMs: 0 });
+    if (!lookup.text) throw new Error('Туту MCP не подтвердил расписание: ' + (lookup.error ?? 'нет ответа'));
+    await deliver({ text: lookup.text, model: 'tutu-mcp' });
+    return;
+  }
   const llm = createLlm({ fetch, apiKey: env('CLAUDEHUB_API_KEY'), base: API_BASE, sleep, retries: 3 });
   const extra = { in: 0, out: 0 }; // расход «решателя» поиска — добавим к итогу
   const snote = req.search ? await webSearch(llm, req, extra) : null;
+  if (req.messages?.[0]?.role === 'system') {
+    const resultStatus = !req.search ? 'Для этого запроса Exa не запускался.' :
+      snote?.startsWith('🔎 Искал в интернете:') ? 'Exa выполнен; выдержки источников добавлены в запрос.' :
+      snote ? 'Exa не дал проверенных данных (' + snote.slice(0, 150) + '). Не придумывай текущие цифры.' :
+      'Exa не запускался по решению маршрутизатора. Не утверждай, что веб-поиск выполнен.';
+    req.messages[0].content += '\n\nИТОГ ВЕБ-ПОИСКА В ФОНЕ: ' + resultStatus;
+  }
   let n = 0;
   const res = await llm.chat({
     model: req.model,
