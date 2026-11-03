@@ -1,0 +1,55 @@
+name: Finalize EUNOIA snapshot and disk staging (one-off)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/eunoia-finish.yml]
+permissions:
+  contents: read
+jobs:
+  finish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      GH_PAT: ${{ secrets.GH_PAT }}
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - name: Point private EUNOIA default branch to synchronized main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if GH_TOKEN="$GH_PAT" gh api --method PATCH repos/grunvald91/EUNOIA -f default_branch=main --jq '.default_branch' | grep -qx 'main'; then
+            echo 'EUNOIA_DEFAULT_BRANCH_MAIN=YES'
+          else
+            echo 'EUNOIA_DEFAULT_BRANCH_MAIN=UNCONFIRMED'
+          fi
+      - name: Keep EUNOIA up while trimming large host journal
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          K="$(mktemp)"; H="$(mktemp)"
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          [ "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U' ]
+          ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          docker ps --format '{{.Names}}' | grep -qx 'eunoia-web-1'
+          docker ps --format '{{.Names}}' | grep -qx 'eunoia-postgres-1'
+          echo '=== BEFORE JOURNAL MAINTENANCE ==='
+          journalctl --disk-usage
+          df -hP /
+          install -d -m 0755 /etc/systemd/journald.conf.d
+          printf '[Journal]\nSystemMaxUse=300M\nSystemMaxFileSize=50M\n' > /etc/systemd/journald.conf.d/91-eunoia-resource-cap.conf
+          journalctl --rotate --vacuum-size=300M --no-pager >/dev/null
+          systemctl restart systemd-journald
+          echo '=== AFTER JOURNAL MAINTENANCE ==='
+          journalctl --disk-usage
+          df -hP /
+          echo '=== SERVICES STILL RUNNING ==='
+          docker ps --format '{{.Names}} {{.Status}}'
+          echo '=== AGENT DIRECTORY ==='
+          stat -c '%a %U:%G %n' /srv/dsh-agent/work /srv/dsh-agent/repos
+          echo 'JOURNAL_CLEANUP_AND_AGENT_STAGING_DONE'
+          REMOTE
+          curl -sS --max-time 15 -o /dev/null -w 'HTTPS spokoino.site: %{http_code}\n' https://spokoino.site/
