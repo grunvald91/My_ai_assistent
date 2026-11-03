@@ -98,6 +98,8 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
     tg: [], // все вызовы Bot API: { method, params }
     exaCalls: [], // запросы к Exa
     exaReply: null, // ответ Exa: массив results или 'fail'
+    tutuCalls: [], // MCP initialize/notification/tools/call
+    tutuReply: null, // структурированный ответ Туту или 'fail'
     llmCalls: [], // тела запросов к ClaudeHub
     llmPaths: [], // путь каждого запроса (/v1/chat/completions или /v1/messages)
     llmReplies: [], // очередь ответов: строка или функция (body) => строка | { status, body }
@@ -135,6 +137,23 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
   };
 
   globalThis.__fetch = async (url, opts = {}) => {
+    if (url === 'https://mcp.tutu.ru/mcp') {
+      const msg = JSON.parse(opts.body);
+      w.tutuCalls.push(msg);
+      if (w.tutuReply === 'fail') return jsonRes(503, { error: 'down' });
+      if (w.tutuReply === 'stall') return new Promise(() => {});
+      if (msg.method === 'initialize') return jsonRes(200, { jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'tutu', version: '1' } } });
+      if (msg.method === 'notifications/initialized') return { ok: true, status: 202 };
+      if (msg.method === 'tools/call') {
+        const offers = [
+          { departure_at: new Date((w.now + 4200) * 1000).toISOString(), from: { name: 'Сочи' }, to: { name: 'Адлер' } },
+          { departure_at: new Date((w.now + 900) * 1000).toISOString(), from: { name: 'Сочи' }, to: { name: 'Адлер' } },
+          { departure_at: new Date((w.now + 7200) * 1000).toISOString(), from: { name: 'Сочи' }, to: { name: 'Адлер' } },
+        ];
+        return jsonRes(200, { jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: JSON.stringify(w.tutuReply ?? { offers, meta: { complete: true } }) }] } });
+      }
+      return jsonRes(400, { error: 'unknown method' });
+    }
     if (url === 'https://api.exa.ai/search') {
       w.exaCalls.push({ headers: opts.headers, body: JSON.parse(opts.body) });
       if (w.exaReply === 'fail') return jsonRes(500, { error: 'boom' });
