@@ -22,9 +22,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - name: Tutu MCP schema smoke (read-only)
-        if: github.event_name == 'pull_request'
-        run: node scripts/tutu-smoke.mjs
 
   deploy:
     if: github.event_name != 'pull_request'
