@@ -181,7 +181,14 @@ export function createExa(D) {
       await D.log('search_slow', null, {});
       return { defer: d.query, note: '🔎 Поиск в интернете отвечал слишком долго — отвечаю без него.' };
     }
-    await D.log('search', null, { results: results.length });
+    // Сохраняем происхождение цифр для диагностики: ссылки, дата и встреченные минуты,
+    // но не весь текст вопроса/страниц. Это позволяет проверить выдуманное «15:49».
+    const provenance = results.slice(0, 6).map((r) => ({
+      url: String(r.url ?? '').slice(0, 180),
+      published: r.publishedDate ? String(r.publishedDate).slice(0, 10) : null,
+      times: [...new Set((r.highlights ?? []).join(' ').match(/(?:^|[^\\d])(?:[01]?\\d|2[0-3]):[0-5]\\d(?!\\d)/g) ?? [])].slice(0, 12),
+    }));
+    await D.log('search', null, { results: results.length, sources: provenance });
     if (!results.length) return { note: `🔎 Искал в интернете «${d.query}» — ничего не нашлось, отвечаю без поиска.` };
     if (!applyResults(messages, d.query, results, today())) return { note: '' };
     return { note: sourcesNote(d.query, results) };
