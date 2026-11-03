@@ -20,11 +20,11 @@ export function parseTransitIntent(question, previous, nowSec, timezoneHours = 3
   if (!transit && !followup) return null;
   const route = /(?:^|\s)(?:из|от)\s+([^,.!?]+?)\s+(?:в|до)\s+([^,.!?]+)/i.exec(text);
   const origin = route?.[1]?.trim() || (followup ? previous.origin : '');
-  const destination = route?.[2]?.trim() || (followup ? previous.destination : '');
+  const destination = route?.[2]?.trim() || (followup ? (/аэропорт/i.test(text) ? 'Аэропорт Сочи' : previous.destination) : '');
   const kind = TRAIN.test(text) ? 'search_etrain' : RAIL.test(text) ? 'search_rail' : previous?.kind || 'search_etrain';
   const tomorrow = DATE_WORD.test(text);
   const date = followup && !tomorrow ? previous.date : dayKey(nowSec + (tomorrow ? 86400 : 0), timezoneHours);
-  return { origin, destination, kind, date, next: followup && /следующ/i.test(text), savedAt: nowSec, timezoneHours };
+  return { origin, destination, kind, date, offset: followup && /следующ/i.test(text) ? Math.min(20, (Number(previous.offset) || 0) + 1) : 0, savedAt: nowSec, timezoneHours };
 }
 
 function parseSse(text, id) {
@@ -107,7 +107,18 @@ export function normalizeDepartures(data, plan, nowSec) {
     if (!Number.isFinite(ms) || ms < nowSec * 1000 || ms > (nowSec + 72 * 3600) * 1000) continue;
     const station = item.from?.name ?? item.origin?.name ?? item.origin_name ?? item.from_station ?? '';
     const destination = item.to?.name ?? item.destination?.name ?? item.destination_name ?? item.to_station ?? '';
-    normalized.push({ at: ms, time: new Date(ms + plan.timezoneHours * 3600_000).toISOString().slice(11, 16), station: String(station), destination: String(destination) });
+    const matches = (actual, requested) => !actual || !requested || 
+      String(actual).toLowerCase().includes(String(requested).toLowerCase()) ||
+      String(requested).toLowerCase().includes(String(actual).toLowerCase());
+    if (!matches(station, plan.origin) || !matches(destination, plan.destination)) continue;
+    const regionIsMoscowTz = /^(Сочи|Адлер|Москва|Хоста|Туапсе|Ростов-на-Дону)$/i.test(String(plan.origin));
+    const offsetMatch = /([+-])(\\d\\d):(\\d\\d)$/.exec(iso);
+    const seconds = offsetMatch ? (offsetMatch[1] === '-' ? -1 : 1) *
+      (Number(offsetMatch[2]) * 3600 + Number(offsetMatch[3]) * 60) : regionIsMoscowTz ? 10800 : 0;
+    const local = new Date(ms + seconds * 1000).toISOString();
+    const isUtc = !offsetMatch && !regionIsMoscowTz;
+    normalized.push({ at: ms, time: local.slice(11, 16) + (isUtc ? ' UTC' : ''), day: local.slice(0, 10),
+      station: String(station), destination: String(destination) });
   }
   normalized.sort((a, b) => a.at - b.at);
   return normalized;
@@ -119,9 +130,10 @@ export function formatTransitResponse(data, plan, nowSec) {
   if (!departures.length) return 'Туту MCP ответил, но не вернул подтверждённых будущих отправлений с распознаваемым временем для маршрута ' +
     plan.origin + ' → ' + plan.destination + ' на ' + plan.date +
     '. Это не означает, что рейсов нет. Проверь расписание у перевозчика.';
-  const filtered = departures.slice(plan.next ? 1 : 0, plan.next ? 4 : 3);
+  const index = Math.max(0, Math.min(20, Number(plan.offset) || 0));
+  const filtered = departures.slice(index, index + 3);
   if (!filtered.length) return 'Туту MCP не подтвердил следующего отправления для ' + plan.origin + ' → ' + plan.destination + '.';
-  const rows = filtered.map((d, i) => `${i + 1}. ${d.time} — ${d.station || plan.origin} → ${d.destination || plan.destination}`);
+  const rows = filtered.map((d, i) => `${index + i + 1}. ${d.day !== plan.date ? d.day + ' ' : ''}${d.time} — ${d.station || plan.origin} → ${d.destination || plan.destination}`);
   return `Туту MCP: ${plan.origin} → ${plan.destination}, ${plan.date}\n` +
     rows.join('\n') + '\nИсточник: https://mcp.tutu.ru/mcp (расписание, не подтверждение задержек)' +
     (meta.complete === false ? '\n⚠️ Выдача неполная; возможны другие отправления.' : '');
