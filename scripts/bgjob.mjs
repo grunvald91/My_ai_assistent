@@ -74,7 +74,7 @@ async function deliver({ text = '', finish = null, usage = null, model = '', err
  */
 async function webSearch(llm, req, extra) {
   const key = env('EXA_API_KEY');
-  if (!key) return null;
+  if (!key) return '🔎 Exa не выполнен в фоновой задаче: ключ EXA_API_KEY недоступен.';
   let query = req.search.query ?? '';
   if (!query && isLiveTransitQuestion(req.search.asked ?? '')) {
     query = transitQuery(req.search.asked, req.search.date ?? '');
@@ -136,6 +136,13 @@ async function main() {
   const llm = createLlm({ fetch, apiKey: env('CLAUDEHUB_API_KEY'), base: API_BASE, sleep, retries: 3 });
   const extra = { in: 0, out: 0 }; // расход «решателя» поиска — добавим к итогу
   const snote = req.search ? await webSearch(llm, req, extra) : null;
+  if (req.messages?.[0]?.role === 'system') {
+    const resultStatus = !req.search ? 'Для этого запроса Exa не запускался.' :
+      snote?.startsWith('🔎 Искал в интернете:') ? 'Exa выполнен; выдержки источников добавлены в запрос.' :
+      snote ? 'Exa не дал проверенных данных (' + snote.slice(0, 150) + '). Не придумывай текущие цифры.' :
+      'Exa не запускался по решению маршрутизатора. Не утверждай, что веб-поиск выполнен.';
+    req.messages[0].content += '\\n\\nИТОГ ВЕБ-ПОИСКА В ФОНЕ: ' + resultStatus;
+  }
   let n = 0;
   const res = await llm.chat({
     model: req.model,
