@@ -1,4 +1,4 @@
-name: EUNOIA secure sync + agent staging (one-off retry)
+name: EUNOIA private sync + encrypted recovery
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
