@@ -62,24 +62,53 @@ export async function callTutuTool(fetchFn, tool, args, url = TUTU_MCP_URL) {
   const session = init.session;
   const version = init.payload?.protocolVersion || '2025-11-25';
   await postMcp(fetchFn, url, { jsonrpc: '2.0', method: 'notifications/initialized' }, session, version);
-  const res = await postMcp(fetchFn, url, {
-    jsonrpc: '2.0', id: 2, method: 'tools/call',
-    params: { name: tool, arguments: { origin: args.origin, destination: args.destination, departure_date: args.date,
-      ...(tool === 'search_etrain' ? { page: 1, page_size: 30, sort: 'price_asc', view: 'compact' } :
-        { passengers: 1, page: 1, page_size: 30, sort: 'price_asc', view: 'compact' }) } },
-  }, session, version);
-  if (res.payload?.isError) throw new Error('Tutu MCP tool returned an error');
-  let data = res.payload?.structuredContent;
-  if (!data) {
-    const raw = (res.payload?.content || []).find((x) => typeof x?.text === 'string')?.text;
-    if (!raw) throw new Error('Tutu MCP: missing structured result');
-    data = JSON.parse(raw);
+  const PAGE_SIZE = 30;
+  async function loadPage(page) {
+    const res = await postMcp(fetchFn, url, {
+      jsonrpc: '2.0', id: page + 1, method: 'tools/call',
+      params: { name: tool, arguments: { origin: args.origin, destination: args.destination, departure_date: args.date,
+        ...(tool === 'search_etrain' ? { page, page_size: PAGE_SIZE, sort: 'price_asc', view: 'compact' } :
+          { passengers: 1, page, page_size: PAGE_SIZE, sort: 'price_asc', view: 'compact' }) } },
+    }, session, version);
+    if (res.payload?.isError) throw new Error('Tutu MCP tool returned an error');
+    let data = res.payload?.structuredContent;
+    if (!data) {
+      const raw = (res.payload?.content || []).find((x) => typeof x?.text === 'string')?.text;
+      if (!raw) throw new Error('Tutu MCP: missing structured result');
+      data = JSON.parse(raw);
+    }
+    if (typeof data === 'string') data = JSON.parse(data);
+    if (data?.error) throw new Error('Tutu MCP: provider reported an error');
+    if (data && Object.hasOwn(data, 'result')) data = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+    if (!data || typeof data !== 'object') throw new Error('Tutu MCP: invalid tool result');
+    return data;
   }
-  if (typeof data === 'string') data = JSON.parse(data);
-  if (data?.error) throw new Error('Tutu MCP: provider reported an error');
-  if (data && Object.hasOwn(data, 'result')) data = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
-  if (!data || typeof data !== 'object') throw new Error('Tutu MCP: invalid tool result');
-  return data;
+
+  const first = await loadPage(1);
+  if (!Array.isArray(first.offers)) return first; // Unknown schemas remain untrusted.
+  const combined = [...first.offers];
+  const seen = new Set(first.offers.map((x) => String(x?.offer_id ?? '')).filter(Boolean));
+  let last = first;
+  let complete = last.meta?.has_more === false || (first.offers.length < PAGE_SIZE && last.meta?.has_more !== true);
+  // Price-sorted page 1 is NOT enough to determine the next chronological departure.
+  // Load additional pages until the provider establishes an end or safety limit is reached.
+  for (let page = 2; page <= 10 && !complete; page++) {
+    last = await loadPage(page);
+    if (!Array.isArray(last.offers)) break;
+    let added = 0;
+    for (const offer of last.offers) {
+      const id = String(offer?.offer_id ?? '');
+      if (id && seen.has(id)) continue;
+      if (id) seen.add(id);
+      combined.push(offer);
+      added++;
+    }
+    if (last.meta?.has_more === false || (last.offers.length < PAGE_SIZE && last.meta?.has_more !== true)) complete = true;
+    if (!added) break; // Repeated page; never loop blindly.
+  }
+  return { ...first, offers: combined,
+    meta: { ...(first.meta ?? {}), ...(last.meta ?? {}), loaded_offers: combined.length,
+      complete: complete && last.meta?.total_matched_exact !== false } };
 }
 
 function localIso(value, date, tzHours) {
