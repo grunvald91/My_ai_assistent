@@ -67,14 +67,14 @@ export function createBg(D, chatMod) {
    * search: поиск в интернете делает задача Actions — { asked, date } (сначала решить, нужен ли) или { query, date } (уже решено).
    * reason: строка над статусом (почему в фоне).
    */
-  async function start(chatId, { model, messages, think, repoLen = 0, note = '', snote = '', search = null, reason = '', asked = '' }) {
+  async function start(chatId, { model, messages, think, repoLen = 0, note = '', snote = '', search = null, transit = null, reason = '', asked = '' }) {
     await core.assertLimits();
     const level = think && think !== 'off' && model.thinking ? think : null;
     const cap = cfg.maxTokensChat === 'max' ? model.maxOut || cfg.maxTokensFallback : cfg.maxTokensChat;
-    const parts = splitSafe(JSON.stringify({ model: model.id, messages, maxTokens: cap, think: level, ...(search ? { search } : {}) }), REQ_CHUNK);
+    const parts = splitSafe(JSON.stringify({ model: model.id, messages, maxTokens: cap, think: level, ...(search ? { search } : {}), ...(transit ? { transit } : {}) }), REQ_CHUNK);
     const id = uid();
     for (let i = 0; i < parts.length; i++) await store.setSetting(`bg:${id}:q${i}`, parts[i]);
-    const meta = { chatId, model: model.id, ts: D.now(), repoLen, note, snote, asked, n: parts.length, an: 0, state: 'run', estIn: promptTokens(messages) };
+    const meta = { chatId, model: model.id, ts: D.now(), repoLen, note, snote, asked, transit: !!transit, n: parts.length, an: 0, state: 'run', estIn: promptTokens(messages) };
     await saveMeta(id, meta);
     try {
       const selfInfo = await gh().getRepo(D.selfRepo);
@@ -158,7 +158,7 @@ export function createBg(D, chatMod) {
         meta.billed = true;
         await saveMeta(job, { ...meta, state: 'delivering' });
       }
-      await chatMod.publishOwnerReply(meta.chatId, { text, finish: meta.why, tokensOut }, { model: { id: meta.model }, repoLen: meta.repoLen, mediaNote: meta.note ?? '', searchNote: meta.snote ?? '', question: meta.asked ?? '' });
+      await chatMod.publishOwnerReply(meta.chatId, { text, finish: meta.why, tokensOut }, { model: { id: meta.model }, repoLen: meta.repoLen, mediaNote: meta.note ?? '', searchNote: meta.snote ?? '', question: meta.asked ?? '', trustedTransit: !!meta.transit });
       await store.trimMessages(String(meta.chatId), 300);
       if (meta.statusMsg) await out.editHtml(meta.chatId, meta.statusMsg, `✅ <b>${escapeHtml(meta.model)}</b>: ответ готов — он ниже.`, null).catch(() => {});
     } catch (e) {
