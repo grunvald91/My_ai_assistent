@@ -98,5 +98,36 @@ jobs:
           echo '=== BINDINGS (without env/secrets) ==='
           docker ps --format '{{.Names}}: {{.Ports}}'
           echo '=== SERVER READ-ONLY AUDIT COMPLETE ==='
+          echo '=== LARGE SYSTEM AREAS (disk use) ==='
+          for p in /var/lib /var/lib/containerd /var/backups /opt/eunoia/web /opt/eunoia/data; do
+            echo "SECTION $p"
+            timeout 45 du -xhd1 "$p" 2>/dev/null | sort -h | tail -18 || true
+          done
+          echo '=== BACKUP FILE SUMMARY (sizes and dates only, no names/content) ==='
+          find /var/backups -xdev -type f -printf '%s %TY-%Tm-%Td\n' 2>/dev/null | sort -nr | head -20 || true
+          echo '=== JOURNAL HISTORY AND RETENTION ==='
+          journalctl --list-boots --no-pager 2>/dev/null | head -20 || true
+          grep -hE '^[[:space:]]*(SystemMaxUse|SystemKeepFree|SystemMaxFileSize|MaxRetentionSec)=' /etc/systemd/journald.conf /etc/systemd/journald.conf.d/*.conf 2>/dev/null || true
+          echo '=== PROJECT FILE METADATA (no file contents) ==='
+          if [ -d /opt/eunoia/.git ]; then
+            git -C /opt/eunoia status --porcelain 2>/dev/null | wc -l
+            git -C /opt/eunoia branch --show-current 2>/dev/null || true
+            git -C /opt/eunoia rev-parse --short HEAD 2>/dev/null || true
+            printf 'origin matches GitHub EUNOIA: '
+            if git -C /opt/eunoia config --get remote.origin.url 2>/dev/null | grep -Eq 'github.com[:/]grunvald91/EUNOIA([.]git)?
+          REMOTE
+; then echo yes; else echo unknown; fi
+          fi
+          echo '=== IMPORTANT APPLICATION STORAGE (sizes only) ==='
+          for p in /opt/eunoia/data/books /opt/eunoia/data/vosk /opt/eunoia/web/.next /opt/eunoia/web/node_modules; do
+            [ ! -d "$p" ] || du -sh "$p" 2>/dev/null || true
+          done
+          echo '=== DOCKER VOLUMES (names only) ==='
+          docker volume ls --format '{{.Name}}' | head -30 || true
+          echo '=== TOTAL PERSISTENT DOCKER VOLUME DATA ==='
+          timeout 25 du -sh /var/lib/docker/volumes /var/lib/containerd 2>/dev/null || true
+          echo '=== TOP HIDDEN DISK CONSUMERS FILE SIZES (path masked) ==='
+          find /var/log /var/backups /opt/eunoia -xdev -type f -size +100M -printf '%s bytes\n' 2>/dev/null | sort -nr | head -20 || true
+          echo '=== END TARGETED READ-ONLY AUDIT ==='
           echo 'RESULT: SSH audit completed (no changes made)'
           REMOTE
