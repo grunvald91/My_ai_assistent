@@ -68,5 +68,35 @@ jobs:
           for dir in /opt /srv /var/www; do
             [ ! -d "$dir" ] || find "$dir" -mindepth 1 -maxdepth 1 -type d -printf '%p\n' 2>/dev/null | head -30
           done
+          echo '=== RAM DETAIL ==='
+          grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree|Cached|SReclaimable|Shmem|AnonPages|Slab):' /proc/meminfo
+          echo '=== MEMORY PRESSURE ==='
+          cat /proc/pressure/memory 2>/dev/null || true
+          echo '=== CONTAINER MEMORY ==='
+          timeout 35 docker stats --no-stream --format '{{.Name}} | {{.MemUsage}} | {{.MemPerc}} | {{.CPUPerc}}' || true
+          echo '=== SWAP BY PROCESS (kB name only) ==='
+          for x in /proc/[0-9]*/status; do
+            awk '/^Name:/{name=$2} /^VmSwap:/{if($2>0) print $2, name}' "$x" 2>/dev/null || true
+          done | sort -nr | head -20 || true
+          echo '=== DOCKER SPACE ==='
+          timeout 35 docker system df || true
+          echo '=== DIRECTORY SPACE ==='
+          for p in /var /opt /root /var/lib/docker /var/log /opt/eunoia /opt/eunoia-deploy-backups; do
+            echo "DIRECTORY $p"
+            timeout 45 du -xhd1 "$p" 2>/dev/null | sort -h | tail -15 || true
+          done
+          echo '=== DOCKER LOG SIZES (names only) ==='
+          for id in $(docker ps -aq); do
+            name="$(docker inspect -f '{{.Name}}' "$id" | sed 's#^/##')"
+            logpath="$(docker inspect -f '{{.LogPath}}' "$id")"
+            if [ -n "$logpath" ] && [ -f "$logpath" ]; then
+              stat -c '%s bytes' "$logpath" 2>/dev/null | sed "s/$/ $name/" || true
+            fi
+          done
+          echo '=== JOURNAL SIZE ==='
+          journalctl --disk-usage 2>/dev/null || true
+          echo '=== BINDINGS (without env/secrets) ==='
+          docker ps --format '{{.Names}}: {{.Ports}}'
+          echo '=== SERVER READ-ONLY AUDIT COMPLETE ==='
           echo 'RESULT: SSH audit completed (no changes made)'
           REMOTE
