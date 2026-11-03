@@ -37,35 +37,7 @@ ssh "${ssh_opts[@]}" root@157.22.203.28 \
      | tar -xz -C "$scratch/eunoia" --no-same-owner
 git -C "$scratch/eunoia" add -A
 if git -C "$scratch/eunoia" diff --cached --name-only |
-    grep -Ei '(^|/)(\.env($|[.])|id_rsa|id_ed25519|.*(secret|credential|private.?key|token).*|.*[.](pem|key|p12|pfx|sqlite|db)$)' | grep -Ev '(^|/)\.env\.example
-  echo "STOP: potential credential file staged"; exit 21
-fi
-if git -C "$scratch/eunoia" grep --cached -IqE \
-  '(-----BEGIN [A-Z ]*PRIVATE KEY-----|github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{30,})' -- .; then
-  echo "STOP: probable secret literal in staged files"; exit 22
-fi
-if find "$scratch/eunoia" -path "$scratch/eunoia/.git" -prune -o -type f -size +90M -print | grep -q .; then
-  echo "STOP: large source file > 90MB; archive instead"; exit 23
-fi
-git -C "$scratch/eunoia" config user.name "EUNOIA server snapshot"
-git -C "$scratch/eunoia" config user.email "git-sync@users.noreply.github.com"
-if git -C "$scratch/eunoia" diff --cached --quiet; then
-  echo "No code changes to sync."
-  exit 0
-fi
-git -C "$scratch/eunoia" diff --cached --stat | tail -20
-python3 -m compileall -q "$scratch/eunoia/backend/app"
-git -C "$scratch/eunoia" commit -q -m "sync: preserve current EUNOIA VPS source snapshot"
-target_branch="sync/eunoia-vps157-20261104"
-git -C "$scratch/eunoia" -c "http.extraheader=$auth_header" push -q origin "HEAD:refs/heads/$target_branch"
-echo "SOURCE_SYNC_BRANCH=$target_branch"
-echo "SOURCE_SYNC_COMMIT=$(git -C "$scratch/eunoia" rev-parse HEAD)"
-GH_TOKEN="$GH_PAT" gh pr create --repo grunvald91/EUNOIA \
-  --head "$target_branch" --base main --draft \
-  --title "sync: latest EUNOIA source from VPS157" \
-  --body "Server source snapshot. Credentials, databases, uploads, backups and keys are excluded from Git and must be retained in an encrypted backup. Review before merge." || true
-echo "SOURCE_SYNC_COMPLETE"
-; then
+    grep -Ei '(^|/)(\.env($|[.])|id_rsa|id_ed25519|.*(secret|credential|private.?key|token).*|.*[.](pem|key|p12|pfx|sqlite|db)$)' | grep -Ev '(^|/)\.env\.example$'; then
   echo "STOP: potential credential file staged"; exit 21
 fi
 if git -C "$scratch/eunoia" grep --cached -IqE \
