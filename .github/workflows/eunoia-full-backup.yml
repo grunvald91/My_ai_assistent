@@ -1,4 +1,4 @@
-name: EUNOIA secure sync + agent staging (one-off)
+name: EUNOIA secure sync + agent staging (one-off retry)
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
