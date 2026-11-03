@@ -7,6 +7,7 @@ import { createLlm } from '../tgcloud/lib/llm.js';
 import { splitSafe } from '../tgcloud/lib/bg.js';
 import { decideMessages, parseDecision, exaRequest, exaResults, applyResults, sourcesNote, isLiveTransitQuestion, transitQuery } from '../tgcloud/lib/exa.js';
 import { API_BASE, DEFAULTS } from '../tgcloud/lib/config.js';
+import { lookupTransit } from '../tgcloud/lib/transit.js';
 
 const env = (k) => (process.env[k] ?? '').trim();
 const JOB = env('JOB_ID');
@@ -121,6 +122,13 @@ async function main() {
   const req = JSON.parse(raw);
   console.log('Запрос получен: модель', req.model, ', сообщений', req.messages?.length ?? 0, ', размышления', req.think ?? 'off');
 
+  if (req.transit) {
+    // Deterministic provider response, no language model and no invented departures.
+    const lookup = await lookupTransit(fetch, req.transit, Math.floor(Date.now() / 1000), { deadlineMs: 0 });
+    if (!lookup.text) throw new Error('Туту MCP не подтвердил расписание: ' + (lookup.error ?? 'нет ответа'));
+    await deliver({ text: lookup.text, model: 'tutu-mcp' });
+    return;
+  }
   const llm = createLlm({ fetch, apiKey: env('CLAUDEHUB_API_KEY'), base: API_BASE, sleep, retries: 3 });
   const extra = { in: 0, out: 0 }; // расход «решателя» поиска — добавим к итогу
   const snote = req.search ? await webSearch(llm, req, extra) : null;
