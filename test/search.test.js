@@ -133,22 +133,21 @@ test('поиск: Exa долго, а фон выключен — отвечае�
   assert.match(m, /отвечал слишком долго/);
 });
 
-test('расписания: ближайшая электричка требует поиска независимо от решения дешёвой модели', async () => {
+test('расписания: электричка идёт через структурированный Туту, а не архивный Exa', async () => {
   assert.equal(isLiveTransitQuestion('Когда ближайшая электричка из Сочи в Адлер?'), true);
   assert.equal(isLiveTransitQuestion('Покажи расписание автобусов на завтра'), true);
   assert.equal(isLiveTransitQuestion('Почему электрички бывают медленными?'), false);
   assert.match(transitQuery('Когда ближайшая электричка?', '2026-11-03'), /2026-11-03/);
   const w = await mk();
   w.exaReply = [{ title: 'Старое расписание', url: 'https://example.com/old', publishedDate: '2026-02-03', highlights: ['Поезд в 15:49'] }];
-  w.llmReplies.push('Ближайшая электричка из Сочи в Адлер в 15:49, стоимость 168 ₽ [1].');
+  w.llmReplies.push('Ближайшая электричка в 15:49, стоимость 168 ₽ [1].');
   await w.say('Когда ближайшая электричка из Сочи в Адлер?');
-  assert.equal(w.exaCalls.length, 1);
-  assert.match(w.exaCalls[0].body.query, /2027-01-15/, 'в Exa передана локальная дата');
-  assert.equal(w.llmCalls.length, 1, 'для изменяющегося расписания модель не решает, нужен ли поиск');
+  assert.equal(w.exaCalls.length, 0);
+  assert.equal(w.tutuCalls.filter((c) => c.method === 'tools/call').length, 1);
+  assert.equal(w.llmCalls.length, 0, 'расписание не генерирует ИИ');
   const answer = w.last(OWNER).text;
-  assert.match(answer, /Не могу подтвердить точное время/);
-  assert.doesNotMatch(answer, /15:49|168 ₽/, 'не выдаём время или тариф из старой страницы');
-  assert.match(answer, /https:\/\/example.com\/old/, 'показываем реально полученный источник');
+  assert.match(answer, /Туту MCP: Сочи → Адлер/);
+  assert.doesNotMatch(answer, /example.com\/old|168 ₽/, 'старое расписание не использовано');
 });
 
 test('защита: не отрицаем настроенный Exa и не меняем обычные ответы', () => {
@@ -158,17 +157,19 @@ test('защита: не отрицаем настроенный Exa и не м�
   assert.equal(guardLiveTransitAnswer('Выезжаю в 15:49.', 'Почему электрички медленные?'), 'Выезжаю в 15:49.');
 });
 
-test('расписания: в фоне вопрос сохраняется и точное время тоже не публикуется', async () => {
+test('расписания: при сбое Туту используется фон, не генерация ИИ', async () => {
   const w = await mk({ cfg: { bgViaActions: true } });
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
+  w.tutuReply = 'fail';
   await w.say('/start');
   await w.store.updateChat(OWNER, { model: 'claude-opus-5-5' });
   await w.say('Когда ближайшая электричка из Сочи в Адлер?');
   const job = w.gh.dispatches.at(-1).inputs.job;
   const req = JSON.parse((await w.app.bg.getRequest(job, 0)).text);
-  assert.equal(req.search.asked, 'Когда ближайшая электричка из Сочи в Адлер?');
-  await w.app.bg.receivePart(job, 0, '15:49 — ближайшая электричка [1].');
-  await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'claude-opus-5-5', error: null });
-  assert.match(w.last(OWNER).text, /Не могу подтвердить точное время/);
-  assert.doesNotMatch(w.last(OWNER).text, /15:49/);
+  assert.equal(req.transit.origin, 'Сочи');
+  assert.equal(req.transit.kind, 'search_etrain');
+  assert.equal(w.llmCalls.length, 0);
+  await w.app.bg.receivePart(job, 0, 'Туту MCP не подтвердил отправление.');
+  await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'tutu-mcp', error: null });
+  assert.match(w.last(OWNER).text, /Туту MCP не подтвердил/);
 });
