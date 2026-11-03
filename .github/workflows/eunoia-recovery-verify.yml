@@ -1,0 +1,19 @@
+name: Verify encrypted EUNOIA recovery (one-off)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/eunoia-recovery-verify.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decrypt privately and verify backup restore
+        shell: bash
+        run: bash scripts/eunoia-verify-recovery.sh
