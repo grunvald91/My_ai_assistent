@@ -1,0 +1,72 @@
+name: DSH VPS157 preflight (one-off read-only)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: ['.github/workflows/dsh-vps157-preflight.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - name: Verify secret and read-only SSH server report
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_KEY_157:-}" ]; then echo 'RESULT: SSH_KEY_157 is missing or empty'; exit 11; fi
+          umask 077
+          KEYFILE="$(mktemp)"
+          trap 'rm -f "$KEYFILE"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$KEYFILE"
+          unset SSH_KEY_157
+          if ! ssh-keygen -y -P "" -f "$KEYFILE" >/dev/null 2>&1; then
+            echo 'RESULT: SSH_KEY_157 exists but is not a usable unencrypted SSH private key'; exit 12
+          fi
+          echo 'RESULT: SSH_KEY_157 exists and parses as an SSH private key'
+          echo 'TARGET: 157.22.203.28:22 (root)'
+          echo 'HOST KEY OBSERVED (not yet pinned independently):'
+          ssh-keyscan -T 7 -p 22 157.22.203.28 2>/dev/null | ssh-keygen -lf - 2>/dev/null | head -3 || true
+          ssh -i "$KEYFILE" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -u
+          echo '--- SERVER ID ---'
+          hostname; uname -srm
+          printf 'OS: '; (grep '^PRETTY_NAME=' /etc/os-release || true) | head -1
+          echo '--- RESOURCES ---'
+          date -u '+UTC %Y-%m-%d %H:%M:%S'
+          uptime
+          nproc
+          free -h
+          df -hP / /var /opt /srv 2>/dev/null || df -hP /
+          echo '--- DISK INODES ---'
+          df -iP /
+          echo '--- DNS MATCH ---'
+          getent ahostsv4 spokoino.site 2>/dev/null | awk '$2=="STREAM" {print $1}' | sort -u | head -10 || true
+          echo '--- HTTP SERVICE / DOMAIN REFERENCE ---'
+          for dir in /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/caddy /etc/apache2/sites-enabled; do
+            [ ! -d "$dir" ] || grep -RIlm1 -E 'spokoino[.]site|Психолог в кармане' "$dir" 2>/dev/null | head -12 || true
+          done
+          echo '--- SOFTWARE ---'
+          for pkg in node pnpm git python3 tmux gh dsh docker; do
+            printf '%s: ' "$pkg"
+            if command -v "$pkg" >/dev/null 2>&1; then
+              case "$pkg" in
+                node|pnpm|git|python3|tmux|gh|dsh) "$pkg" --version 2>&1 | head -1 ;;
+                docker) docker --version 2>&1 | head -1 ;;
+              esac
+            else echo 'missing'; fi
+          done
+          echo '--- RUNNING CONTAINERS (names/status only) ---'
+          if command -v docker >/dev/null 2>&1; then docker ps --format '{{.Names}}  {{.Status}}' 2>/dev/null | head -25 || true; fi
+          echo '--- LISTENING PORTS ---'
+          ss -lntH 2>/dev/null | awk '{print $4}' | sort -u | head -30 || true
+          echo '--- TOP RESOURCE USERS (command names, no arguments) ---'
+          ps -eo comm,rss --sort=-rss 2>/dev/null | head -13 || true
+          echo '--- HOSTING DIRS (names only) ---'
+          for dir in /opt /srv /var/www; do
+            [ ! -d "$dir" ] || find "$dir" -mindepth 1 -maxdepth 1 -type d -printf '%p\n' 2>/dev/null | head -30
+          done
+          echo 'RESULT: SSH audit completed (no changes made)'
+          REMOTE
