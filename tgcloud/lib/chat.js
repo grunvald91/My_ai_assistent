@@ -553,6 +553,18 @@ export function createChat(D) {
     });
     // в группах сводку не ведём (там чужие люди) — только свежая история
     const messages = await core.contextFor({ key, chat: { ...chat, summary: null, summaryUpto: 0 }, system });
+    const searchEnabled = !!D.exa && await D.exa.available();
+    messages[0].content += searchEnabled
+      ? '\n\nИНСТРУМЕНТЫ ГРУППЫ: Exa настроен, но конкретный поиск выполняется только по прямому обращению к боту (mention/ask). Не утверждай, что веб-поиска в приложении нет.'
+      : '\n\nИНСТРУМЕНТЫ ГРУППЫ: Exa сейчас выключен или не настроен; не утверждай, что интернет проверен.';
+    let searchNote = '';
+    if (mode === 'mention' && searchEnabled) {
+      const result = await D.exa.augment(messages, text);
+      searchNote = result.note ?? '';
+      messages[0].content += searchNote.startsWith('🔎 Искал в интернете:')
+        ? '\nИТОГ ПОИСКА: Exa ответил, источники приложены.'
+        : '\nИТОГ ПОИСКА: достоверных результатов не получено. Не выдумывай меняющиеся факты.';
+    }
 
     let res;
     try {
@@ -568,7 +580,7 @@ export function createChat(D) {
       throw e;
     }
 
-    const reply = res.text.trim() || '…';
+    const reply = guardSearchCapabilityAnswer(res.text.trim() || '…', searchEnabled) + (searchNote ? '\n\n' + searchNote : '');
     await out.sendText({ chatId, text: reply, replyTo: msg.message_id, threadId, ephemeralTo: chat.ephemeral ? msg.from.id : null });
     await store.addMessage({ chatKey: key, role: 'assistant', text: reply, model: model.id, tokens: res.tokensOut, ts: D.now() });
     await store.updateChat(chatId, { lastReplyAt: D.now() });
