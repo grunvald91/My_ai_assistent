@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import JSON5 from 'json5';
 import { createLlm } from '../tgcloud/lib/llm.js';
 import { splitSafe } from '../tgcloud/lib/bg.js';
-import { decideMessages, parseDecision, exaRequest, exaResults, applyResults, sourcesNote } from '../tgcloud/lib/exa.js';
+import { decideMessages, parseDecision, exaRequest, exaResults, applyResults, sourcesNote, isLiveTransitQuestion, transitQuery } from '../tgcloud/lib/exa.js';
 import { API_BASE, DEFAULTS } from '../tgcloud/lib/config.js';
 
 const env = (k) => (process.env[k] ?? '').trim();
@@ -75,6 +75,10 @@ async function webSearch(llm, req, extra) {
   const key = env('EXA_API_KEY');
   if (!key) return null;
   let query = req.search.query ?? '';
+  if (!query && isLiveTransitQuestion(req.search.asked ?? '')) {
+    query = transitQuery(req.search.asked, req.search.date ?? '');
+    console.log('Поиск расписания обязателен; решатель пропущен');
+  }
   if (!query) {
     let decision = null;
     for (const id of DEFAULTS.fastModels) {
