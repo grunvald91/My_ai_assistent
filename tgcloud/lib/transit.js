@@ -107,7 +107,7 @@ export function normalizeDepartures(data, plan, nowSec) {
     if (!Number.isFinite(ms) || ms < nowSec * 1000 || ms > (nowSec + 72 * 3600) * 1000) continue;
     const station = item.from?.name ?? item.origin?.name ?? item.origin_name ?? item.from_station ?? '';
     const destination = item.to?.name ?? item.destination?.name ?? item.destination_name ?? item.to_station ?? '';
-    normalized.push({ at: ms, time: iso.slice(11, 16), station: String(station), destination: String(destination) });
+    normalized.push({ at: ms, time: new Date(ms + plan.timezoneHours * 3600_000).toISOString().slice(11, 16), station: String(station), destination: String(destination) });
   }
   normalized.sort((a, b) => a.at - b.at);
   return normalized;
