@@ -128,7 +128,9 @@ async function main() {
 
   if (req.transit) {
     // Deterministic provider response, no language model and no invented departures.
-    const lookup = await lookupTransit(fetch, req.transit, Math.floor(Date.now() / 1000), { deadlineMs: 0 });
+    const signal = AbortSignal.timeout(65000); // maximum total for all provider pages
+    const lookup = await lookupTransit((url, opts) => fetch(url, { ...opts, signal }), req.transit,
+      Math.floor(Date.now() / 1000), { deadlineMs: 0 });
     if (!lookup.text) throw new Error('Туту MCP не подтвердил расписание: ' + (lookup.error ?? 'нет ответа'));
     await deliver({ text: lookup.text, model: 'tutu-mcp' });
     return;
