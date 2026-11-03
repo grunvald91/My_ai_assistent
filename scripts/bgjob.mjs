@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import JSON5 from 'json5';
 import { createLlm } from '../tgcloud/lib/llm.js';
 import { splitSafe } from '../tgcloud/lib/bg.js';
-import { decideMessages, parseDecision, exaRequest, exaResults, applyResults, sourcesNote, isLiveTransitQuestion, transitQuery } from '../tgcloud/lib/exa.js';
+import { decideMessages, parseDecision, exaRequest, exaResults, applyResults, sourcesNote, isLiveTransitQuestion, transitQuery, requiresFreshSearch, freshSearchQuery } from '../tgcloud/lib/exa.js';
 import { API_BASE, DEFAULTS } from '../tgcloud/lib/config.js';
 import { lookupTransit } from '../tgcloud/lib/transit.js';
 
@@ -79,6 +79,10 @@ async function webSearch(llm, req, extra) {
   if (!query && isLiveTransitQuestion(req.search.asked ?? '')) {
     query = transitQuery(req.search.asked, req.search.date ?? '');
     console.log('Поиск расписания обязателен; решатель пропущен');
+  }
+  if (!query && requiresFreshSearch(req.search.asked ?? '')) {
+    query = freshSearchQuery(req.search.asked, req.search.date ?? '');
+    console.log('Свежие данные: поиск обязателен');
   }
   if (!query) {
     let decision = null;
