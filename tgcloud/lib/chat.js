@@ -1,6 +1,7 @@
 // chat.js — ответы ИИ: личный чат владельца (со стримингом) и группы.
 
 import { ownerSystem, groupSystem } from './persona.js';
+import { guardLiveTransitAnswer, guardSearchCapabilityAnswer } from './exa.js';
 import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
@@ -158,9 +159,14 @@ export function createChat(D) {
     const deadline = cfg.cutAfterMs ? t0 + cfg.cutAfterMs : null;
     const chat = await store.getChat(chatId);
     const key = String(chatId);
+    const currentQuestion = cont ? '' : String(text ?? (await lastUserText(key, chat)) ?? '');
     let model = await core.resolveModel(chat);
     const memories = await core.memoryTexts(['owner']);
     let system = ownerSystem({ name: await core.ownerName(), memories, nowSec: D.now(), tz: core.tz() });
+    const searchEnabled = !!D.exa && (await D.exa.available());
+    system += searchEnabled
+      ? '\n\nСТАТУС ПОИСКА: Exa подключён и включён. Приложение самостоятельно принимает решение о поиске и передаёт найденные результаты; не утверждай, что поиск недоступен. Отсутствие выдержки не доказывает, что Exa не существует.'
+      : '\n\nСТАТУС ПОИСКА: Exa сейчас выключен или его ключ недоступен. Проверка: /search. Не выдумывай результаты и не утверждай, что интернет был проверен.';
 
     // просьба «посмотри репозиторий…» → README и главные файлы уходят модели как данные
     const repo = D.repoContext ? await D.repoContext(cont ? '' : text ?? (await lastUserText(key, chat))) : null; // при «Продолжить» берём уже прочитанный репозиторий
@@ -250,7 +256,7 @@ export function createChat(D) {
     if (toBg) {
       let started = false;
       try {
-        started = await D.bg.start(chatId, { model, messages, think: await core.thinkLevel(), repoLen: repo?.text?.length ?? 0, note: mediaNote, snote: searchNote, search: bgSearch, reason: bgReason });
+        started = await D.bg.start(chatId, { model, messages, think: await core.thinkLevel(), repoLen: repo?.text?.length ?? 0, note: mediaNote, snote: searchNote, search: bgSearch, reason: bgReason, asked: currentQuestion });
       } catch (e) {
         return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null, qid: await lastUserId(key, chat) });
       }
@@ -270,7 +276,7 @@ export function createChat(D) {
       return replyError(chatId, e, { modelId: model.id, userText: cont ? '' : text ?? (await lastUserText(key, chat)), needs: media?.needs ?? null, qid: await lastUserId(key, chat) });
     }
 
-    await publishOwnerReply(chatId, res, { model, mediaNote, fastNote, strongId, searchNote, repoLen: repo?.text?.length ?? 0 });
+    await publishOwnerReply(chatId, res, { model, mediaNote, fastNote, strongId, searchNote, repoLen: repo?.text?.length ?? 0, question: currentQuestion, searchEnabled });
 
     try {
       // сжатие истории — ещё один вызов ИИ: делаем его, только пока вызов бота «молодой» (иначе платформа оборвёт и его, и сам апдейт)
@@ -282,10 +288,12 @@ export function createChat(D) {
   }
 
   /** Показывает готовый ответ модели владельцу (кнопки «Продолжить», «Запомнить» и т. д.) и сохраняет его в историю. */
-  async function publishOwnerReply(chatId, res, { model, mediaNote = '', fastNote = '', strongId = null, repoLen = 0, searchNote = '' } = {}) {
+  async function publishOwnerReply(chatId, res, { model, mediaNote = '', fastNote = '', strongId = null, repoLen = 0, searchNote = '', question = '', searchEnabled = null } = {}) {
     const key = String(chatId);
     const { text: clean, fact } = extractProposal(res.text.trim());
-    let body = clean || '…';
+    const enabled = searchEnabled ?? (!!D.exa && (await D.exa.available()));
+    const validated = guardSearchCapabilityAnswer(guardLiveTransitAnswer(clean || '…', question), enabled);
+    let body = validated;
     const saved = body;
     if (res.cut) body += '\n\n⏱ Остановил на полуслове: Telegram обрывает вызов бота примерно через 30 секунд. Нажми «Продолжить» — допишу с этого места.';
     else if (res.stopped) body += '\n\n⏹ Остановлено.';

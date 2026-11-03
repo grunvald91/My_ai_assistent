@@ -10,6 +10,43 @@ const kb = (rows) => ({ inline_keyboard: rows });
 export const SEARCH_URL = 'https://api.exa.ai/search';
 const GUARD_MS = 8000; // по умолчанию; cfg.searchGuardMs меняет (тесты)
 
+/** Точное время ближайшего транспорта — меняющийся факт; решение о поиске нельзя отдавать только модели. */
+export function isLiveTransitQuestion(asked) {
+  const s = String(asked ?? '').toLowerCase();
+  return /(электричк|ласточк|поезд|автобус|аэроэкспресс|пригородн.{0,12}поезд|трамва|паром|рейс|вылет)/i.test(s) &&
+    /(ближайш|следующ|сейчас|сегодня|завтра|расписан|отправл|прибыт|во сколько|когда (ид[её]т|будет|едет|уходит|отходит)|через сколько)/i.test(s);
+}
+
+/** Защита от ложного заявления модели, что подключённого поиска вообще не существует. */
+export function guardSearchCapabilityAnswer(answer, searchEnabled) {
+  const text = String(answer ?? '');
+  if (!searchEnabled) return text;
+  const falseDenial = /(у меня|мне|в этой сессии|в этом диалоге).{0,100}(нет (?:ни одной |никакой )?(?:доступа|функции|инструмента).{0,55}поиск|поиск.{0,40}не (?:передан|доступен)|поиска (?:нет|не было))/i;
+  if (!falseDenial.test(text)) return text;
+  return 'В этом боте веб-поиск Exa подключён и включён. ' +
+    'Поиск запускает само приложение перед ответом, а не модель по отдельной команде. ' +
+    'Это не доказывает, что поиск выполнился именно для текущего вопроса или что найденные данные актуальны.';
+}
+
+/** Подсказка Exa о дате: поисковик без неё может вернуть архивное расписание. */
+export function transitQuery(asked, date) {
+  return `${String(asked ?? '').trim()} ${date} актуальное расписание официальный источник`.trim();
+}
+
+/**
+ * Exa — поиск страниц, а не табло движения в реальном времени.
+ * Если модель всё же назвала минуту отправления или стоимость без машинной проверки
+ * у перевозчика, не отдаём такую цифру пользователю как факт.
+ */
+export function guardLiveTransitAnswer(answer, asked) {
+  if (!isLiveTransitQuestion(asked)) return answer;
+  if (!/(?:^|[^\d])(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)|\d[\d\s]*\s?₽/u.test(String(answer ?? ''))) return answer;
+  return 'Не могу подтвердить точное время ближайшего отправления или цену по найденным страницам. ' +
+    'Exa находит публикации, но не подтверждает актуальное табло. ' +
+    'Проверь маршрут и дату в официальном расписании перевозчика или на https://rasp.yandex.ru/. ' +
+    'Называть неподтверждённые минуты отправления не буду.';
+}
+
 const DECIDE_SYSTEM = (date) =>
   'Ты решаешь, нужен ли поиск в интернете, чтобы хорошо ответить на ПОСЛЕДНЕЕ сообщение пользователя.\n' +
   'Поиск НУЖЕН для: свежих новостей и событий; текущих цен, курсов, погоды, расписаний, наличия; фактов о людях, компаниях, продуктах и законах, которые могли измениться; проверки утверждений; когда прямо просят найти, погуглить, поискать, найти источник.\n' +
@@ -130,7 +167,7 @@ export function createExa(D) {
   async function augment(messages, asked) {
     if (!(await available()) || !worthAsking(asked)) return { note: '' };
     const text = String(asked).trim();
-    const d = await decide(messages, text);
+    const d = isLiveTransitQuestion(text) ? { search: true, query: transitQuery(text, today()) } : await decide(messages, text);
     if (!d?.search) return { note: '' };
     let results;
     try {
@@ -144,7 +181,14 @@ export function createExa(D) {
       await D.log('search_slow', null, {});
       return { defer: d.query, note: '🔎 Поиск в интернете отвечал слишком долго — отвечаю без него.' };
     }
-    await D.log('search', null, { results: results.length });
+    // Сохраняем происхождение цифр для диагностики: ссылки, дата и встреченные минуты,
+    // но не весь текст вопроса/страниц. Это позволяет проверить выдуманное «15:49».
+    const provenance = results.slice(0, 6).map((r) => ({
+      url: String(r.url ?? '').slice(0, 180),
+      published: r.publishedDate ? String(r.publishedDate).slice(0, 10) : null,
+      times: [...new Set((r.highlights ?? []).join(' ').match(/(?:^|[^\\d])(?:[01]?\\d|2[0-3]):[0-5]\\d(?!\\d)/g) ?? [])].slice(0, 12),
+    }));
+    await D.log('search', null, { results: results.length, sources: provenance });
     if (!results.length) return { note: `🔎 Искал в интернете «${d.query}» — ничего не нашлось, отвечаю без поиска.` };
     if (!applyResults(messages, d.query, results, today())) return { note: '' };
     return { note: sourcesNote(d.query, results) };

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { createWorld, assert, OWNER } from './helpers/world.js';
-import { parseDecision, sourcesNote } from '../tgcloud/lib/exa.js';
+import { parseDecision, sourcesNote, isLiveTransitQuestion, transitQuery, guardLiveTransitAnswer, guardSearchCapabilityAnswer } from '../tgcloud/lib/exa.js';
 
 const YES = '{"search": true, "query": "курс доллара к рублю сегодня"}';
 const NO = '{"search": false, "query": ""}';
@@ -131,4 +131,44 @@ test('поиск: Exa долго, а фон выключен — отвечае�
   const m = w.last(OWNER).text;
   assert.match(m, /Отвечаю без поиска/);
   assert.match(m, /отвечал слишком долго/);
+});
+
+test('расписания: ближайшая электричка требует поиска независимо от решения дешёвой модели', async () => {
+  assert.equal(isLiveTransitQuestion('Когда ближайшая электричка из Сочи в Адлер?'), true);
+  assert.equal(isLiveTransitQuestion('Покажи расписание автобусов на завтра'), true);
+  assert.equal(isLiveTransitQuestion('Почему электрички бывают медленными?'), false);
+  assert.match(transitQuery('Когда ближайшая электричка?', '2026-11-03'), /2026-11-03/);
+  const w = await mk();
+  w.exaReply = [{ title: 'Старое расписание', url: 'https://example.com/old', publishedDate: '2026-02-03', highlights: ['Поезд в 15:49'] }];
+  w.llmReplies.push('Ближайшая электричка из Сочи в Адлер в 15:49, стоимость 168 ₽ [1].');
+  await w.say('Когда ближайшая электричка из Сочи в Адлер?');
+  assert.equal(w.exaCalls.length, 1);
+  assert.match(w.exaCalls[0].body.query, /2027-01-15/, 'в Exa передана локальная дата');
+  assert.equal(w.llmCalls.length, 1, 'для изменяющегося расписания модель не решает, нужен ли поиск');
+  const answer = w.last(OWNER).text;
+  assert.match(answer, /Не могу подтвердить точное время/);
+  assert.doesNotMatch(answer, /15:49|168 ₽/, 'не выдаём время или тариф из старой страницы');
+  assert.match(answer, /https:\/\/example.com\/old/, 'показываем реально полученный источник');
+});
+
+test('защита: не отрицаем настроенный Exa и не меняем обычные ответы', () => {
+  assert.match(guardSearchCapabilityAnswer('В этой сессии у меня нет доступа к поиску.', true), /Exa подключён/);
+  assert.equal(guardSearchCapabilityAnswer('В этой сессии у меня нет доступа к поиску.', false), 'В этой сессии у меня нет доступа к поиску.');
+  assert.equal(guardLiveTransitAnswer('Поезд идёт около получаса.', 'Когда ближайшая электричка?'), 'Поезд идёт около получаса.');
+  assert.equal(guardLiveTransitAnswer('Выезжаю в 15:49.', 'Почему электрички медленные?'), 'Выезжаю в 15:49.');
+});
+
+test('расписания: в фоне вопрос сохраняется и точное время тоже не публикуется', async () => {
+  const w = await mk({ cfg: { bgViaActions: true } });
+  w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
+  await w.say('/start');
+  await w.store.updateChat(OWNER, { model: 'claude-opus-5-5' });
+  await w.say('Когда ближайшая электричка из Сочи в Адлер?');
+  const job = w.gh.dispatches.at(-1).inputs.job;
+  const req = JSON.parse((await w.app.bg.getRequest(job, 0)).text);
+  assert.equal(req.search.asked, 'Когда ближайшая электричка из Сочи в Адлер?');
+  await w.app.bg.receivePart(job, 0, '15:49 — ближайшая электричка [1].');
+  await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'claude-opus-5-5', error: null });
+  assert.match(w.last(OWNER).text, /Не могу подтвердить точное время/);
+  assert.doesNotMatch(w.last(OWNER).text, /15:49/);
 });
