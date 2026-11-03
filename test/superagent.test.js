@@ -68,3 +68,18 @@ test('/agent при отсутствии токена не позволяет о
   await w.say('/agent что-то исправь');
   assert.match(w.last(OWNER).text, /GH_PAT/);
 });
+
+test('/agent с общим аккаунтом не создаёт Issue: исходный DSH игнорирует свои сообщения', async () => {
+  const w = await createWorld();
+  w.gh.repos['me/site'] = SITE();
+  await w.say('/repo me/site');
+  await w.say('/agent bind me');
+  assert.match(w.last(OWNER).text, /Общий аккаунт/);
+  await w.say('/agent Исправь страницу');
+  const confirm = w.last(OWNER).reply_markup.inline_keyboard[0][0].callback_data;
+  await w.press(confirm);
+  assert.equal(w.gh.issues.length, 0);
+  assert.match(w.last(OWNER).text, /Задача не отправлена/);
+  await w.press(confirm);
+  assert.equal(w.gh.issues.length, 0);
+});

@@ -72,8 +72,13 @@ export function createSuperagent(D) {
           return true;
         }
         await store.setSetting(routeKey(repo.full_name), login);
+        const myLogin = (await gh().me()).login || '';
+        const sameAccount = myLogin.toLowerCase() === login.toLowerCase();
         await out.sendHtml(chatId, '✅ Для <code>' + escapeHtml(repo.full_name) + '</code> сохранён адрес <code>@' +
-          escapeHtml(login) + '</code>.\nЭто только маршрутизация: проверь установку DSH, доступ аккаунта к репозиторию и allowed list для твоего GitHub-логина.');
+          escapeHtml(login) + '</code>.\n' +
+          (sameAccount
+            ? '⚠️ <b>Общий аккаунт:</b> исходный DSH игнорирует Issues собственного автора. Команда /agent будет доступна после адаптации приёмника задач; до этого отправка заблокирована.'
+            : 'Это только маршрутизация: проверь установку DSH, доступ аккаунта к репозиторию и allowed list для твоего GitHub-логина.'));
         return true;
       }
       if (arg === 'status') {
@@ -136,6 +141,18 @@ export function createSuperagent(D) {
     }
     if (action !== 'c' || draft.status !== 'pending') {
       return out.answerCb(cq.id, 'Уже обрабатывается или отправлено', true);
+    }
+    // По умолчанию DeepSeek игнорирует Issues, написанные его GitHub-аккаунтом.
+    // Пока доверенный Source под общий аккаунт не внедрён, не создаём
+    // заведомо неисполняемые задачи и не сообщаем об успешном запуске.
+    const myLogin = (await gh().me()).login || '';
+    if (myLogin.toLowerCase() === draft.login.toLowerCase()) {
+      await store.setSetting(key, JSON.stringify({ ...draft, status: 'blocked' }));
+      await out.dropButtons(chatId, cq.message.message_id);
+      await out.answerCb(cq.id, 'Нужна адаптация DSH', true);
+      await out.sendHtml(chatId, '⚠️ <b>Задача не отправлена.</b> DeepSeek в исходной версии не принимает Issues, созданные его же GitHub-аккаунтом <code>@' +
+        escapeHtml(draft.login) + '</code>. Для общего аккаунта нужен отдельный доверенный приёмник заданий. PR #4 пока не включает такой приёмник.');
+      return;
     }
     // Потребляем подтверждение ДО записи в GitHub. При неопределённом сетевом сбое
     // не повторяем POST автоматически: иначе можно создать две Issues.
