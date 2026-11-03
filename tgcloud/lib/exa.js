@@ -17,6 +17,17 @@ export function isLiveTransitQuestion(asked) {
     /(ближайш|следующ|сейчас|сегодня|завтра|расписан|отправл|прибыт|во сколько|когда (ид[её]т|будет|едет|уходит|отходит)|через сколько)/i.test(s);
 }
 
+/** Обязательный веб-поиск для меняющихся фактов — независимо от выбора дешёвой модели.
+ * Остальные вопросы по-прежнему проходят через интеллектуальный решатель.
+ */
+export function requiresFreshSearch(asked) {
+  return /(?:\bсегодня\b|\bсейчас\b|на\s+данный\s+момент|последн(?:ие|яя|ий|их)|актуальн|погод[аыуе]|курс(?:а|ы|\s)|котировк|ваканси|стоимост[ьи]|сколько\s+стоит|расписани|наличи[ея]|кто\s+сейчас\s+(?:президент|директор)|новост[ьи]|найди\s+в\s+интернете|поищи\s+в\s+интернете)/i.test(String(asked ?? ''));
+}
+
+export function freshSearchQuery(asked, date) {
+  return String(asked ?? '').trim() + ' ' + date;
+}
+
 /** Защита от ложного заявления модели, что подключённого поиска вообще не существует. */
 export function guardSearchCapabilityAnswer(answer, searchEnabled) {
   const text = String(answer ?? '');
@@ -167,7 +178,8 @@ export function createExa(D) {
   async function augment(messages, asked) {
     if (!(await available()) || !worthAsking(asked)) return { note: '' };
     const text = String(asked).trim();
-    const d = isLiveTransitQuestion(text) ? { search: true, query: transitQuery(text, today()) } : await decide(messages, text);
+    const d = isLiveTransitQuestion(text) ? { search: true, query: transitQuery(text, today()) } :
+      requiresFreshSearch(text) ? { search: true, query: freshSearchQuery(text, today()) } : await decide(messages, text);
     if (!d?.search) return { note: '' };
     let results;
     try {
