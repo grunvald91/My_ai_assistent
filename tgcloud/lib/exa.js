@@ -21,7 +21,7 @@ export function isLiveTransitQuestion(asked) {
 export function guardSearchCapabilityAnswer(answer, searchEnabled) {
   const text = String(answer ?? '');
   if (!searchEnabled) return text;
-  const falseDenial = /(у меня|мне|в этой сессии|в этом диалоге).{0,100}(нет (доступа|функции|инструмента).{0,45}поиск|поиск.{0,40}не (передан|доступен)|поиска (нет|не было))/i;
+  const falseDenial = /(у меня|мне|в этой сессии|в этом диалоге).{0,100}(нет (?:ни одной |никакой )?(?:доступа|функции|инструмента).{0,55}поиск|поиск.{0,40}не (?:передан|доступен)|поиска (?:нет|не было))/i;
   if (!falseDenial.test(text)) return text;
   return 'В этом боте веб-поиск Exa подключён и включён. ' +
     'Поиск запускает само приложение перед ответом, а не модель по отдельной команде. ' +
