@@ -7,7 +7,7 @@ import { createLlm } from '../tgcloud/lib/llm.js';
 import { splitSafe } from '../tgcloud/lib/bg.js';
 import { decideMessages, parseDecision, exaRequest, exaResults, applyResults, sourcesNote, isLiveTransitQuestion, transitQuery, requiresFreshSearch, freshSearchQuery } from '../tgcloud/lib/exa.js';
 import { API_BASE, DEFAULTS } from '../tgcloud/lib/config.js';
-import { lookupTransit } from '../tgcloud/lib/transit.js';
+import { understandTransitQuestion, lookupTransit } from '../tgcloud/lib/transit.js';
 
 const env = (k) => (process.env[k] ?? '').trim();
 const JOB = env('JOB_ID');
@@ -125,6 +125,56 @@ async function main() {
   }
   const req = JSON.parse(raw);
   console.log('Запрос получен: модель', req.model, ', сообщений', req.messages?.length ?? 0, ', размышления', req.think ?? 'off');
+
+  if (req.transitIntent) {
+    // Telegram Serverless has a ~30s invocation limit. If semantic parsing times
+    // out there, do AI understanding AND the provider lookup here, not a canned error.
+    const intent = req.transitIntent;
+    const llm = createLlm({ fetch, apiKey: env('CLAUDEHUB_API_KEY'), base: API_BASE, sleep, retries: 1 });
+    const models = [...new Set([req.model, 'claude-haiku-4.5', 'claude-sonnet-5-5'].filter(Boolean))];
+    let plan;
+    let activeModel = req.model;
+    const usage = { in: 0, out: 0 };
+    let lastError;
+    for (const id of models) {
+      try {
+        const decision = await understandTransitQuestion(
+          intent.question, intent.previous ?? null, Math.floor(Date.now() / 1000),
+          Number(intent.timezoneHours ?? 3),
+          async (messages) => {
+            const result = await llm.chat({
+              model: id, messages, maxTokens: 360, stream: false, retries: 1,
+              deadline: Date.now() + 30000,
+            });
+            usage.in += result.usage?.in ?? 0;
+            usage.out += result.usage?.out ?? 0;
+            return result.text;
+          },
+        );
+        if (!decision || decision.intent === 'other') throw new Error('ИИ не нашёл подтверждённого запроса расписания');
+        plan = decision;
+        activeModel = id;
+        break;
+      } catch (e) {
+        lastError = e;
+        console.warn('Tutu AI intent retry:', id, String(e?.kind ?? e?.message ?? e).slice(0, 80));
+      }
+    }
+    if (!plan) throw new Error('ИИ-разбор маршрута недоступен после повторной попытки: ' +
+      String(lastError?.kind ?? lastError?.message ?? lastError).slice(0, 100));
+    if (plan.intent === 'clarify') {
+      const missing = plan.missingOrigin && !plan.missingDestination ? 'откуда отправляемся' :
+        plan.missingDestination && !plan.missingOrigin ? 'куда нужно ехать' : 'откуда и куда нужно ехать';
+      await deliver({ text: 'Уточни, пожалуйста, ' + missing + '.', model: activeModel, usage });
+      return;
+    }
+    const signal = AbortSignal.timeout(65000);
+    const lookup = await lookupTransit((url, opts) => fetch(url, { ...opts, signal }), plan.plan,
+      Math.floor(Date.now() / 1000), { deadlineMs: 0 });
+    if (!lookup.text) throw new Error('Туту MCP не подтвердил расписание: ' + (lookup.error ?? 'нет ответа'));
+    await deliver({ text: lookup.text, model: activeModel, usage });
+    return;
+  }
 
   if (req.transit) {
     // Deterministic provider response, no language model and no invented departures.
