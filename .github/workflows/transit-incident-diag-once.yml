@@ -1,11 +1,11 @@
-name: Tutu station and MCP schema check (one-off read-only)
+name: Tutu live response parsing smoke (one-off read-only)
 on:
   push:
     branches: [ops/transit-incident-diag-20261104]
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -13,37 +13,28 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Check provider tool names and station aliases, no train times
+      - name: Read-only provider schema without publishing train times
         run: |
           node --input-type=module <<'NODE'
-          import { callTutuTool } from './tgcloud/lib/transit.js';
-          const url = 'https://mcp.tutu.ru/mcp';
-          const start = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'review',version:'1.0'}}})});
-          const init = await start.json();
-          const session = start.headers.get('mcp-session-id');
-          const headers = {'Content-Type':'application/json','Accept':'application/json, text/event-stream',...(session?{'Mcp-Session-Id':session}:{}),'MCP-Protocol-Version':init.result?.protocolVersion??'2025-11-25'};
-          await fetch(url,{method:'POST',headers,body:JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})});
-          const tr = await fetch(url,{method:'POST',headers,body:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/list'})});
-          const mime = tr.headers.get('content-type')||'';
-          const txt = await tr.text();
-          const json = mime.includes('event-stream') ? JSON.parse(txt.split('\n').find(x=>x.startsWith('data:')).slice(5)) : JSON.parse(txt);
-          console.log('AVAILABLE TOOLS:',JSON.stringify((json.result?.tools??[]).map(t=>({name:t.name,required:t.inputSchema?.required??[]}))));
-          const checks = [
-            ['search_etrain','Адлер','Красная Поляна','2026-11-04'],
-            ['search_etrain','Адлер','Роза Хутор','2026-11-04'],
-            ['search_etrain','Адлер','Роза Хутор','2026-11-05'],
+          import { callTutuTool, normalizeDepartures } from './tgcloud/lib/transit.js';
+          const requests = [
             ['search_etrain','Сочи','Адлер','2026-11-04'],
-            ['search_rail','Москва','Тверь','2026-11-05'],
+            ['search_rail','Адлер','Роза Хутор','2026-11-05'],
           ];
-          for(const [tool,origin,destination,date] of checks) {
-            const controller = new AbortController();
-            const timer = setTimeout(()=>controller.abort(),20000);
-            try {const d=await callTutuTool((u,o)=>fetch(u,{...o,signal:controller.signal}),tool,{origin,destination,date});
-              console.log('RESULT',JSON.stringify({tool,origin,destination,date,count:d.offers?.length??null,
-                from:d.meta?.from,to:d.meta?.to,total_matched:d.meta?.total_matched,
-                total_returned:d.meta?.total_returned,non_etrain_dropped:d.meta?.upstream_non_etrain_dropped,
-                metaComplete:d.meta?.complete}));
-            } catch(e) {console.log('ERROR',JSON.stringify({tool,origin,destination,date,error:String(e.message??e).slice(0,120)}));}
-            finally{clearTimeout(timer)}
+          for (const [kind,origin,destination,date] of requests) {
+            const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),45000);
+            try {
+              const data=await callTutuTool((u,o)=>fetch(u,{...o,signal:ctl.signal}),kind,{origin,destination,date});
+              const now=Date.parse('2026-11-04T00:00:00+03:00')/1000;
+              const valid=normalizeDepartures(data,{origin,destination,date,timezoneHours:3},now);
+              console.log('SCHEMA',JSON.stringify({kind,origin,destination,date,rawCount:data.offers?.length??null,validCount:valid.length,
+                firstOfferKeys:Object.keys(data.offers?.[0]??{}),
+                departureAtType:typeof data.offers?.[0]?.departure_at,
+                departureDateTimeType:typeof data.offers?.[0]?.departure_datetime,
+                departureType:typeof data.offers?.[0]?.departure,
+                firstOfferFromType:typeof data.offers?.[0]?.from,
+                firstOfferToType:typeof data.offers?.[0]?.to},null,2));
+            }catch(e){console.log('ERROR',kind,String(e.message??e).slice(0,140));}
+            finally{clearTimeout(t)}
           }
           NODE
