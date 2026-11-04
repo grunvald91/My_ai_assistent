@@ -1,17 +1,11 @@
-name: Transit incident diagnostics (one-off read-only)
+name: Transit provider live smoke (one-off read-only)
 on:
   push:
     branches: [ops/transit-incident-diag-20261104]
 jobs:
-  report:
+  smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      TGCLOUD_TOKEN: ${{ secrets.TELEGRAM_CLI_ACCESS }}
-      CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
-      OWNER_IDS: ${{ secrets.OWNER_IDS || vars.OWNER_IDS }}
-      GH_PAT: ${{ secrets.GH_PAT }}
-      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,16 +13,21 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Fetch sanitized production diagnostic (no chat texts)
+      - name: One live Tutu MCP request (do not publish train data)
         run: |
-          node scripts/write-secrets.mjs
-          OWNER="${OWNER_IDS%%,*}"
-          npx tgcloud run endpoints/diag "{ bgtest: 'no' }" --ctx "{ initData: { user: { id: ${OWNER} } } }" > /tmp/transit-diagnostic.txt
           node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          const raw = fs.readFileSync('/tmp/transit-diagnostic.txt','utf8');
-          const lines = raw.split(/\r?\n/);
-          const relevant = lines.filter((line) => /transit_intent_fail|llm_fail|chat_model|ago_s:|reason:|kind:|model:|status:|error:|last_messages/.test(line));
-          console.log('SANITIZED RUNTIME DIAGNOSTIC:');
-          console.log(relevant.slice(0,130).join('\n'));
+          import { callTutuTool } from './tgcloud/lib/transit.js';
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 35000);
+          const date = new Intl.DateTimeFormat('en-CA', { timeZone:'Europe/Moscow', year:'numeric',month:'2-digit',day:'2-digit' }).format(new Date());
+          try {
+            const data = await callTutuTool((url,opts) => fetch(url,{...opts,signal:controller.signal}),
+              'search_etrain',{origin:'Адлер',destination:'Красная Поляна',date});
+            const entries = Array.isArray(data.offers) ? data.offers : [];
+            console.log(JSON.stringify({date, success:true, topLevelKeys:Object.keys(data).slice(0,20), offers:entries.length,
+              firstOfferKeys: Object.keys(entries[0]??{}).slice(0,30), metaKeys:Object.keys(data.meta??{}).slice(0,20)},null,2));
+          } catch(e) {
+            console.log('Tutu smoke error:',String(e.message??e).slice(0,200));
+            process.exitCode=1;
+          } finally {clearTimeout(timeout)}
           NODE
