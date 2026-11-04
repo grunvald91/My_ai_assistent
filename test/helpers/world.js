@@ -108,7 +108,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
       if (String(body.messages?.[0]?.content ?? '').includes('TRANSIT_INTENT_JSON')) {
         const input = JSON.parse(body.messages.at(-1).content);
         const q = String(input.question).toLowerCase();
-        const mode = 'commuter';
+        const mode = ({search_etrain:'commuter',search_rail:'rail',search_bus:'bus',search_avia:'plane',search_multitransport:'mixed'})[input.previous?.mode] ?? 'commuter';
         if (q.includes('из сочи в адлер')) return JSON.stringify({
           intent: 'schedule', origin: 'Сочи', destination: 'Адлер', date: 'today', mode, next: false,
         });
@@ -118,6 +118,15 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
         if (q.includes('завтра') && input.previous) return JSON.stringify({
           intent: 'schedule', origin: input.previous.origin, destination: input.previous.destination,
           date: 'tomorrow', mode, next: false,
+        });
+        if (q.includes('автобус') && q.includes('москв') && q.includes('твер')) return JSON.stringify({
+          intent:'schedule',origin:'Москва',destination:'Тверь',date:q.includes('завтра')?'tomorrow':'today',mode:'bus',next:false,details:q.includes('остановк'),
+        });
+        if ((q.includes('самол') || q.includes('авиабилет')) && q.includes('москв') && q.includes('сочи')) return JSON.stringify({
+          intent:'schedule',origin:'Москва',destination:'Сочи',date:'today',mode:'plane',next:false,details:false,
+        });
+        if (q.includes('добраться') && q.includes('москв') && q.includes('казань')) return JSON.stringify({
+          intent:'schedule',origin:'Москва',destination:'Казань',date:'tomorrow',mode:'mixed',next:false,details:false,
         });
         if (q.includes('следующ') && input.previous) return JSON.stringify({
           intent: 'schedule', origin: input.previous.origin, destination: input.previous.destination,

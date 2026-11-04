@@ -9,9 +9,11 @@ const key = (process.env.CLAUDEHUB_API_KEY ?? '').trim();
 const owners = (process.env.OWNER_IDS ?? '').trim();
 const ghPat = (process.env.GH_PAT ?? '').trim();
 const exaKey = (process.env.EXA_API_KEY ?? '').trim(); // необязательный: без него веб-поиск выключен
-const yandexRaspKey = (process.env.YANDEX_RASP_API_KEY ?? '').trim(); // официальный API расписаний; необязательный
+const yandexRaspKeyCandidate = (process.env.YANDEX_RASP_API_KEY || process.env.YANDEX_API || '').trim(); // only if valid Yandex Timetables key
 // Enable only for a publicly accessible free service or after written permission/licence from Yandex.
 const yandexRaspAllowed = /^(?:true|1)$/i.test((process.env.YANDEX_RASP_ALLOWED ?? '').trim());
+// Do not ship a Maps/other unused API key to Telegram Serverless while disabled.
+const yandexRaspKey = yandexRaspAllowed ? yandexRaspKeyCandidate : '';
 // Репозиторий бота: GitHub Actions сам задаёт GITHUB_REPOSITORY. Код в нём бот менять не вправе.
 const selfRepo = (process.env.GITHUB_REPOSITORY || 'grunvald91/my_ai_assistent').trim();
 
