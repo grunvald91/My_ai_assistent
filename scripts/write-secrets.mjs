@@ -9,7 +9,7 @@ const key = (process.env.CLAUDEHUB_API_KEY ?? '').trim();
 const owners = (process.env.OWNER_IDS ?? '').trim();
 const ghPat = (process.env.GH_PAT ?? '').trim();
 const exaKey = (process.env.EXA_API_KEY ?? '').trim(); // необязательный: без него веб-поиск выключен
-const yandexRaspKeyCandidate = (process.env.YANDEX_RASP_API_KEY || process.env.YANDEX_API || '').trim(); // only if valid Yandex Timetables key
+const yandexRaspKeyCandidate = (process.env.YANDEX_API || '').trim() || (process.env.YANDEX_RASP_API_KEY || '').trim(); // only if valid Yandex Timetables key
 // Enable only for a publicly accessible free service or after written permission/licence from Yandex.
 const yandexRaspAllowed = /^(?:true|1)$/i.test((process.env.YANDEX_RASP_ALLOWED ?? '').trim());
 // Do not ship a Maps/other unused API key to Telegram Serverless while disabled.
