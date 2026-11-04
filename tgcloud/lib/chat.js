@@ -261,10 +261,27 @@ export function createChat(D) {
         if (understanding?.intent === 'schedule') {
           const plan = understanding.plan;
           await store.setSetting(stateKey, JSON.stringify(plan));
+          // Explicit route details require Yandex /thread/. Run in Actions since
+          // resolving unrecognized stations may require a large catalog download.
+          // If the licensed API is disabled, regular Tutu times still work.
+          if (plan.details && D.yandexRaspKey && D.bg && await D.bg.canRun()) {
+            try {
+              const started = await D.bg.start(chatId, {
+                model, messages, think: null, transit: plan, asked: currentQuestion,
+                reason: '🚉 Проверяю у Яндекс Расписаний остановки и детали конкретного маршрута.',
+              });
+              if (started) return;
+            } catch (error) {
+              await D.log('transit_details_bg_fail', chatId, { reason: String(error?.message ?? error).slice(0, 120) });
+            }
+          }
           const result = await lookupTransit(D.fetch, plan, D.now(), { deadlineMs: cfg.tutuGuardMs ?? 6500, pulse: D.pulse });
           // An empty Tutu response is NOT a confirmed absence of trains.
           if (result.found && result.text) {
-            await publishOwnerReply(chatId, { text: result.text }, { model, question: currentQuestion, searchEnabled, trustedTransit: true });
+            await publishOwnerReply(chatId, {
+              text: result.text + (plan.details
+                ? '\nПодробные остановки не подтверждены: резервный API не подключён или фоновая задача недоступна.' : ''),
+            }, { model, question: currentQuestion, searchEnabled, trustedTransit: true });
             return;
           }
           // Yandex's official API is licensed separately. Only use it if enabled.

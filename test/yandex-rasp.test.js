@@ -137,3 +137,67 @@ test('Формат API не должен выводить рейс с невер
   assert.match(r.text,/10:10/);
   assert.doesNotMatch(r.text,/09:00/);
 });
+
+
+test('Реальный формат справочника: электрички используют станцию с transport_type=Поезд',()=>{
+  const realShape={countries:[{title:'Россия',regions:[{title:'Краснодарский край',settlements:[
+    {title:'Туапсе',codes:{yandex_code:'c1056'},stations:[
+      {title:'Туапсе-Пасс.',codes:{yandex_code:'s9600778'},transport_type:'Поезд'},
+    ]},
+  ]}]}]};
+  assert.equal(resolveRussianStation(realShape,'Туапсе-Пасс.','search_etrain').code,'s9600778');
+});
+
+test('Ж/д коды Адлера нельзя применять к автобусам и авиации',()=>{
+  const realShape={countries:[{title:'Россия',regions:[{title:'Краснодарский край',settlements:[
+    {title:'Адлер',codes:{yandex_code:'c85275'},stations:[
+      {title:'Адлер',codes:{yandex_code:'s9613054'},transport_type:'Поезд'},
+      {title:'Адлер',codes:{yandex_code:'s123456'},transport_type:'Автобус'},
+    ]},
+  ]}]}]};
+  assert.equal(resolveRussianStation(realShape,'Адлер','search_etrain').code,'s9613054');
+  assert.equal(resolveRussianStation(realShape,'Адлер','search_bus').code,'c85275');
+  assert.equal(resolveRussianStation(realShape,'Адлер','search_avia').code,'c85275');
+});
+
+test('Пользователь просит остановки: при подключённом API сначала Яндекс thread, а не компактный Tutu',async()=>{
+  const calls=[];
+  const fetchFn=async(url,options)=>{
+    const u=new URL(url);calls.push(u.pathname);
+    assert.equal(u.hostname,'api.rasp.yandex-net.ru');
+    if(u.pathname.endsWith('/search/'))return response({segments:[{
+      ...segment('2026-11-04T09:10:00+03:00'),
+      thread:{number:'6103',transport_type:'suburban',uid:'real_uid'},
+    }],pagination:{total:1}});
+    assert.equal(u.searchParams.get('uid'),'real_uid');
+    return response({stops:Array.from({length:16},(_,i)=>({
+      station:{title:'Остановка '+(i+1)},departure:'2026-11-04T09:10:00+03:00',
+    }))});
+  };
+  const result=await lookupRussianTransit(fetchFn,'valid-key',{...plan,details:true},now);
+  assert.equal(result.found,true);
+  assert.equal(result.source,'yandex');
+  assert.deepEqual(calls,['/v3.0/search/','/v3.0/thread/']);
+  assert.match(result.text,/Остановка 16/);
+  assert.doesNotMatch(result.text,/и ещё \d+ остановок/);
+});
+
+test('Если Яндекс не подтвердил остановки, подтверждённое Tutu расписание сохраняется',async()=>{
+  const calls=[];
+  const fetchFn=async(url,opts)=>{
+    const u=new URL(url);calls.push(u.hostname);
+    if(u.hostname==='api.rasp.yandex-net.ru')return response({},503);
+    const msg=JSON.parse(opts.body);
+    if(msg.method==='initialize')return response({jsonrpc:'2.0',id:msg.id,result:{protocolVersion:'2025-11-25'}});
+    if(msg.method==='notifications/initialized')return {ok:true,status:202};
+    return response({jsonrpc:'2.0',id:msg.id,result:{content:[{type:'text',text:JSON.stringify({
+      offers:[{departure_at:'2026-11-04T09:20:00+03:00',from:{name:'Адлер'},to:{name:'Красная Поляна'}}],
+      meta:{complete:true},
+    })}]}});
+  };
+  const result=await lookupRussianTransit(fetchFn,'valid-key',{...plan,details:true},now,{deadlineMs:0});
+  assert.equal(result.source,'tutu');
+  assert.equal(result.found,true);
+  assert.match(result.text,/09:20/);
+  assert.match(result.text,/Подробные остановки через Яндекс подтвердить не удалось/);
+});

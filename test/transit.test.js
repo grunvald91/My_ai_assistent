@@ -240,3 +240,18 @@ test('При настроенном разрешённом API Яндекс пу
   assert.equal(req.transit.skipTutu,true);
   assert.match(w.last(OWNER).text,/Яндекс Расписания/);
 });
+
+
+test('При явном запросе остановок и доступном разрешённом Яндекс API помощник запрашивает детали в фоне',async()=>{
+  const w=await createWorld({cfg:{bgViaActions:true},yandexRaspKey:'authorized-yandex-key'});
+  w.gh.repos['grunvald91/my_ai_assistent']={default_branch:'main',files:{'README.md':'bot'}};
+  w.tutuReply={offers:[],meta:{complete:true}};
+  await w.say('Покажи подробно остановки электрички сегодня из Адлера на красную поляну');
+  assert.equal(w.tutuCalls.filter(c=>c.method==='tools/call').length,0,'не тратим время Telegram Serverless на компактный Tutu');
+  const dispatch=w.gh.dispatches.find(c=>c.workflow==='bgjob.yml');
+  assert.ok(dispatch);
+  const body=JSON.parse((await w.app.bg.getRequest(dispatch.inputs.job,0)).text);
+  assert.equal(body.transit.details,true);
+  assert.equal(body.transit.kind,'search_etrain');
+  assert.match(w.last(OWNER).text,/остановки и детали/);
+});
