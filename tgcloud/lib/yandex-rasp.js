@@ -151,7 +151,7 @@ export async function lookupYandexRasp(fetchFn, key, plan, nowSec) {
 
 /** Primary Tutu, then licensed Yandex API, finally an honest site link. */
 export async function lookupRussianTransit(fetchFn, yandexKey, plan, nowSec, tutuOptions = {}) {
-  const first = await lookupTransit(fetchFn, plan, nowSec, tutuOptions);
+  const first = plan.skipTutu ? { found:false } : await lookupTransit(fetchFn, plan, nowSec, tutuOptions);
   if (first.found) return { ...first, source:'tutu' };
   const second = await lookupYandexRasp(fetchFn, yandexKey, plan, nowSec);
   return { ...second, source: second.found?'yandex':'link', tutuError: first.error ?? null };
