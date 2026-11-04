@@ -38,11 +38,28 @@ export function yandexFallbackNotice(plan, reason = '') {
     'Проверь вручную в Яндекс Расписаниях: ' + yandexTimetableLink(plan);
 }
 
-const rail = (station) => /поезд|электричк|suburban|train/i.test(String(station.transport_type ?? ''));
+const TRANSPORT = {
+  search_etrain: 'suburban', search_rail: 'train', search_bus: 'bus',
+  search_avia: 'plane', search_water: 'water', search_helicopter: 'helicopter',
+  search_multitransport: '',
+};
+export const yandexTransportType = (kind) => TRANSPORT[kind] ?? null;
+function stationSupportsType(item, kind) {
+  const value = String(item.transport_type ?? '').toLowerCase();
+  const types = {
+    search_etrain: /электричк|пригородн|suburban/i,
+    search_rail: /поезд|train/i,
+    search_bus: /автобус|bus/i,
+    search_avia: /самол[её]т|plane/i,
+    search_water: /водн|паром|морск|water|sea|river/i,
+    search_helicopter: /вертол[её]т|helicopter/i,
+  };
+  return kind === 'search_multitransport' || (types[kind] ?? /./).test(value);
+}
 const stationCode = (item) => String(item?.codes?.yandex_code ?? '');
 const isValidCode = (value) => /^[sc]\d{1,12}$/.test(String(value ?? ''));
 
-export function resolveRussianStation(catalog, name) {
+export function resolveRussianStation(catalog, name, kind = 'search_etrain') {
   const query = normalized(name);
   if (!query) return { error: 'empty' };
   if (CODES[query]) return { code: CODES[query], title: query };
@@ -52,10 +69,10 @@ export function resolveRussianStation(catalog, name) {
     for (const region of country.regions ?? []) {
       for (const city of region.settlements ?? []) {
         if (normalized(city.title) === query && isValidCode(stationCode(city))) {
-          found.push({ code: stationCode(city), title: city.title, region: region.title, score: 10 });
+          found.push({ code: stationCode(city), title: city.title, region: region.title, score: ['search_avia','search_bus','search_multitransport'].includes(kind) ? 30 : 10 });
         }
         for (const st of city.stations ?? []) {
-          if (!rail(st) || normalized(st.title) !== query) continue;
+          if (!stationSupportsType(st, kind) || normalized(st.title) !== query) continue;
           if (isValidCode(stationCode(st))) found.push({
             code: stationCode(st), title: st.title, region: region.title, score: 20,
           });
@@ -87,8 +104,10 @@ export function formatYandexRasp(data, plan, nowSec, { fromTitle, toTitle } = {}
   const entries = Array.isArray(data?.segments) ? data.segments : [];
   const valid = [];
   for (const segment of entries) {
-    const expected = plan.kind === 'search_rail' ? 'train' : 'suburban';
-    if (!segment || segment.has_transfers || segment.thread?.transport_type !== expected) continue;
+    const expected = yandexTransportType(plan.kind);
+    if (expected === null || !segment) continue;
+    if (plan.kind !== 'search_multitransport' && (segment.has_transfers || segment.thread?.transport_type !== expected)) continue;
+    if (plan.kind === 'search_multitransport' && !segment.thread && !segment.has_transfers) continue;
     const departure = String(segment.departure ?? '');
     if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:Z|[+-]\d\d:\d\d)$/.test(departure)) continue;
     if (departure.slice(0, 10) !== plan.date) continue;
@@ -116,13 +135,14 @@ export function formatYandexRasp(data, plan, nowSec, { fromTitle, toTitle } = {}
 export async function lookupYandexRasp(fetchFn, key, plan, nowSec) {
   if (!key) return { found: false, unavailable: 'key', text: yandexFallbackNotice(plan, 'Ключ Яндекс Расписаний ещё не подключён.') };
   try {
-    let from = CODES[normalized(plan.origin)] ? {code:CODES[normalized(plan.origin)]} : null;
-    let to = CODES[normalized(plan.destination)] ? {code:CODES[normalized(plan.destination)]} : null;
+    const knownRail = ['search_etrain','search_rail'].includes(plan.kind);
+    let from = knownRail && CODES[normalized(plan.origin)] ? {code:CODES[normalized(plan.origin)]} : null;
+    let to = knownRail && CODES[normalized(plan.destination)] ? {code:CODES[normalized(plan.destination)]} : null;
     if (!from || !to) {
       // Do not commit/store the catalog: only transient in-memory resolution.
       const catalog = await readJson(fetchFn, key, 'stations_list/');
-      if (!from) from = resolveRussianStation(catalog, plan.origin);
-      if (!to) to = resolveRussianStation(catalog, plan.destination);
+      if (!from) from = resolveRussianStation(catalog, plan.origin, plan.kind);
+      if (!to) to = resolveRussianStation(catalog, plan.destination, plan.kind);
     }
     if (!from?.code || !to?.code) {
       const unresolved = !from?.code ? from : to;
@@ -131,7 +151,12 @@ export async function lookupYandexRasp(fetchFn, key, plan, nowSec) {
         text: yandexFallbackNotice(plan, 'Яндекс не смог однозначно определить станцию «'+safeName(place)+'»'+
           (unresolved?.error==='ambiguous' ? '. Уточни область или конкретный вокзал.' : '.') ) };
     }
-    const base = { from:from.code, to:to.code, date:plan.date, transport_types: plan.kind==='search_rail'?'train':'suburban', transfers:'false', limit:'100' };
+    const selectedTransport = yandexTransportType(plan.kind);
+    if (selectedTransport === null) return {found:false,unavailable:'type',
+      text:yandexFallbackNotice(plan, 'Неподдерживаемый тип транспорта.')};
+    const base = { from:from.code, to:to.code, date:plan.date,
+      ...(selectedTransport ? { transport_types:selectedTransport } : {}),
+      transfers: plan.kind==='search_multitransport' ? 'true' : 'false', limit:'100' };
     const all = [];
     let total = 0;
     for (let i=0;i<3;i++) {
