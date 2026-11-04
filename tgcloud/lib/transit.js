@@ -8,6 +8,15 @@ export const TUTU_MCP_URL = 'https://mcp.tutu.ru/mcp';
 const FOLLOWUP = /^(?:а\s+)?(?:следующ|позже|через\s+час|до\s+аэропорта|а\s+до\s+аэропорта)/i;
 const TRAIN = /электричк|ласточк|пригородн.{0,15}поезд/i;
 const RAIL = /поезд(?:а|ов|ом|ы)?|железнодорожн/i;
+const BUS = /автобус|автовокзал|междугородн|маршрутк/i;
+const AIR = /самол[её]т|авиарейс|авиабилет|перел[её]т|аэропорт|вылет/i;
+const WATER = /паром|теплоход|катер|водн.{0,8}транспорт|вертол[её]т/i;
+const TRIP = /как добраться|как доехать|чем доехать|спланируй маршрут|вариант.{0,6}маршрут|билет/i;
+const CURRENT = /ближайш|следующ|сейчас|сегодня|завтра|расписан|отправл|прибыт|во сколько|когда|рейс|вылет|стоимост|цена|купить|найди|покажи/i;
+const KINDS = { commuter:'search_etrain', rail:'search_rail', bus:'search_bus',
+  plane:'search_avia', mixed:'search_multitransport', water:'search_water', helicopter:'search_helicopter' };
+export const TUTU_SEARCH_TOOLS = ['search_etrain','search_rail','search_bus','search_avia','search_multitransport'];
+
 const MAX_AGE_SECONDS = 3600;
 
 /**
@@ -18,7 +27,9 @@ export function isTransitCandidate(question, previous, nowSec) {
   const text = String(question ?? '').trim();
   const recent = previous && nowSec - Number(previous.savedAt ?? 0) <= MAX_AGE_SECONDS;
   return !!(text && (
-    ((TRAIN.test(text) || RAIL.test(text)) && isLiveTransitQuestion(text)) ||
+    ((TRAIN.test(text) || RAIL.test(text) || BUS.test(text) || AIR.test(text) || WATER.test(text)) &&
+      (isLiveTransitQuestion(text) || CURRENT.test(text))) ||
+    (TRIP.test(text) && /(?:из|от).{3,}(?:в|до|на).{2,}/i.test(text)) ||
     (recent && previous.origin && previous.destination && (FOLLOWUP.test(text) ||
       (text.length <= 90 && !text.startsWith('/'))))
   ));
@@ -27,9 +38,13 @@ export function isTransitCandidate(question, previous, nowSec) {
 const TRANSIT_INTENT_SYSTEM = [
   'TRANSIT_INTENT_JSON: Ты семантический маршрутизатор русскоязычного ИИ-помощника.',
   'Нужно понять смысл просьбы, а не искать предлоги по шаблону.',
-  'Верни ТОЛЬКО JSON: {"intent":"schedule|clarify|other","origin":"","destination":"","date":"today|tomorrow|YYYY-MM-DD","mode":"commuter|rail","next":false}.',
+  'Верни ТОЛЬКО JSON: {"intent":"schedule|clarify|other","origin":"","destination":"","date":"today|tomorrow|YYYY-MM-DD","mode":"commuter|rail|bus|plane|water|helicopter|mixed","next":false,"details":false}.',
   'При запросе расписания intent=schedule. Заполни обе станции из живой разговорной речи, учитывай падежи, предлоги и порядок слов.',
   'Пример: «посмотри электрички на сегодня из Адлера на Красную Поляну» => origin="Адлер", destination="Красная Поляна", date="today", mode="commuter".',
+  'Понимай транспорт: электрички = commuter; поезда дальнего следования = rail; межгородские автобусы = bus; самолёты = plane; паром/судно = water; вертолёт = helicopter; подбор вариантов разными видами транспорта = mixed.',
+  'Если пользователь просит все остановки/детали конкретного маршрута, добавь details=true; обычное расписание details=false.',
+  'Городской транспорт и схемы улиц не входят в Яндекс Расписания. Для городского автобуса без междугороднего маршрута ставь intent=other.',
+  'Датой для всех рейсов служит дата отправления; не придумывай время прилёта и прибытия.',
   'Не подменяй указанное пользователем направление названием другой станции или курорта без подтверждения.',
   'При коротком уточнении («а следующая?») используй предыдущий маршрут и дату и next=true; «а завтра?» меняет дату на завтра и next=false.',
   'Если НЕ ХВАТАЕТ станции и нельзя вывести её из контекста, intent=clarify и неизвестное поле пустое.',
@@ -73,9 +88,8 @@ export async function understandTransitQuestion(question, previous, nowSec, time
   const destination = station(parsed.destination);
   const date = parsed.date === 'tomorrow' ? tomorrow : parsed.date === 'today' || !parsed.date ? today :
     /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) && !Number.isNaN(Date.parse(parsed.date)) ? parsed.date : today;
-  const kind = parsed.mode === 'rail' ? 'search_rail' :
-    parsed.mode === 'commuter' ? 'search_etrain' :
-      (TRAIN.test(question) ? 'search_etrain' : recent?.kind || 'search_rail');
+  const kind = KINDS[parsed.mode] ??
+    (recent?.kind || (TRAIN.test(question) ? 'search_etrain' : RAIL.test(question) ? 'search_rail' : 'search_multitransport'));
   if (!origin || !destination || parsed.intent === 'clarify') {
     return { intent: 'clarify', missingOrigin: !origin, missingDestination: !destination };
   }
@@ -83,6 +97,8 @@ export async function understandTransitQuestion(question, previous, nowSec, time
   return { intent: 'schedule', plan: {
     origin, destination, date, kind,
     offset: next && recent ? Math.min(20, (Number(recent.offset) || 0) + 1) : 0,
+    details: parsed.details === true,
+    ...(kind === 'search_water' ? { modes: ['water'] } : {}),
     savedAt: nowSec, timezoneHours,
   } };
 }
@@ -114,7 +130,7 @@ async function postMcp(fetchFn, url, message, sessionId, version) {
 }
 
 export async function callTutuTool(fetchFn, tool, args, url = TUTU_MCP_URL) {
-  if (!['search_etrain', 'search_rail'].includes(tool)) throw new Error('Unsupported transport tool');
+  if (!TUTU_SEARCH_TOOLS.includes(tool)) throw new Error('Unsupported transport tool');
   const init = await postMcp(fetchFn, url, {
     jsonrpc: '2.0', id: 1, method: 'initialize',
     params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'my-ai-assistant', version: '1.0' } },
@@ -126,9 +142,15 @@ export async function callTutuTool(fetchFn, tool, args, url = TUTU_MCP_URL) {
   async function loadPage(page) {
     const res = await postMcp(fetchFn, url, {
       jsonrpc: '2.0', id: page + 1, method: 'tools/call',
-      params: { name: tool, arguments: { origin: args.origin, destination: args.destination, departure_date: args.date,
-        ...(tool === 'search_etrain' ? { page, page_size: PAGE_SIZE, sort: 'price_asc', view: 'compact' } :
-          { passengers: 1, page, page_size: PAGE_SIZE, sort: 'price_asc', view: 'compact' }) } },
+      params: { name: tool, arguments: {
+        origin: args.origin, destination: args.destination, departure_date: args.date,
+        page, page_size: PAGE_SIZE, view: 'compact',
+        ...(tool === 'search_multitransport'
+          ? { adults: 1, optimize_for: 'time', ...(args.modes ? { modes: args.modes } : {}) }
+          : { sort: 'departure_asc',
+              ...(tool === 'search_rail' ? { passengers: 1 } : {}),
+              ...(['search_avia','search_bus'].includes(tool) ? { adults: 1 } : {}) }),
+      } },
     }, session, version);
     if (res.payload?.isError) throw new Error('Tutu MCP tool returned an error');
     let data = res.payload?.structuredContent;
@@ -232,6 +254,7 @@ export function formatTransitResponse(data, plan, nowSec) {
 }
 
 export async function lookupTransit(fetchFn, plan, nowSec, { deadlineMs = 6500, pulse } = {}) {
+  if (!TUTU_SEARCH_TOOLS.includes(plan.kind)) return { found: false, unsupported: true };
   const promise = callTutuTool(fetchFn, plan.kind, plan);
   promise.catch(() => {}); // timeout does not guarantee remote cancellation
   try {
