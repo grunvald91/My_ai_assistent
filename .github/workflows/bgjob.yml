@@ -23,6 +23,7 @@ jobs:
       GH_PAT: ${{ secrets.GH_PAT }}
       EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
       YANDEX_RASP_API_KEY: ${{ secrets.YANDEX_RASP_API_KEY }}
+      YANDEX_RASP_ALLOWED: ${{ vars.YANDEX_RASP_ALLOWED || 'false' }}
       JOB_ID: ${{ inputs.job }}
     steps:
       - uses: actions/checkout@v4
