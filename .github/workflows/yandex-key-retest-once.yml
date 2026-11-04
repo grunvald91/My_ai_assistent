@@ -1,0 +1,31 @@
+name: Yandex Rasp new key one-off smoke
+on:
+  push:
+    branches: [ops/yandex-key-retest-20261104]
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      YANDEX_API: ${{ secrets.YANDEX_API }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate Yandex Rasp key with one official request (no key in logs)
+        run: |
+          node --input-type=module <<'NODE'
+          const key=(process.env.YANDEX_API||'').trim();
+          if(!key){console.log('Secret availability: MISSING');process.exitCode=2;}else {
+            console.log('Secret availability: PRESENT');
+            const q=new URLSearchParams({format:'json',lang:'ru_RU',from:'c213',to:'c146',transport_types:'train',date:'2026-11-05',limit:'1'});
+            const ctl=new AbortController();const tid=setTimeout(()=>ctl.abort(),15000);
+            try {const r=await fetch('https://api.rasp.yandex-net.ru/v3.0/search/?'+q,{headers:{Authorization:key},signal:ctl.signal});
+              const body=await r.json().catch(()=>({}));
+              console.log(JSON.stringify({http_status:r.status,segments_array:Array.isArray(body.segments),pagination_present:!!body.pagination,has_error:!!(body.error||body.errors)}));
+              if(r.status!==200||!Array.isArray(body.segments))process.exitCode=1;
+            }catch(e){console.log('Network problem:',e?.name||'request_error');process.exitCode=1;}
+            finally{clearTimeout(tid)}
+          }
+          NODE
