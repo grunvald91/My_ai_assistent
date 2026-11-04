@@ -33,6 +33,7 @@ export function createApp(base) {
   D.core = createCore(D);
   const { out, core } = D;
   D.exaKey = base.exaKey ?? '';
+  D.yandexRaspKey = base.yandexRaspKey ?? '';
   D.exa = createExa(D); // веб-поиск Exa (/search)
   D.attach = createAttach(D);
   const chatMod = createChat(D);

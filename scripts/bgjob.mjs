@@ -7,10 +7,12 @@ import { createLlm } from '../tgcloud/lib/llm.js';
 import { splitSafe } from '../tgcloud/lib/bg.js';
 import { decideMessages, parseDecision, exaRequest, exaResults, applyResults, sourcesNote, isLiveTransitQuestion, transitQuery, requiresFreshSearch, freshSearchQuery } from '../tgcloud/lib/exa.js';
 import { API_BASE, DEFAULTS } from '../tgcloud/lib/config.js';
-import { understandTransitQuestion, lookupTransit } from '../tgcloud/lib/transit.js';
+import { understandTransitQuestion } from '../tgcloud/lib/transit.js';
+import { lookupRussianTransit } from '../tgcloud/lib/yandex-rasp.js';
 
 const env = (k) => (process.env[k] ?? '').trim();
 const JOB = env('JOB_ID');
+const YANDEX_RASP_KEY = /^(1|true)$/i.test(env('YANDEX_RASP_ALLOWED')) ? env('YANDEX_RASP_API_KEY') : '';
 const OWNER = env('OWNER_IDS').split(/[,;\s]+/)[0];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -169,9 +171,9 @@ async function main() {
       return;
     }
     const signal = AbortSignal.timeout(65000);
-    const lookup = await lookupTransit((url, opts) => fetch(url, { ...opts, signal }), plan.plan,
-      Math.floor(Date.now() / 1000), { deadlineMs: 0 });
-    if (!lookup.text) throw new Error('Туту MCP не подтвердил расписание: ' + (lookup.error ?? 'нет ответа'));
+    const lookup = await lookupRussianTransit((url, opts) => fetch(url, { ...opts, signal }),
+      YANDEX_RASP_KEY, plan.plan, Math.floor(Date.now() / 1000), { deadlineMs: 0 });
+    if (!lookup.text) throw new Error('Ни один источник не подтвердил расписание');
     await deliver({ text: lookup.text, model: activeModel, usage });
     return;
   }
@@ -179,10 +181,10 @@ async function main() {
   if (req.transit) {
     // Deterministic provider response, no language model and no invented departures.
     const signal = AbortSignal.timeout(65000); // maximum total for all provider pages
-    const lookup = await lookupTransit((url, opts) => fetch(url, { ...opts, signal }), req.transit,
-      Math.floor(Date.now() / 1000), { deadlineMs: 0 });
-    if (!lookup.text) throw new Error('Туту MCP не подтвердил расписание: ' + (lookup.error ?? 'нет ответа'));
-    await deliver({ text: lookup.text, model: 'tutu-mcp' });
+    const lookup = await lookupRussianTransit((url, opts) => fetch(url, { ...opts, signal }),
+      YANDEX_RASP_KEY, req.transit, Math.floor(Date.now() / 1000), { deadlineMs: 0 });
+    if (!lookup.text) throw new Error('Ни один источник не подтвердил расписание');
+    await deliver({ text: lookup.text, model: lookup.source === 'yandex' ? 'yandex-rasp-api' : 'tutu-mcp' });
     return;
   }
   const llm = createLlm({ fetch, apiKey: env('CLAUDEHUB_API_KEY'), base: API_BASE, sleep, retries: 3 });

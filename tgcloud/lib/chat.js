@@ -3,6 +3,7 @@
 import { ownerSystem, groupSystem } from './persona.js';
 import { guardLiveTransitAnswer, guardSearchCapabilityAnswer } from './exa.js';
 import { isTransitCandidate, understandTransitQuestion, lookupTransit } from './transit.js';
+import { yandexFallbackNotice } from './yandex-rasp.js';
 import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
@@ -261,15 +262,22 @@ export function createChat(D) {
           const plan = understanding.plan;
           await store.setSetting(stateKey, JSON.stringify(plan));
           const result = await lookupTransit(D.fetch, plan, D.now(), { deadlineMs: cfg.tutuGuardMs ?? 6500, pulse: D.pulse });
-          if (result.text) {
+          // An empty Tutu response is NOT a confirmed absence of trains.
+          if (result.found && result.text) {
             await publishOwnerReply(chatId, { text: result.text }, { model, question: currentQuestion, searchEnabled, trustedTransit: true });
             return;
           }
-          if (D.bg && await D.bg.canRun()) {
+          // Yandex's official API is licensed separately. Only use it if enabled.
+          // A timeout should retry Tutu in Actions; an empty response needn't repeat Tutu.
+          if ((result.slow || result.error || D.yandexRaspKey) && D.bg && await D.bg.canRun()) {
             try {
               const started = await D.bg.start(chatId, {
-                model, messages, think: null, transit: plan, asked: currentQuestion,
-                reason: '🚆 Туту MCP отвечает медленно или недоступен в Telegram Serverless — повторяю запрос в фоне.',
+                model, messages, think: null,
+                transit: { ...plan, skipTutu: !result.slow && !result.error },
+                asked: currentQuestion,
+                reason: result.slow
+                  ? '🚆 Туту не успел ответить. Продолжаю поиск в фоне.'
+                  : '🚆 Туту не подтвердил отправления. Проверяю резервный источник — Яндекс Расписания.',
               });
               if (started) return;
             } catch (e) {
@@ -277,8 +285,9 @@ export function createChat(D) {
             }
           }
           await publishOwnerReply(chatId, {
-            text: 'Не могу подтвердить отправления: Туту MCP не ответил пригодными данными. ' +
-              'Проверь расписание перевозчика. Ошибка: ' + (result.error || 'превышен срок ожидания') + '.',
+            text: yandexFallbackNotice(plan, D.yandexRaspKey
+              ? 'Резервный поиск Яндекс Расписаний не удалось запустить.'
+              : 'Туту не подтвердил отправления. Автоматический Яндекс API пока не подключён.'),
           }, { model, question: '', searchEnabled });
           return;
         }
