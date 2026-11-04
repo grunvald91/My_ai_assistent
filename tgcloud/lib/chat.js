@@ -5,6 +5,7 @@ import { guardLiveTransitAnswer, guardSearchCapabilityAnswer } from './exa.js';
 import { isTransitCandidate, understandTransitQuestion, lookupTransit } from './transit.js';
 import { yandexFallbackNotice } from './yandex-rasp.js';
 import { LlmError } from './llm.js';
+import { createTypingHeartbeat } from './activity.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
 import { isSimple, pickFast } from './auto.js';
@@ -73,6 +74,7 @@ export function createChat(D) {
             return;
           }
           rich = false; // не вышло — дальше обычными черновиками
+          try { await D.log?.('rich_draft_fallback', chatId, { code: e?.code ?? null, error: String(e?.message ?? e).slice(0, 140) }); } catch { /* diagnostics are best effort */ }
         }
       }
       // черновик показываем уже отформатированным (жирный, списки, код), как будет в итоговом сообщении;
@@ -87,7 +89,10 @@ export function createChat(D) {
           return push(text);
         }
         if (e?.code === 429) pausedUntil = Date.now() + Number(e.parameters?.retry_after ?? 2) * 1000; // flood control: просто пропускаем обновления
-        else failed = true;
+        else {
+          failed = true;
+          try { await D.log?.('draft_stream_fail', chatId, { code: e?.code ?? null, error: String(e?.message ?? e).slice(0, 140) }); } catch { /* don't fail a reply because logging failed */ }
+        }
       }
     };
 
@@ -159,6 +164,10 @@ export function createChat(D) {
     // срок считаем от начала ЭТОГО вызова бота (запоминаем сразу: параллельный апдейт может переписать D.t0)
     const t0 = D.t0 ?? Date.now();
     const deadline = cfg.cutAfterMs ? t0 + cfg.cutAfterMs : null;
+    // Start the Thinking... placeholder BEFORE memory, web search, transit routing
+    // and background dispatch. Previously it started only just before core.generate().
+    const streamer = draftStreamer(chatId);
+    await streamer.start();
     const chat = await store.getChat(chatId);
     const key = String(chatId);
     const currentQuestion = cont ? '' : String(text ?? (await lastUserText(key, chat)) ?? '');
@@ -379,9 +388,6 @@ export function createChat(D) {
       if (bgSearch?.query) searchNote = '🔎 Поиск в интернете отвечал слишком долго — отвечаю без него.';
       else if (bgSearch?.asked) searchNote = (await D.exa.augment(messages, bgSearch.asked)).note ?? '';
     }
-
-    const streamer = draftStreamer(chatId);
-    await streamer.start();
 
     let res;
     try {
@@ -607,61 +613,66 @@ export function createChat(D) {
       return 'cap';
     }
 
-    await store.addMessage({ chatKey: key, role: 'user', name, text: stored, ts: t });
-    await out.typing(chatId, { threadId });
-
-    const model = await core.resolveModel(chat);
-    const memories = await core.memoryTexts(['group:' + chatId]);
-    const system = groupSystem({
-      ownerName: await core.ownerName(),
-      title: chat.title ?? msg.chat.title ?? 'группа',
-      memories,
-      nowSec: t,
-      tz: core.tz(),
-      mode,
-    });
-    // в группах сводку не ведём (там чужие люди) — только свежая история
-    const messages = await core.contextFor({ key, chat: { ...chat, summary: null, summaryUpto: 0 }, system });
-    const searchEnabled = !!D.exa && await D.exa.available();
-    messages[0].content += searchEnabled
-      ? '\n\nИНСТРУМЕНТЫ ГРУППЫ: Exa настроен, но конкретный поиск выполняется только по прямому обращению к боту (mention/ask). Не утверждай, что веб-поиска в приложении нет.'
-      : '\n\nИНСТРУМЕНТЫ ГРУППЫ: Exa сейчас выключен или не настроен; не утверждай, что интернет проверен.';
-    let searchNote = '';
-    if (mode === 'mention' && searchEnabled) {
-      const result = await D.exa.augment(messages, text);
-      searchNote = result.note ?? '';
-      messages[0].content += searchNote.startsWith('🔎 Искал в интернете:')
-        ? '\nИТОГ ПОИСКА: Exa ответил, источники приложены.'
-        : searchNote ? '\nИТОГ ПОИСКА: нет достоверных результатов. Не выдумывай меняющиеся факты.'
-          : '\nИТОГ ПОИСКА: поиск для этого сообщения не запускался. Не утверждай обратное.';
-    }
-
-    let res;
+    const activity = createTypingHeartbeat(() => out.typing(chatId, { threadId }));
+    await activity.start();
     try {
-      res = await core.generate({ model, messages, maxTokens: cfg.maxTokensGroup });
-    } catch (e) {
-      if (e instanceof LimitError || e instanceof LlmError) {
-        await notifyOwnerOnce(e);
-        if (mode === 'mention') {
-          await out.sendText({ chatId, text: 'Сейчас не могу ответить. Попробуй чуть позже.', replyTo: msg.message_id, threadId });
-        }
-        return 'error';
+      await store.addMessage({ chatKey: key, role: 'user', name, text: stored, ts: t });
+
+      const model = await core.resolveModel(chat);
+      const memories = await core.memoryTexts(['group:' + chatId]);
+      const system = groupSystem({
+        ownerName: await core.ownerName(),
+        title: chat.title ?? msg.chat.title ?? 'группа',
+        memories,
+        nowSec: t,
+        tz: core.tz(),
+        mode,
+      });
+      // в группах сводку не ведём (там чужие люди) — только свежая история
+      const messages = await core.contextFor({ key, chat: { ...chat, summary: null, summaryUpto: 0 }, system });
+      const searchEnabled = !!D.exa && await D.exa.available();
+      messages[0].content += searchEnabled
+        ? '\n\nИНСТРУМЕНТЫ ГРУППЫ: Exa настроен, но конкретный поиск выполняется только по прямому обращению к боту (mention/ask). Не утверждай, что веб-поиска в приложении нет.'
+        : '\n\nИНСТРУМЕНТЫ ГРУППЫ: Exa сейчас выключен или не настроен; не утверждай, что интернет проверен.';
+      let searchNote = '';
+      if (mode === 'mention' && searchEnabled) {
+        const result = await D.exa.augment(messages, text);
+        searchNote = result.note ?? '';
+        messages[0].content += searchNote.startsWith('🔎 Искал в интернете:')
+          ? '\nИТОГ ПОИСКА: Exa ответил, источники приложены.'
+          : searchNote ? '\nИТОГ ПОИСКА: нет достоверных результатов. Не выдумывай меняющиеся факты.'
+            : '\nИТОГ ПОИСКА: поиск для этого сообщения не запускался. Не утверждай обратное.';
       }
-      throw e;
-    }
 
-    const reply = guardSearchCapabilityAnswer(res.text.trim() || '…', searchEnabled) + (searchNote ? '\n\n' + searchNote : '');
-    await out.sendText({ chatId, text: reply, replyTo: msg.message_id, threadId, ephemeralTo: chat.ephemeral ? msg.from.id : null });
-    await store.addMessage({ chatKey: key, role: 'assistant', text: reply, model: model.id, tokens: res.tokensOut, ts: D.now() });
-    await store.updateChat(chatId, { lastReplyAt: D.now() });
-    await store.trimMessages(key, 120);
+      let res;
+      try {
+        res = await core.generate({ model, messages, maxTokens: cfg.maxTokensGroup });
+      } catch (e) {
+        if (e instanceof LimitError || e instanceof LlmError) {
+          await notifyOwnerOnce(e);
+          if (mode === 'mention') {
+            await out.sendText({ chatId, text: 'Сейчас не могу ответить. Попробуй чуть позже.', replyTo: msg.message_id, threadId });
+          }
+          return 'error';
+        }
+        throw e;
+      }
 
-    if (chat.notifyOwner) {
-      await out.toOwner(
-        `💬 <b>${escapeHtml(chat.title ?? 'группа')}</b> · ${escapeHtml(name)}:\n«${escapeHtml(truncate(text, 300))}»\n\n↩️ ${escapeHtml(truncate(reply, 1500))}`,
-      );
+      const reply = guardSearchCapabilityAnswer(res.text.trim() || '…', searchEnabled) + (searchNote ? '\n\n' + searchNote : '');
+      await out.sendText({ chatId, text: reply, replyTo: msg.message_id, threadId, ephemeralTo: chat.ephemeral ? msg.from.id : null });
+      await store.addMessage({ chatKey: key, role: 'assistant', text: reply, model: model.id, tokens: res.tokensOut, ts: D.now() });
+      await store.updateChat(chatId, { lastReplyAt: D.now() });
+      await store.trimMessages(key, 120);
+
+      if (chat.notifyOwner) {
+        await out.toOwner(
+          `💬 <b>${escapeHtml(chat.title ?? 'группа')}</b> · ${escapeHtml(name)}:\n«${escapeHtml(truncate(text, 300))}»\n\n↩️ ${escapeHtml(truncate(reply, 1500))}`,
+        );
+      }
+      return 'ok';
+    } finally {
+      activity.stop();
     }
-    return 'ok';
   }
 
   return { ownerReplyContext, answerOwner, answerMedia, respondOwner, publishOwnerReply, lastUserId, retryLast, askStrong, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };

@@ -4,6 +4,7 @@
 // D: { api, store, llm, cfg, now(), sleep(ms), ownerIds: number[], InputFile }
 
 import { createOut } from './out.js';
+import { createTypingHeartbeat } from './activity.js';
 import { createCore } from './core.js';
 import { createChat } from './chat.js';
 import { createAttach, POST_INTENT, parseDecline } from './attach.js';
@@ -142,85 +143,92 @@ export function createApp(base) {
   async function onPrivate(msg) {
     const chatId = msg.chat.id;
     const fromId = msg.from?.id;
-    const bot = await ensureBot();
-
     if (!D.ownerIds.length) {
+      const bot = await ensureBot();
       return stranger(msg, bot, `⚙️ Бот ещё не настроен: не указан владелец.\n\nТвой Telegram ID: <code>${fromId}</code>\nДобавь его в GitHub → Settings → Secrets and variables → Actions (секрет или переменная) как <code>OWNER_IDS</code> и запусти деплой ещё раз.`);
     }
     if (!D.isOwner(fromId)) {
+      const bot = await ensureBot();
       return stranger(msg, bot, '🔒 Это личный бот, он отвечает только своему владельцу.');
     }
 
-    const chat = await store.ensureChat(chatId, { type: 'private', title: displayName(msg.from) }, D.now());
-    if (!(await store.getSetting('owner_name'))) await store.setSetting('owner_name', msg.from.first_name ?? '');
-    await commands.ensureCommands();
+    const activity = createTypingHeartbeat(() => out.typing(chatId));
+    await activity.start();
+    try {
+      const bot = await ensureBot();
+      const chat = await store.ensureChat(chatId, { type: 'private', title: displayName(msg.from) }, D.now());
+      if (!(await store.getSetting('owner_name'))) await store.setSetting('owner_name', msg.from.first_name ?? '');
+      await commands.ensureCommands();
 
-    // фото и файлы: в режиме поста (или с подписью «пост…») — материал для поста, иначе — разбор моделью
-    if (msg.photo || msg.document) {
-      const inPost = chat.state?.startsWith('post_brief:');
-      // альбом всегда собираем в одном месте (его фото приходят параллельно, подпись — только у одного),
-      // а «Разобрать» или «Пост в канал» выбирается кнопкой, когда всё загрузится
-      const wantsPost = !!msg.photo && (inPost || (!msg.media_group_id && POST_INTENT.test(msg.caption ?? '')));
-      if (wantsPost) {
-        let c = chat;
-        if (chat.state && !inPost) {
-          await store.setState(chatId, null);
-          c = { ...chat, state: null };
+      // фото и файлы: в режиме поста (или с подписью «пост…») — материал для поста, иначе — разбор моделью
+      if (msg.photo || msg.document) {
+        const inPost = chat.state?.startsWith('post_brief:');
+        // альбом всегда собираем в одном месте (его фото приходят параллельно, подпись — только у одного),
+        // а «Разобрать» или «Пост в канал» выбирается кнопкой, когда всё загрузится
+        const wantsPost = !!msg.photo && (inPost || (!msg.media_group_id && POST_INTENT.test(msg.caption ?? '')));
+        if (wantsPost) {
+          let c = chat;
+          if (chat.state && !inPost) {
+            await store.setState(chatId, null);
+            c = { ...chat, state: null };
+          }
+          return posts.onPhoto(msg, c);
         }
-        return posts.onPhoto(msg, c);
+        if (chat.state) await store.setState(chatId, null);
+        // если фото/файл отправлено ответом на сообщение — подпись получает это сообщение как контекст
+        const ctx = chatMod.ownerReplyContext(msg);
+        const m2 = msg.caption && ctx.prefix ? { ...msg, caption: ctx.prefix + msg.caption } : msg;
+        return D.attach.onMedia(m2, chat, (q, items) => chatMod.answerMedia(chatId, q, items), { postButton: true });
       }
-      if (chat.state) await store.setState(chatId, null);
-      // если фото/файл отправлено ответом на сообщение — подпись получает это сообщение как контекст
-      const ctx = chatMod.ownerReplyContext(msg);
-      const m2 = msg.caption && ctx.prefix ? { ...msg, caption: ctx.prefix + msg.caption } : msg;
-      return D.attach.onMedia(m2, chat, (q, items) => chatMod.answerMedia(chatId, q, items), { postButton: true });
-    }
 
-    const text = msg.text;
-    if (!text) {
-      await out.sendHtml(chatId, 'Понимаю текст, фото и файлы (PDF, Word, Excel, PowerPoint, текстовые). Голосовые, видео и стикеры пропускаю.');
-      return;
-    }
+      const text = msg.text;
+      if (!text) {
+        await out.sendHtml(chatId, 'Понимаю текст, фото и файлы (PDF, Word, Excel, PowerPoint, текстовые). Голосовые, видео и стикеры пропускаю.');
+        return;
+      }
 
-    const cmd = parseCommand(text, bot.username);
-    if (cmd?.foreign) return;
-    if (cmd) {
-      if (chat.state && cmd.cmd !== 'cancel') await store.setState(chatId, null);
-      const handled = await commands.run(cmd.cmd, cmd.arg, msg, chat);
-      if (!handled) await out.sendHtml(chatId, `Не знаю команду /${escapeHtml(cmd.cmd)}. Список: /help`);
-      return;
-    }
+      const cmd = parseCommand(text, bot.username);
+      if (cmd?.foreign) return;
+      if (cmd) {
+        if (chat.state && cmd.cmd !== 'cancel') await store.setState(chatId, null);
+        const handled = await commands.run(cmd.cmd, cmd.arg, msg, chat);
+        if (!handled) await out.sendHtml(chatId, `Не знаю команду /${escapeHtml(cmd.cmd)}. Список: /help`);
+        return;
+      }
 
-    if (chat.state) {
-      if (await dispatchState(msg, chat)) return;
-    }
+      if (chat.state) {
+        if (await dispatchState(msg, chat)) return;
+      }
 
-    // на какое сообщение ответил владелец (целиком, с фото/файлом, если они есть)
-    const rc = chatMod.ownerReplyContext(msg);
+      // на какое сообщение ответил владелец (целиком, с фото/файлом, если они есть)
+      const rc = chatMod.ownerReplyContext(msg);
 
-    // перед этим прислали вложение и бот спросил, что с ним сделать — текст и есть ответ
-    let said = text;
-    if (await D.attach.hasPending()) {
-      const { cancel, rest } = parseDecline(text);
-      if (cancel) {
-        await D.attach.drop();
-        if (!rest) {
-          await out.sendHtml(chatId, '👌 Ок, вложение забыл.');
-          return;
-        }
-        said = rest; // «ничего не надо, …» — дальше обычное сообщение
-      } else {
-        const items = await D.attach.take();
-        if (items) {
-          await D.attach.takeCaption();
-          return chatMod.answerMedia(chatId, rc.prefix + text, [...rc.items, ...items]);
+      // перед этим прислали вложение и бот спросил, что с ним сделать — текст и есть ответ
+      let said = text;
+      if (await D.attach.hasPending()) {
+        const { cancel, rest } = parseDecline(text);
+        if (cancel) {
+          await D.attach.drop();
+          if (!rest) {
+            await out.sendHtml(chatId, '👌 Ок, вложение забыл.');
+            return;
+          }
+          said = rest; // «ничего не надо, …» — дальше обычное сообщение
+        } else {
+          const items = await D.attach.take();
+          if (items) {
+            await D.attach.takeCaption();
+            return chatMod.answerMedia(chatId, rc.prefix + text, [...rc.items, ...items]);
+          }
         }
       }
-    }
 
-    if (await code.maybeAutoTask(chat, said)) return; // «создай ветку и залей код» без /code
-    if (rc.items.length) return chatMod.answerMedia(chatId, rc.prefix + said, rc.items); // ответ на сообщение с фото/файлом
-    await chatMod.answerOwner(msg, chat, rc.prefix + said);
+      if (await code.maybeAutoTask(chat, said)) return; // «создай ветку и залей код» без /code
+      if (rc.items.length) return chatMod.answerMedia(chatId, rc.prefix + said, rc.items); // ответ на сообщение с фото/файлом
+      await chatMod.answerOwner(msg, chat, rc.prefix + said);
+    } finally {
+      activity.stop();
+    }
   }
 
   async function dispatchState(msg, chat) {

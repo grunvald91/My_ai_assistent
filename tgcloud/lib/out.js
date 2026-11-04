@@ -21,6 +21,7 @@ export function htmlToPlain(html) {
 export function createOut(D) {
   const { api } = D;
   let richBroken = false; // платформа/Telegram сказали, что метода нет — дальше не пробуем в этом вызове
+  let typingFailureLogged = false;
 
   /** Вызов метода Bot API с одним повтором при 429 (flood control). */
   async function call(method, params) {
@@ -177,8 +178,18 @@ export function createOut(D) {
       if (threadId) p.message_thread_id = threadId;
       if (bizConn) p.business_connection_id = bizConn;
       await api.sendChatAction(p);
-    } catch {
-      /* индикатор — «приятная мелочь», его сбой не должен ничего ломать */
+    } catch (e) {
+      // A failed chat action must not block the actual answer. Record one error
+      // per handler instance so we can diagnose SDK/API compatibility.
+      if (!typingFailureLogged) {
+        typingFailureLogged = true;
+        try {
+          await D.log?.('chat_action_fail', chatId, {
+            code: e?.code ?? null,
+            error: String(e?.description ?? e?.message ?? e).slice(0, 140),
+          });
+        } catch { /* telemetry must never block the reply */ }
+      }
     }
   }
 
