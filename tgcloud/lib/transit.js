@@ -193,7 +193,9 @@ export function normalizeDepartures(data, plan, nowSec) {
     const iso = localIso(departure, plan, plan.timezoneHours);
     if (!iso) continue;
     const ms = Date.parse(iso);
-    if (!Number.isFinite(ms) || ms < nowSec * 1000 || ms > (nowSec + 72 * 3600) * 1000) continue;
+    // The date comes from the user's request. Never discard future trips merely
+    // because their departure is more than 72 hours from the current instant.
+    if (!Number.isFinite(ms) || ms < nowSec * 1000) continue;
     const station = item.from?.name ?? item.origin?.name ?? item.origin_name ?? item.from_station ?? '';
     const destination = item.to?.name ?? item.destination?.name ?? item.destination_name ?? item.to_station ?? '';
     const matches = (actual, requested) => !actual || !requested || 
@@ -206,6 +208,7 @@ export function normalizeDepartures(data, plan, nowSec) {
       (Number(offsetMatch[2]) * 3600 + Number(offsetMatch[3]) * 60) : regionIsMoscowTz ? 10800 : 0;
     const local = new Date(ms + seconds * 1000).toISOString();
     const isUtc = !offsetMatch && !regionIsMoscowTz;
+    if (plan.date && local.slice(0, 10) !== plan.date) continue;
     normalized.push({ at: ms, time: local.slice(11, 16) + (isUtc ? ' UTC' : ''), day: local.slice(0, 10),
       station: String(station), destination: String(destination) });
   }

@@ -6,7 +6,7 @@
     "deploy": "node scripts/deploy.mjs",
     "status": "tgcloud status",
     "run": "tgcloud run",
-    "test": "node --import ./test/loader/register.mjs --test \"test/**/*.test.js\""
+    "test": "node --check scripts/bgjob.mjs && node --import ./test/loader/register.mjs --test \"test/**/*.test.js\""
   },
   "devDependencies": {
     "@libsql/client": "^0.18.0",
