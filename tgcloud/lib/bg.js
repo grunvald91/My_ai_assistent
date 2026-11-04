@@ -67,14 +67,14 @@ export function createBg(D, chatMod) {
    * search: поиск в интернете делает задача Actions — { asked, date } (сначала решить, нужен ли) или { query, date } (уже решено).
    * reason: строка над статусом (почему в фоне).
    */
-  async function start(chatId, { model, messages, think, repoLen = 0, note = '', snote = '', search = null, transit = null, reason = '', asked = '' }) {
+  async function start(chatId, { model, messages, think, repoLen = 0, note = '', snote = '', search = null, transit = null, transitIntent = null, reason = '', asked = '' }) {
     await core.assertLimits();
     const level = think && think !== 'off' && model.thinking ? think : null;
     const cap = cfg.maxTokensChat === 'max' ? model.maxOut || cfg.maxTokensFallback : cfg.maxTokensChat;
-    const parts = splitSafe(JSON.stringify({ model: model.id, messages, maxTokens: cap, think: level, ...(search ? { search } : {}), ...(transit ? { transit } : {}) }), REQ_CHUNK);
+    const parts = splitSafe(JSON.stringify({ model: model.id, messages, maxTokens: cap, think: level, ...(search ? { search } : {}), ...(transit ? { transit } : {}), ...(transitIntent ? { transitIntent } : {}) }), REQ_CHUNK);
     const id = uid();
     for (let i = 0; i < parts.length; i++) await store.setSetting(`bg:${id}:q${i}`, parts[i]);
-    const meta = { chatId, model: model.id, ts: D.now(), repoLen, note, snote, asked, transit: !!transit, n: parts.length, an: 0, state: 'run', estIn: promptTokens(messages) };
+    const meta = { chatId, model: model.id, ts: D.now(), repoLen, note, snote, asked, transit: !!transit || !!transitIntent, transitIntent: !!transitIntent, n: parts.length, an: 0, state: 'run', estIn: promptTokens(messages) };
     await saveMeta(id, meta);
     try {
       const selfInfo = await gh().getRepo(D.selfRepo);
@@ -154,7 +154,7 @@ export function createBg(D, chatMod) {
       const tokensIn = meta.usage?.in ?? meta.estIn ?? 0;
       if (!meta.billed) {
         // Расписание Туту отформатировано кодом без LLM: токены за него не списываем.
-        if (!meta.transit) await core.recordUsage(meta.model, tokensIn, tokensOut);
+        if (!meta.transit || meta.transitIntent) await core.recordUsage(meta.model, tokensIn, tokensOut);
         meta.billed = true;
         await saveMeta(job, { ...meta, state: 'delivering' });
       }
