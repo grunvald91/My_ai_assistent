@@ -1,10 +1,10 @@
 import test from 'node:test';
 import { createWorld, OWNER, assert } from './helpers/world.js';
 import {
-  parseTransitIntent, normalizeDepartures, formatTransitResponse, callTutuTool, TUTU_MCP_URL,
+  isTransitCandidate, normalizeDepartures, formatTransitResponse, callTutuTool, TUTU_MCP_URL,
 } from '../tgcloud/lib/transit.js';
 
-test('Туту MCP: ближайшую электричку берём из настоящего структурированного результата, без LLM', async () => {
+test('Туту MCP: ИИ понимает запрос, а отправления берём только из структурированного ответа', async () => {
   const w = await createWorld({ exaKey: 'exa-test' });
   await w.say('Когда ближайшая электричка из Сочи в Адлер?');
   const calls = w.tutuCalls;
@@ -13,7 +13,8 @@ test('Туту MCP: ближайшую электричку берём из на
   assert.equal(calls[2].params.arguments.origin, 'Сочи');
   assert.equal(calls[2].params.arguments.destination, 'Адлер');
   assert.equal(calls[2].params.arguments.departure_date, '2027-01-15');
-  assert.equal(w.llmCalls.length, 0);
+  assert.equal(w.llmCalls.length, 1, 'маршрут разбирает ИИ, расписание — только Туту');
+  assert.match(JSON.stringify(w.llmCalls[0].messages), /TRANSIT_INTENT_JSON/);
   assert.equal(w.exaCalls.length, 0, 'для расписания MCP в приоритете над Exa');
   const txt = w.last(OWNER).text;
   assert.match(txt, /Туту MCP: Сочи → Адлер/);
@@ -32,7 +33,7 @@ test('Короткое «А следующая?» сохраняет маршр�
   const first = w.last(OWNER).text;
   await w.say('А следующая?');
   assert.equal(w.tutuCalls.filter((x) => x.method === 'tools/call').length, 2);
-  assert.equal(w.llmCalls.length, 0);
+  assert.equal(w.llmCalls.length, 2, 'ИИ понимает и уточняющий вопрос');
   assert.notEqual(first, w.last(OWNER).text);
   assert.match(w.last(OWNER).text, /Туту MCP/);
 });
@@ -49,7 +50,7 @@ test('Туту MCP: при отсутствии обеих станций не �
   const w = await createWorld();
   await w.say('Когда ближайшая электричка?');
   assert.equal(w.tutuCalls.length, 0);
-  assert.match(w.last(OWNER).text, /уточни две станции/);
+  assert.match(w.last(OWNER).text, /Уточни, пожалуйста, откуда и куда/);
 });
 
 test('MCP недоступен: при настроенном фоне уходит в Actions, не придумывает ответ', async () => {
@@ -63,18 +64,30 @@ test('MCP недоступен: при настроенном фоне уход�
   const req = JSON.parse((await w.app.bg.getRequest(job, 0)).text);
   assert.equal(req.transit.kind, 'search_etrain');
   assert.equal(req.transit.origin, 'Сочи');
-  assert.equal(w.llmCalls.length, 0);
+  assert.equal(w.llmCalls.length, 1, 'ИИ извлёк маршрут до фонового поиска');
   const mockAnswer = 'Туту MCP: Сочи → Адлер, 2027-01-15\n1. 15:49 — Сочи → Адлер\nИсточник: https://mcp.tutu.ru/mcp';
   await w.app.bg.receivePart(job, 0, mockAnswer);
   await w.app.bg.finish({ job, n: 1, model: 'tutu-mcp', finish: 'stop', usage: null, error: null });
   assert.match(w.last(OWNER).text, /15:49/, 'ответ от структурированного провайдера не обрезан');
 });
 
-test('Нет маршрута и истёкшая история: короткое уточнение не приписывается старому поиску', () => {
+test('Свежий контекст позволяет ИИ понять короткое уточнение, устаревший игнорируется', () => {
   const prev = { origin: 'Сочи', destination: 'Адлер', kind: 'search_etrain', date: '2027-01-15', savedAt: 100 };
-  assert.equal(parseTransitIntent('А следующая?', prev, 100 + 3601, 3), null);
-  assert.equal(parseTransitIntent('А следующая?', prev, 120, 3)?.origin, 'Сочи');
-  assert.equal(parseTransitIntent('Почему поезд шумит?', null, 100, 3), null);
+  assert.equal(isTransitCandidate('А следующая?', prev, 100 + 3601), false);
+  assert.equal(isTransitCandidate('А следующая?', prev, 120), true);
+  assert.equal(isTransitCandidate('А завтра?', prev, 120), true);
+  assert.equal(isTransitCandidate('Почему поезд шумит?', null, 100), false);
+});
+
+test('ИИ переносит прежний маршрут на завтра без повторных вопросов', async () => {
+  const w = await createWorld();
+  await w.say('Когда ближайшая электричка из Сочи в Адлер?');
+  await w.say('А завтра?');
+  assert.equal(w.llmCalls.length, 2);
+  const tool = w.tutuCalls.filter((x) => x.method === 'tools/call').at(-1);
+  assert.equal(tool.params.arguments.origin, 'Сочи');
+  assert.equal(tool.params.arguments.destination, 'Адлер');
+  assert.equal(tool.params.arguments.departure_date, '2027-01-16');
 });
 
 test('В ответ не идут старые и непарсируемые предложения, нет ложного «рейсов нет»', () => {
@@ -128,4 +141,31 @@ test('Туту: ближайший поезд может оказаться на
   assert.deepEqual(calls.filter((x) => x.method === 'tools/call').map((x) => x.params.arguments.page), [1, 2]);
   const results = normalizeDepartures(data, plan, Date.parse('2027-01-15T09:00:00+03:00') / 1000);
   assert.equal(results[0].time, '10:00', 'самый ранний рейс не обязан быть самым дешёвым');
+});
+
+
+test('ИИ понимает разговорное «из Адлера на красную поляну», не спрашивая станции повторно', async () => {
+  const w = await createWorld();
+  w.tutuReply = { offers: [{
+    departure_at: new Date((w.now + 2100) * 1000).toISOString(),
+    from: { name: 'Адлер' }, to: { name: 'Красная Поляна' },
+  }], meta: { complete: true } };
+  await w.say('Посмотри электрички на сегодня из Адлера на красную поляну');
+  assert.equal(w.llmCalls.length, 1, 'семантический маршрут получен от модели');
+  const call = w.tutuCalls.find((m) => m.method === 'tools/call');
+  assert.ok(call, 'помощник обратился к Туту');
+  assert.equal(call.params.arguments.origin, 'Адлер');
+  assert.equal(call.params.arguments.destination, 'Красная Поляна');
+  assert.equal(call.params.arguments.departure_date, '2027-01-15');
+  assert.match(w.last(OWNER).text, /Туту MCP: Адлер → Красная Поляна/);
+  assert.doesNotMatch(w.last(OWNER).text, /[Уу]точни/);
+});
+
+test('Если ИИ не вернул JSON, бот не просит станции повторно и не выдаёт вымышленное расписание', async () => {
+  const w = await createWorld();
+  w.llmReplies.push('Не могу преобразовать сообщение в JSON');
+  await w.say('Посмотри электрички на сегодня из Адлера на красную поляну');
+  assert.equal(w.tutuCalls.length, 0);
+  assert.match(w.last(OWNER).text, /Не получилось обработать маршрут через ИИ/);
+  assert.doesNotMatch(w.last(OWNER).text, /откуда и куда/);
 });

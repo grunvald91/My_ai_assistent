@@ -8,23 +8,83 @@ export const TUTU_MCP_URL = 'https://mcp.tutu.ru/mcp';
 const FOLLOWUP = /^(?:а\s+)?(?:следующ|позже|через\s+час|до\s+аэропорта|а\s+до\s+аэропорта)/i;
 const TRAIN = /электричк|ласточк|пригородн.{0,15}поезд/i;
 const RAIL = /поезд(?:а|ов|ом|ы)?|железнодорожн/i;
-const DATE_WORD = /завтра/i;
 const MAX_AGE_SECONDS = 3600;
 
-export function parseTransitIntent(question, previous, nowSec, timezoneHours = 3) {
+/**
+ * A cheap gate only determines whether the user is asking for a live rail lookup.
+ * It NEVER tries to parse station names: an LLM handles semantic understanding.
+ */
+export function isTransitCandidate(question, previous, nowSec) {
   const text = String(question ?? '').trim();
-  if (!text) return null;
-  const fresh = previous && nowSec - Number(previous.savedAt ?? 0) <= MAX_AGE_SECONDS;
-  const followup = !!fresh && FOLLOWUP.test(text);
-  const transit = (TRAIN.test(text) || RAIL.test(text)) && isLiveTransitQuestion(text);
-  if (!transit && !followup) return null;
-  const route = /(?:^|\s)(?:из|от)\s+([^,.!?]+?)\s+(?:в|до)\s+([^,.!?]+)/i.exec(text);
-  const origin = route?.[1]?.trim() || (followup ? previous.origin : '');
-  const destination = route?.[2]?.trim() || (followup ? (/аэропорт/i.test(text) ? 'Аэропорт Сочи' : previous.destination) : '');
-  const kind = TRAIN.test(text) ? 'search_etrain' : RAIL.test(text) ? 'search_rail' : previous?.kind || 'search_etrain';
-  const tomorrow = DATE_WORD.test(text);
-  const date = followup && !tomorrow ? previous.date : dayKey(nowSec + (tomorrow ? 86400 : 0), timezoneHours);
-  return { origin, destination, kind, date, offset: followup && /следующ/i.test(text) ? Math.min(20, (Number(previous.offset) || 0) + 1) : 0, savedAt: nowSec, timezoneHours };
+  const recent = previous && nowSec - Number(previous.savedAt ?? 0) <= MAX_AGE_SECONDS;
+  return !!(text && (
+    ((TRAIN.test(text) || RAIL.test(text)) && isLiveTransitQuestion(text)) ||
+    (recent && previous.origin && previous.destination && (FOLLOWUP.test(text) ||
+      (text.length <= 90 && !text.startsWith('/'))))
+  ));
+}
+
+const TRANSIT_INTENT_SYSTEM = [
+  'TRANSIT_INTENT_JSON: Ты семантический маршрутизатор русскоязычного ИИ-помощника.',
+  'Нужно понять смысл просьбы, а не искать предлоги по шаблону.',
+  'Верни ТОЛЬКО JSON: {"intent":"schedule|clarify|other","origin":"","destination":"","date":"today|tomorrow|YYYY-MM-DD","mode":"commuter|rail","next":false}.',
+  'При запросе расписания intent=schedule. Заполни обе станции из живой разговорной речи, учитывай падежи, предлоги и порядок слов.',
+  'Пример: «посмотри электрички на сегодня из Адлера на Красную Поляну» => origin="Адлер", destination="Красная Поляна", date="today", mode="commuter".',
+  'Не подменяй указанное пользователем направление названием другой станции или курорта без подтверждения.',
+  'При коротком уточнении («а следующая?») используй предыдущий маршрут и дату и next=true; «а завтра?» меняет дату на завтра и next=false.',
+  'Если НЕ ХВАТАЕТ станции и нельзя вывести её из контекста, intent=clarify и неизвестное поле пустое.',
+  'Если речь НЕ о поиске актуального железнодорожного расписания, intent=other.',
+  'НЕ придумывай время отправления, стоимость, доступность и подтверждение от Туту: эти данные придут только из инструмента.',
+].join('\n');
+
+function parseIntentJson(text) {
+  const raw = String(text ?? '').trim();
+  const begin = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (begin < 0 || end <= begin) throw new Error('ИИ не вернул маршрут в формате JSON');
+  let value;
+  try { value = JSON.parse(raw.slice(begin, end + 1)); }
+  catch { throw new Error('ИИ вернул некорректный JSON маршрута'); }
+  if (!value || typeof value !== 'object' || !['schedule', 'clarify', 'other'].includes(value.intent)) {
+    throw new Error('ИИ не распознал тип транспортного запроса');
+  }
+  return value;
+}
+
+const station = (v) => typeof v === 'string' && v.length <= 120 &&
+  !/[\u0000-\u001f<>]/.test(v) ? v.trim() : '';
+
+/** AI-first route understanding; deterministic code only validates output and calls the provider. */
+export async function understandTransitQuestion(question, previous, nowSec, timezoneHours, generate) {
+  if (!isTransitCandidate(question, previous, nowSec)) return null;
+  const today = dayKey(nowSec, timezoneHours);
+  const tomorrow = dayKey(nowSec + 86400, timezoneHours);
+  const recent = previous && nowSec - Number(previous.savedAt ?? 0) <= MAX_AGE_SECONDS &&
+    previous.origin && previous.destination ? previous : null;
+  const input = { question: String(question), today, tomorrow, previous: recent ?
+    { origin: recent.origin, destination: recent.destination, date: recent.date, mode: recent.kind, offset: recent.offset ?? 0 } : null };
+  const response = await generate([
+    { role: 'system', content: TRANSIT_INTENT_SYSTEM },
+    { role: 'user', content: JSON.stringify(input) },
+  ]);
+  const parsed = parseIntentJson(response);
+  if (parsed.intent === 'other') return { intent: 'other' };
+  const origin = station(parsed.origin);
+  const destination = station(parsed.destination);
+  const date = parsed.date === 'tomorrow' ? tomorrow : parsed.date === 'today' || !parsed.date ? today :
+    /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) && !Number.isNaN(Date.parse(parsed.date)) ? parsed.date : today;
+  const kind = parsed.mode === 'rail' ? 'search_rail' :
+    parsed.mode === 'commuter' ? 'search_etrain' :
+      (TRAIN.test(question) ? 'search_etrain' : recent?.kind || 'search_rail');
+  if (!origin || !destination || parsed.intent === 'clarify') {
+    return { intent: 'clarify', missingOrigin: !origin, missingDestination: !destination };
+  }
+  const next = parsed.next === true;
+  return { intent: 'schedule', plan: {
+    origin, destination, date, kind,
+    offset: next && recent ? Math.min(20, (Number(recent.offset) || 0) + 1) : 0,
+    savedAt: nowSec, timezoneHours,
+  } };
 }
 
 function parseSse(text, id) {

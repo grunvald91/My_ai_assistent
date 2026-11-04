@@ -2,7 +2,7 @@
 
 import { ownerSystem, groupSystem } from './persona.js';
 import { guardLiveTransitAnswer, guardSearchCapabilityAnswer } from './exa.js';
-import { parseTransitIntent, lookupTransit } from './transit.js';
+import { isTransitCandidate, understandTransitQuestion, lookupTransit } from './transit.js';
 import { LlmError } from './llm.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
@@ -204,41 +204,65 @@ export function createChat(D) {
       else messages.push({ role: 'user', content });
       // файл не режем и заранее не отказываем: если модели не хватит окна, она сама вернёт ошибку — объясним её (см. replyError)
     }
-    // Расписания поездов/электричек: структурированный провайдер, без выдумывания времени моделью.
-    // Короткое «А следующая?» использует запомненный маршрут, но повторно запрашивает свежую выдачу.
+    // AI first: модель понимает естественную речь и выделяет маршрут.
+    // Код только валидирует её JSON и получает время отправления ИСКЛЮЧИТЕЛЬНО от Туту.
     if (!media && !cont && !repo?.text) {
       const stateKey = 'transit:last:' + key;
       const prev = safeJson(await store.getSetting(stateKey), null);
-      const plan = parseTransitIntent(currentQuestion, prev, D.now(), core.tz());
-      if (plan) {
-        if (!plan.origin || !plan.destination) {
-          await publishOwnerReply(chatId,
-            { text: 'Для поиска по Туту уточни две станции: откуда и куда нужно ехать?' },
-            { model, question: '', searchEnabled });
-          return;
-        }
-        await store.setSetting(stateKey, JSON.stringify(plan));
-        const result = await lookupTransit(D.fetch, plan, D.now(), { deadlineMs: cfg.tutuGuardMs ?? 6500, pulse: D.pulse });
-        if (result.text) {
-          await publishOwnerReply(chatId, { text: result.text }, { model, question: currentQuestion, searchEnabled, trustedTransit: true });
-          return;
-        }
-        if (D.bg && await D.bg.canRun()) {
-          try {
-            const started = await D.bg.start(chatId, {
-              model, messages, think: null, transit: plan, asked: currentQuestion,
-              reason: '🚆 Туту MCP отвечает медленно или недоступен в Telegram Serverless — повторяю запрос в фоне.',
+      if (isTransitCandidate(currentQuestion, prev, D.now())) {
+        let understanding;
+        try {
+          const models = await core.getModels();
+          const interpreterModel = models.find((m) => cfg.fastModels?.includes(m.id) && !m.down) ?? model;
+          understanding = await understandTransitQuestion(currentQuestion, prev, D.now(), core.tz(), async (routeMessages) => {
+            const res = await core.generate({
+              model: interpreterModel, messages: routeMessages, maxTokens: 240,
+              stream: false, retries: 0, think: null,
+              deadline: Math.min(deadline ?? Infinity, Date.now() + 8000),
             });
-            if (started) return;
-          } catch (e) {
-            await D.log('transit_bg_fail', chatId, { reason: String(e?.message ?? e).slice(0, 120) });
-          }
+            return res.text;
+          });
+        } catch (e) {
+          await D.log('transit_intent_fail', chatId, { reason: String(e?.message ?? e).slice(0, 160) });
+          await publishOwnerReply(chatId, {
+            text: 'Не получилось обработать маршрут через ИИ. Я не буду угадывать станции или расписание; попробуй повторить запрос.',
+          }, { model, question: '', searchEnabled });
+          return;
         }
-        await publishOwnerReply(chatId, {
-          text: 'Не могу подтвердить отправления: Туту MCP не ответил пригодными данными. ' +
-            'Проверь расписание перевозчика. Ошибка: ' + (result.error || 'превышен срок ожидания') + '.',
-        }, { model, question: '', searchEnabled });
-        return;
+        if (understanding?.intent === 'clarify') {
+          const missing = understanding.missingOrigin && !understanding.missingDestination ? 'откуда отправляемся' :
+            understanding.missingDestination && !understanding.missingOrigin ? 'куда нужно ехать' :
+              'откуда и куда нужно ехать';
+          await publishOwnerReply(chatId, {
+            text: 'Уточни, пожалуйста, ' + missing + '.',
+          }, { model, question: '', searchEnabled });
+          return;
+        }
+        if (understanding?.intent === 'schedule') {
+          const plan = understanding.plan;
+          await store.setSetting(stateKey, JSON.stringify(plan));
+          const result = await lookupTransit(D.fetch, plan, D.now(), { deadlineMs: cfg.tutuGuardMs ?? 6500, pulse: D.pulse });
+          if (result.text) {
+            await publishOwnerReply(chatId, { text: result.text }, { model, question: currentQuestion, searchEnabled, trustedTransit: true });
+            return;
+          }
+          if (D.bg && await D.bg.canRun()) {
+            try {
+              const started = await D.bg.start(chatId, {
+                model, messages, think: null, transit: plan, asked: currentQuestion,
+                reason: '🚆 Туту MCP отвечает медленно или недоступен в Telegram Serverless — повторяю запрос в фоне.',
+              });
+              if (started) return;
+            } catch (e) {
+              await D.log('transit_bg_fail', chatId, { reason: String(e?.message ?? e).slice(0, 120) });
+            }
+          }
+          await publishOwnerReply(chatId, {
+            text: 'Не могу подтвердить отправления: Туту MCP не ответил пригодными данными. ' +
+              'Проверь расписание перевозчика. Ошибка: ' + (result.error || 'превышен срок ожидания') + '.',
+          }, { model, question: '', searchEnabled });
+          return;
+        }
       }
     }
 
