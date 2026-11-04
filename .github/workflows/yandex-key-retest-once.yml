@@ -1,11 +1,11 @@
-name: Yandex Timetables live station aliases and catalog shape
+name: Yandex Timetables actual thread schema check
 on:
   push:
     branches: [ops/yandex-key-retest-20261104]
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 3
     env:
       YANDEX_API: ${{ secrets.YANDEX_API }}
     steps:
@@ -13,32 +13,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify real Adler station codes without exposing key
+      - name: Inspect Adler-Rosa search and thread field shapes safely
         run: |
           node --input-type=module <<'NODE'
-          const key=(process.env.YANDEX_API||'').trim();if(!key)throw new Error('No key');
+          const key=(process.env.YANDEX_API||'').trim();if(!key)throw new Error('Missing key');
           const base='https://api.rasp.yandex-net.ru/v3.0/';
-          const search=async(from,to,transport,date='2026-11-05')=>{
-            const params=new URLSearchParams({format:'json',lang:'ru_RU',from,to,transport_types:transport,date,limit:'1'});
-            const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),13000);
-            try{const r=await fetch(base+'search/?'+params,{headers:{Authorization:key},signal:ctrl.signal});
-              const j=await r.json().catch(()=>({}));
-              console.log(JSON.stringify({from,to,transport,status:r.status,
-                segments:j.segments?.length??null,total:j.pagination?.total??null,
-                from_label:j.search?.from?.title??null,to_label:j.search?.to?.title??null,
-                error:!!(j.error||j.errors)}));
-            }catch(e){console.log(JSON.stringify({from,to,transport,errorClass:e.name??'error'}));}finally{clearTimeout(t)}
-          };
-          await search('s9613054','s9812791','suburban');
-          await search('s9613054','s9812791','train');
-          await search('c213','c146','train');
-          const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),60000);
-          try{const r=await fetch(base+'stations_list/?format=json&lang=ru_RU',{headers:{Authorization:key},signal:ctrl.signal});
-            const j=await r.json();const matches=[];
-            for(const country of j.countries||[])if(country.title==='Россия')for(const region of country.regions||[])for(const city of region.settlements||[]){
-              if(['Адлер','Сочи','Москва','Красная Поляна','Роза Хутор','Тверь'].includes(city.title))matches.push({city:city.title,code:city.codes?.yandex_code,region:region.title,stations:(city.stations||[]).filter(s=>['Адлер','Роза Хутор','Красная Поляна','Эсто-Садок'].includes(s.title)).map(s=>({title:s.title,code:s.codes?.yandex_code,transport:s.transport_type}))});
-              for(const st of city.stations||[])if(['Адлер','Роза Хутор','Эсто-Садок'].includes(st.title))matches.push({city:city.title,station:st.title,code:st.codes?.yandex_code,transport:st.transport_type,region:region.title});
-            }
-            console.log('CATALOG',JSON.stringify({status:r.status,countries:j.countries?.length??null,matches:matches.slice(0,36)}));
-          }catch(e){console.log('CATALOG_ERROR',e.name??'error');}finally{clearTimeout(t)}
+          const get=async(path,params)=>{const qs=new URLSearchParams({format:'json',lang:'ru_RU',...params});const ctl=new AbortController();const t=setTimeout(()=>ctl.abort(),15000);try{const r=await fetch(base+path+'?'+qs,{headers:{Authorization:key},signal:ctl.signal});return {status:r.status,body:await r.json()}}finally{clearTimeout(t)}};
+          const plan={from:'s9613054',to:'s9812791',date:'2026-11-05',transport_types:'suburban',limit:'1',transfers:'false'};
+          const a=await get('search/',plan);const first=a.body?.segments?.[0];
+          console.log('SEARCH',JSON.stringify({status:a.status,count:a.body?.pagination?.total??null,
+            departureType:typeof first?.departure,arrivalType:typeof first?.arrival,
+            codeFrom:first?.from?.code,codeTo:first?.to?.code,
+            stationFrom:first?.from?.title,stationTo:first?.to?.title,
+            threadType:first?.thread?.transport_type,uidType:typeof first?.thread?.uid,
+            durationType:typeof first?.duration,hasTransfers:first?.has_transfers,
+            carrierType:typeof first?.thread?.carrier?.title}));
+          if(first?.thread?.uid){const t=await get('thread/',{uid:first.thread.uid,from:plan.from,to:plan.to,date:plan.date});
+            console.log('THREAD',JSON.stringify({status:t.status,stopCount:t.body?.stops?.length??null,
+              firstStopKeys:Object.keys(t.body?.stops?.[0]??{}),
+              firstStationTitleType:typeof t.body?.stops?.[0]?.station?.title,
+              firstStopArrivalType:typeof t.body?.stops?.[0]?.arrival}));}
           NODE
