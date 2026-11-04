@@ -114,7 +114,7 @@ export function formatYandexRasp(data, plan, nowSec, { fromTitle, toTitle } = {}
     const timestamp = Date.parse(departure);
     if (!Number.isFinite(timestamp) || timestamp < nowSec * 1000) continue;
     const arrival = String(segment.arrival ?? '');
-    const duration = Number(segment.duration);
+    const duration = typeof segment.duration === 'number' && Number.isFinite(segment.duration) ? segment.duration : NaN;
     valid.push({ timestamp, departure: departure.slice(11, 16),
       from: safeName(segment.from?.title || fromTitle || plan.origin),
       to: safeName(segment.to?.title || toTitle || plan.destination),
