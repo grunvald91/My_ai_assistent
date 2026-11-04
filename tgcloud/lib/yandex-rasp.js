@@ -87,7 +87,8 @@ export function formatYandexRasp(data, plan, nowSec, { fromTitle, toTitle } = {}
   const entries = Array.isArray(data?.segments) ? data.segments : [];
   const valid = [];
   for (const segment of entries) {
-    if (!segment || segment.has_transfers || !/^(suburban|train)$/.test(String(segment.thread?.transport_type ?? ''))) continue;
+    const expected = plan.kind === 'search_rail' ? 'train' : 'suburban';
+    if (!segment || segment.has_transfers || segment.thread?.transport_type !== expected) continue;
     const departure = String(segment.departure ?? '');
     if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:Z|[+-]\d\d:\d\d)$/.test(departure)) continue;
     if (departure.slice(0, 10) !== plan.date) continue;
