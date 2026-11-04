@@ -47,7 +47,9 @@ export const yandexTransportType = (kind) => TRANSPORT[kind] ?? null;
 function stationSupportsType(item, kind) {
   const value = String(item.transport_type ?? '').toLowerCase();
   const types = {
-    search_etrain: /электричк|пригородн|suburban/i,
+    // Yandex catalog labels even suburban-capable railway stations as "Поезд"/"train". 
+    // The suburban service is filtered in /search/, not in stations_list.
+    search_etrain: /электричк|пригородн|suburban|поезд|train/i,
     search_rail: /поезд|train/i,
     search_bus: /автобус|bus/i,
     search_avia: /самол[её]т|plane/i,
@@ -62,7 +64,10 @@ const isValidCode = (value) => /^[sc]\d{1,12}$/.test(String(value ?? ''));
 export function resolveRussianStation(catalog, name, kind = 'search_etrain') {
   const query = normalized(name);
   if (!query) return { error: 'empty' };
-  if (CODES[query]) return { code: CODES[query], title: query };
+  // Railway aliases are NOT safe for buses, planes or ferries.
+  if (['search_etrain','search_rail'].includes(kind) && CODES[query]) {
+    return { code: CODES[query], title: query };
+  }
   const found = [];
   for (const country of catalog?.countries ?? []) {
     if (normalized(country.title) !== 'россия') continue;
