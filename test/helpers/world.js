@@ -115,6 +115,10 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
         if (q.includes('из адлера на красную поляну')) return JSON.stringify({
           intent: 'schedule', origin: 'Адлер', destination: 'Красная Поляна', date: 'today', mode, next: false,
         });
+        if (q.includes('завтра') && input.previous) return JSON.stringify({
+          intent: 'schedule', origin: input.previous.origin, destination: input.previous.destination,
+          date: 'tomorrow', mode, next: false,
+        });
         if (q.includes('следующ') && input.previous) return JSON.stringify({
           intent: 'schedule', origin: input.previous.origin, destination: input.previous.destination,
           date: input.previous.date, mode, next: true,
