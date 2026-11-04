@@ -42,7 +42,8 @@ test('Некорректная выдача Туту не превращаетс
   const w = await createWorld();
   w.tutuReply = { offers: [{ price: 199, name: 'недостаточно полей' }], meta: { complete: false } };
   await w.say('Когда ближайшая электричка из Сочи в Адлер?');
-  assert.match(w.last(OWNER).text, /не вернул подтверждённых будущих отправлений/);
+  assert.match(w.last(OWNER).text, /не удалось подтвердить автоматически/);
+  assert.match(w.last(OWNER).text, /rasp\.yandex\.ru/);
   assert.doesNotMatch(w.last(OWNER).text, /15:49/);
 });
 
@@ -214,4 +215,28 @@ test('Расписание через неделю не отбрасываетс
     { departure_at: '2027-01-23T14:25:00+03:00', from: { name: 'Адлер' }, to: { name: 'Красная Поляна' } },
   ] }, plan, now);
   assert.deepEqual(results.map(x => [x.day, x.time]), [['2027-01-22', '14:25']]);
+});
+
+
+test('Пустая выдача Туту не считается отсутствием электричек: даём официальный Яндекс',async()=>{
+  const w=await createWorld();
+  w.tutuReply={offers:[],meta:{complete:true}};
+  await w.say('Посмотри электрички на сегодня из Адлера на красную поляну');
+  assert.equal(w.tutuCalls.filter(x=>x.method==='tools/call').length,1);
+  assert.match(w.last(OWNER).text,/rasp\.yandex\.ru\/suburban\/adler-station--rosa-khutor/);
+  assert.doesNotMatch(w.last(OWNER).text,/нет электричек|нет рейсов/i);
+});
+
+test('При настроенном разрешённом API Яндекс пустая выдача Туту отправляется в фон, не останавливает поиск',async()=>{
+  const w=await createWorld({cfg:{bgViaActions:true},yandexRaspKey:'test-yandex-key'});
+  w.gh.repos['grunvald91/my_ai_assistent']={default_branch:'main',files:{'README.md':'bot'}};
+  w.tutuReply={offers:[],meta:{complete:true}};
+  await w.say('Посмотри электрички на сегодня из Адлера на красную поляну');
+  const dispatch=w.gh.dispatches.find(x=>x.workflow==='bgjob.yml');
+  assert.ok(dispatch);
+  const req=JSON.parse((await w.app.bg.getRequest(dispatch.inputs.job,0)).text);
+  assert.equal(req.transit.origin,'Адлер');
+  assert.equal(req.transit.destination,'Красная Поляна');
+  assert.equal(req.transit.skipTutu,true);
+  assert.match(w.last(OWNER).text,/Яндекс Расписания/);
 });
