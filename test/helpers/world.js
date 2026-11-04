@@ -119,6 +119,15 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
           intent: 'schedule', origin: input.previous.origin, destination: input.previous.destination,
           date: 'tomorrow', mode, next: false,
         });
+        if (q.includes('автобус') && q.includes('москв') && q.includes('твер')) return JSON.stringify({
+          intent:'schedule',origin:'Москва',destination:'Тверь',date:q.includes('завтра')?'tomorrow':'today',mode:'bus',next:false,details:q.includes('остановк'),
+        });
+        if ((q.includes('самол') || q.includes('авиабилет')) && q.includes('москв') && q.includes('сочи')) return JSON.stringify({
+          intent:'schedule',origin:'Москва',destination:'Сочи',date:'today',mode:'plane',next:false,details:false,
+        });
+        if (q.includes('добраться') && q.includes('москв') && q.includes('казань')) return JSON.stringify({
+          intent:'schedule',origin:'Москва',destination:'Казань',date:'tomorrow',mode:'mixed',next:false,details:false,
+        });
         if (q.includes('следующ') && input.previous) return JSON.stringify({
           intent: 'schedule', origin: input.previous.origin, destination: input.previous.destination,
           date: input.previous.date, mode, next: true,
