@@ -143,18 +143,19 @@ export function createApp(base) {
   async function onPrivate(msg) {
     const chatId = msg.chat.id;
     const fromId = msg.from?.id;
-    const bot = await ensureBot();
-
     if (!D.ownerIds.length) {
+      const bot = await ensureBot();
       return stranger(msg, bot, `⚙️ Бот ещё не настроен: не указан владелец.\n\nТвой Telegram ID: <code>${fromId}</code>\nДобавь его в GitHub → Settings → Secrets and variables → Actions (секрет или переменная) как <code>OWNER_IDS</code> и запусти деплой ещё раз.`);
     }
     if (!D.isOwner(fromId)) {
+      const bot = await ensureBot();
       return stranger(msg, bot, '🔒 Это личный бот, он отвечает только своему владельцу.');
     }
 
     const activity = createTypingHeartbeat(() => out.typing(chatId));
     await activity.start();
     try {
+    const bot = await ensureBot();
     const chat = await store.ensureChat(chatId, { type: 'private', title: displayName(msg.from) }, D.now());
     if (!(await store.getSetting('owner_name'))) await store.setSetting('owner_name', msg.from.first_name ?? '');
     await commands.ensureCommands();
