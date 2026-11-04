@@ -1,10 +1,10 @@
 import test from 'node:test';
 import { createWorld, OWNER, assert } from './helpers/world.js';
 import {
-  parseTransitIntent, normalizeDepartures, formatTransitResponse, callTutuTool, TUTU_MCP_URL,
+  isTransitCandidate, normalizeDepartures, formatTransitResponse, callTutuTool, TUTU_MCP_URL,
 } from '../tgcloud/lib/transit.js';
 
-test('Туту MCP: ближайшую электричку берём из настоящего структурированного результата, без LLM', async () => {
+test('Туту MCP: ИИ понимает запрос, а отправления берём только из структурированного ответа', async () => {
   const w = await createWorld({ exaKey: 'exa-test' });
   await w.say('Когда ближайшая электричка из Сочи в Адлер?');
   const calls = w.tutuCalls;
@@ -71,11 +71,23 @@ test('MCP недоступен: при настроенном фоне уход�
   assert.match(w.last(OWNER).text, /15:49/, 'ответ от структурированного провайдера не обрезан');
 });
 
-test('Нет маршрута и истёкшая история: короткое уточнение не приписывается старому поиску', () => {
+test('Свежий контекст позволяет ИИ понять короткое уточнение, устаревший игнорируется', () => {
   const prev = { origin: 'Сочи', destination: 'Адлер', kind: 'search_etrain', date: '2027-01-15', savedAt: 100 };
-  assert.equal(parseTransitIntent('А следующая?', prev, 100 + 3601, 3), null);
-  assert.equal(parseTransitIntent('А следующая?', prev, 120, 3)?.origin, 'Сочи');
-  assert.equal(parseTransitIntent('Почему поезд шумит?', null, 100, 3), null);
+  assert.equal(isTransitCandidate('А следующая?', prev, 100 + 3601), false);
+  assert.equal(isTransitCandidate('А следующая?', prev, 120), true);
+  assert.equal(isTransitCandidate('А завтра?', prev, 120), true);
+  assert.equal(isTransitCandidate('Почему поезд шумит?', null, 100), false);
+});
+
+test('ИИ переносит прежний маршрут на завтра без повторных вопросов', async () => {
+  const w = await createWorld();
+  await w.say('Когда ближайшая электричка из Сочи в Адлер?');
+  await w.say('А завтра?');
+  assert.equal(w.llmCalls.length, 2);
+  const tool = w.tutuCalls.filter((x) => x.method === 'tools/call').at(-1);
+  assert.equal(tool.params.arguments.origin, 'Сочи');
+  assert.equal(tool.params.arguments.destination, 'Адлер');
+  assert.equal(tool.params.arguments.departure_date, '2027-01-16');
 });
 
 test('В ответ не идут старые и непарсируемые предложения, нет ложного «рейсов нет»', () => {
