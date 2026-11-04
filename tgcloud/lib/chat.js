@@ -5,6 +5,7 @@ import { guardLiveTransitAnswer, guardSearchCapabilityAnswer } from './exa.js';
 import { isTransitCandidate, understandTransitQuestion, lookupTransit } from './transit.js';
 import { yandexFallbackNotice } from './yandex-rasp.js';
 import { LlmError } from './llm.js';
+import { createTypingHeartbeat } from './activity.js';
 import { LimitError } from './core.js';
 import { alternatives } from './models.js';
 import { isSimple, pickFast } from './auto.js';
@@ -73,6 +74,7 @@ export function createChat(D) {
             return;
           }
           rich = false; // не вышло — дальше обычными черновиками
+          try { await D.log?.('rich_draft_fallback', chatId, { code: e?.code ?? null, error: String(e?.message ?? e).slice(0, 140) }); } catch { /* diagnostics are best effort */ }
         }
       }
       // черновик показываем уже отформатированным (жирный, списки, код), как будет в итоговом сообщении;
@@ -87,7 +89,10 @@ export function createChat(D) {
           return push(text);
         }
         if (e?.code === 429) pausedUntil = Date.now() + Number(e.parameters?.retry_after ?? 2) * 1000; // flood control: просто пропускаем обновления
-        else failed = true;
+        else {
+          failed = true;
+          try { await D.log?.('draft_stream_fail', chatId, { code: e?.code ?? null, error: String(e?.message ?? e).slice(0, 140) }); } catch { /* don't fail a reply because logging failed */ }
+        }
       }
     };
 
@@ -159,6 +164,10 @@ export function createChat(D) {
     // срок считаем от начала ЭТОГО вызова бота (запоминаем сразу: параллельный апдейт может переписать D.t0)
     const t0 = D.t0 ?? Date.now();
     const deadline = cfg.cutAfterMs ? t0 + cfg.cutAfterMs : null;
+    // Start the Thinking... placeholder BEFORE memory, web search, transit routing
+    // and background dispatch. Previously it started only just before core.generate().
+    const streamer = draftStreamer(chatId);
+    await streamer.start();
     const chat = await store.getChat(chatId);
     const key = String(chatId);
     const currentQuestion = cont ? '' : String(text ?? (await lastUserText(key, chat)) ?? '');
@@ -379,9 +388,6 @@ export function createChat(D) {
       if (bgSearch?.query) searchNote = '🔎 Поиск в интернете отвечал слишком долго — отвечаю без него.';
       else if (bgSearch?.asked) searchNote = (await D.exa.augment(messages, bgSearch.asked)).note ?? '';
     }
-
-    const streamer = draftStreamer(chatId);
-    await streamer.start();
 
     let res;
     try {
@@ -607,8 +613,10 @@ export function createChat(D) {
       return 'cap';
     }
 
+    const activity = createTypingHeartbeat(() => out.typing(chatId, { threadId }));
+    await activity.start();
+    try {
     await store.addMessage({ chatKey: key, role: 'user', name, text: stored, ts: t });
-    await out.typing(chatId, { threadId });
 
     const model = await core.resolveModel(chat);
     const memories = await core.memoryTexts(['group:' + chatId]);
@@ -662,6 +670,9 @@ export function createChat(D) {
       );
     }
     return 'ok';
+    } finally {
+      activity.stop();
+    }
   }
 
   return { ownerReplyContext, answerOwner, answerMedia, respondOwner, publishOwnerReply, lastUserId, retryLast, askStrong, continueLast, switchAndRetry, replyError, answerGroup, draftStreamer, notifyOwnerOnce, quoteOf };
