@@ -139,11 +139,10 @@ test('расписания: электричка идёт через струк�
   assert.match(transitQuery('Когда ближайшая электричка?', '2026-11-03'), /2026-11-03/);
   const w = await mk();
   w.exaReply = [{ title: 'Старое расписание', url: 'https://example.com/old', publishedDate: '2026-02-03', highlights: ['Поезд в 15:49'] }];
-  w.llmReplies.push('Ближайшая электричка в 15:49, стоимость 168 ₽ [1].');
   await w.say('Когда ближайшая электричка из Сочи в Адлер?');
   assert.equal(w.exaCalls.length, 0);
   assert.equal(w.tutuCalls.filter((c) => c.method === 'tools/call').length, 1);
-  assert.equal(w.llmCalls.length, 0, 'расписание не генерирует ИИ');
+  assert.equal(w.llmCalls.length, 1, 'ИИ понимает направление, а время отправления даёт только Туту');
   const answer = w.last(OWNER).text;
   assert.match(answer, /Туту MCP: Сочи → Адлер/);
   assert.doesNotMatch(answer, /example.com\/old|168 ₽/, 'старое расписание не использовано');
@@ -167,7 +166,7 @@ test('расписания: при сбое Туту используется ф
   const req = JSON.parse((await w.app.bg.getRequest(job, 0)).text);
   assert.equal(req.transit.origin, 'Сочи');
   assert.equal(req.transit.kind, 'search_etrain');
-  assert.equal(w.llmCalls.length, 0);
+  assert.equal(w.llmCalls.length, 1, 'ИИ извлёк маршрут перед фоновым поиском Туту');
   await w.app.bg.receivePart(job, 0, 'Туту MCP не подтвердил отправление.');
   await w.app.bg.finish({ job, n: 1, finish: 'stop', usage: null, model: 'tutu-mcp', error: null });
   assert.match(w.last(OWNER).text, /Туту MCP не подтвердил/);
