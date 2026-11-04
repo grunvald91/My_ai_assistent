@@ -237,7 +237,9 @@ export async function lookupTransit(fetchFn, plan, nowSec, { deadlineMs = 6500, 
   try {
     const data = deadlineMs && pulse ? await withDeadline(promise, deadlineMs, pulse) : await promise;
     if (data === TIMED_OUT) return { slow: true };
-    return { text: formatTransitResponse(data, plan, nowSec) };
+    const departures = normalizeDepartures(data, plan, nowSec);
+    const index = Math.max(0, Math.min(20, Number(plan.offset) || 0));
+    return { text: formatTransitResponse(data, plan, nowSec), found: departures.length > index };
   } catch (error) {
     return { error: String(error?.message ?? error).slice(0, 140) };
   }
