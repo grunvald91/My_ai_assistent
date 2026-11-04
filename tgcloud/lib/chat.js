@@ -212,20 +212,39 @@ export function createChat(D) {
       if (isTransitCandidate(currentQuestion, prev, D.now())) {
         let understanding;
         try {
-          const models = await core.getModels();
-          const interpreterModel = models.find((m) => cfg.fastModels?.includes(m.id) && !m.down) ?? model;
+          // Use the model selected for this chat: do not override it with a slower
+          // globally configured fast model (Haiku 5.5 timed out in production).
+          const interpreterModel = model;
           understanding = await understandTransitQuestion(currentQuestion, prev, D.now(), core.tz(), async (routeMessages) => {
             const res = await core.generate({
               model: interpreterModel, messages: routeMessages, maxTokens: 240,
               stream: false, retries: 0, think: null,
-              deadline: Math.min(deadline ?? Infinity, Date.now() + 8000),
+              deadline: Math.min(deadline ?? Infinity, Date.now() + 11000),
             });
             return res.text;
           });
         } catch (e) {
-          await D.log('transit_intent_fail', chatId, { reason: String(e?.message ?? e).slice(0, 160) });
+          const reason = String(e?.message ?? e).slice(0, 160);
+          await D.log('transit_intent_fail', chatId, { reason, model: model.id, kind: e?.kind ?? 'parse' });
+          // The Telegram Serverless invocation has a strict deadline. Continue
+          // the SAME semantic AI -> Tutu request in Actions instead of asking
+          // the user to repeat a fully specified route.
+          if (D.bg && await D.bg.canRun()) {
+            try {
+              const started = await D.bg.start(chatId, {
+                model, messages, think: null,
+                transitIntent: { question: currentQuestion, previous: prev, timezoneHours: core.tz() },
+                asked: currentQuestion,
+                reason: '🚆 Модель не успела разобрать маршрут в чате. Продолжаю ИИ-поиск через Туту в фоне.',
+              });
+              if (started) return;
+            } catch (bgError) {
+              await D.log('transit_intent_bg_fail', chatId, { reason: String(bgError?.message ?? bgError).slice(0, 160) });
+            }
+          }
           await publishOwnerReply(chatId, {
-            text: 'Не получилось обработать маршрут через ИИ. Я не буду угадывать станции или расписание; попробуй повторить запрос.',
+            text: 'Поиск расписания не завершился: ИИ-разбор маршрута недоступен, а фоновая обработка не запустилась. ' +
+              'Я не буду придумывать отправления. Причина: ' + (e?.kind === 'timeout' ? 'тайм-аут модели' : 'ошибка обработки маршрута') + '.',
           }, { model, question: '', searchEnabled });
           return;
         }
