@@ -1,0 +1,32 @@
+name: Yandex API secret capability check
+on:
+  push:
+    branches: [ops/yandex-api-keycheck-20261104]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      YANDEX_API: ${{ secrets.YANDEX_API }}
+      YANDEX_RASP_API_KEY: ${{ secrets.YANDEX_RASP_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate secret for Yandex Timetables (one GET, no key printed)
+        run: |
+          node --input-type=module <<'NODE'
+          const key=process.env.YANDEX_API || process.env.YANDEX_RASP_API_KEY;
+          console.log('Configured secret name: '+(process.env.YANDEX_API?'YANDEX_API':process.env.YANDEX_RASP_API_KEY?'YANDEX_RASP_API_KEY':'NONE'));
+          if(!key){process.exitCode=2;}else {
+            const d=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+            const q=new URLSearchParams({from:'c146',to:'c213',date:d,transport_types:'train',format:'json',lang:'ru_RU',limit:'1'});
+            const ctl=new AbortController();const timeout=setTimeout(()=>ctl.abort(),12000);
+            try{const r=await fetch('https://api.rasp.yandex-net.ru/v3.0/search/?'+q,{headers:{Authorization:key,Accept:'application/json'},signal:ctl.signal});
+              const v=await r.json().catch(()=>null);
+              console.log('Yandex Rasp HTTP status:',r.status,'results_array:',Array.isArray(v?.segments),'error_code:',v?.error?.code??v?.error?.text??(v?.error?'error':'none'));
+            }catch(e){console.log('Yandex Rasp connection:',e?.name??'error');}
+            finally{clearTimeout(timeout)}
+          }
+          NODE
