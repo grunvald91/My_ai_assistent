@@ -1,11 +1,11 @@
-name: Yandex Rasp new key one-off smoke
+name: Yandex Timetables live station aliases and catalog shape
 on:
   push:
     branches: [ops/yandex-key-retest-20261104]
 jobs:
-  smoke:
+  probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     env:
       YANDEX_API: ${{ secrets.YANDEX_API }}
     steps:
@@ -13,19 +13,32 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Validate Yandex Rasp key with one official request (no key in logs)
+      - name: Verify real Adler station codes without exposing key
         run: |
           node --input-type=module <<'NODE'
-          const key=(process.env.YANDEX_API||'').trim();
-          if(!key){console.log('Secret availability: MISSING');process.exitCode=2;}else {
-            console.log('Secret availability: PRESENT');
-            const q=new URLSearchParams({format:'json',lang:'ru_RU',from:'c213',to:'c146',transport_types:'train',date:'2026-11-05',limit:'1'});
-            const ctl=new AbortController();const tid=setTimeout(()=>ctl.abort(),15000);
-            try {const r=await fetch('https://api.rasp.yandex-net.ru/v3.0/search/?'+q,{headers:{Authorization:key},signal:ctl.signal});
-              const body=await r.json().catch(()=>({}));
-              console.log(JSON.stringify({http_status:r.status,segments_array:Array.isArray(body.segments),pagination_present:!!body.pagination,has_error:!!(body.error||body.errors)}));
-              if(r.status!==200||!Array.isArray(body.segments))process.exitCode=1;
-            }catch(e){console.log('Network problem:',e?.name||'request_error');process.exitCode=1;}
-            finally{clearTimeout(tid)}
-          }
+          const key=(process.env.YANDEX_API||'').trim();if(!key)throw new Error('No key');
+          const base='https://api.rasp.yandex-net.ru/v3.0/';
+          const search=async(from,to,transport,date='2026-11-05')=>{
+            const params=new URLSearchParams({format:'json',lang:'ru_RU',from,to,transport_types:transport,date,limit:'1'});
+            const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),13000);
+            try{const r=await fetch(base+'search/?'+params,{headers:{Authorization:key},signal:ctrl.signal});
+              const j=await r.json().catch(()=>({}));
+              console.log(JSON.stringify({from,to,transport,status:r.status,
+                segments:j.segments?.length??null,total:j.pagination?.total??null,
+                from_label:j.search?.from?.title??null,to_label:j.search?.to?.title??null,
+                error:!!(j.error||j.errors)}));
+            }catch(e){console.log(JSON.stringify({from,to,transport,errorClass:e.name??'error'}));}finally{clearTimeout(t)}
+          };
+          await search('s9613054','s9812791','suburban');
+          await search('s9613054','s9812791','train');
+          await search('c213','c146','train');
+          const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),60000);
+          try{const r=await fetch(base+'stations_list/?format=json&lang=ru_RU',{headers:{Authorization:key},signal:ctrl.signal});
+            const j=await r.json();const matches=[];
+            for(const country of j.countries||[])if(country.title==='Россия')for(const region of country.regions||[])for(const city of region.settlements||[]){
+              if(['Адлер','Сочи','Москва','Красная Поляна','Роза Хутор','Тверь'].includes(city.title))matches.push({city:city.title,code:city.codes?.yandex_code,region:region.title,stations:(city.stations||[]).filter(s=>['Адлер','Роза Хутор','Красная Поляна','Эсто-Садок'].includes(s.title)).map(s=>({title:s.title,code:s.codes?.yandex_code,transport:s.transport_type}))});
+              for(const st of city.stations||[])if(['Адлер','Роза Хутор','Эсто-Садок'].includes(st.title))matches.push({city:city.title,station:st.title,code:st.codes?.yandex_code,transport:st.transport_type,region:region.title});
+            }
+            console.log('CATALOG',JSON.stringify({status:r.status,countries:j.countries?.length??null,matches:matches.slice(0,36)}));
+          }catch(e){console.log('CATALOG_ERROR',e.name??'error');}finally{clearTimeout(t)}
           NODE
