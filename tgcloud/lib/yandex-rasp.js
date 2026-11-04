@@ -154,7 +154,8 @@ export function formatYandexRasp(data, plan, nowSec, { fromTitle, toTitle } = {}
 
 function formatThreadDetails(thread) {
   if (!Array.isArray(thread?.stops) || !thread.stops.length) return '';
-  const rows = thread.stops.slice(0, 12).map((stop) => {
+  // A typical suburban route fits in one Telegram message; avoid hiding its stops.
+  const rows = thread.stops.slice(0, 40).map((stop) => {
     const name = safeName(stop?.station?.title ?? '');
     const arrival = typeof stop?.arrival === 'string' && /^\d{4}-\d\d-\d\dT/.test(stop.arrival)
       ? stop.arrival.slice(11, 16) : '';
@@ -164,7 +165,7 @@ function formatThreadDetails(thread) {
       (arrival ? ' приб. '+arrival : '')+(departure ? ' отпр. '+departure : '') : '';
   }).filter(Boolean);
   return rows.length ? '\nОстановки по маршруту:\n'+rows.join('\n')+
-    (thread.stops.length>12 ? '\n… и ещё '+(thread.stops.length-12)+' остановок.' : '') : '';
+    (thread.stops.length>40 ? '\n… и ещё '+(thread.stops.length-40)+' остановок.' : '') : '';
 }
 
 
@@ -229,6 +230,20 @@ export async function lookupYandexRasp(fetchFn, key, plan, nowSec) {
 
 /** Primary Tutu, then licensed Yandex API, finally an honest site link. */
 export async function lookupRussianTransit(fetchFn, yandexKey, plan, nowSec, tutuOptions = {}) {
+  // Detailed stops require the provider's thread identifier. Tutu's compact
+  // timetable does not prove stops for the very same service.
+  if (plan.details && yandexKey) {
+    const detailed = await lookupYandexRasp(fetchFn, yandexKey, plan, nowSec);
+    if (detailed.found) return { ...detailed, source: 'yandex' };
+    // Continue with Tutu rather than claiming there is no train.
+    const fallback = plan.skipTutu ? { found: false } :
+      await lookupTransit(fetchFn, plan, nowSec, tutuOptions);
+    if (fallback.found) {
+      return { ...fallback, source: 'tutu',
+        text: fallback.text + '\nПодробные остановки через Яндекс подтвердить не удалось.' };
+    }
+    return { ...detailed, source: 'link', tutuError: fallback.error ?? null };
+  }
   const first = plan.skipTutu ? { found:false } : await lookupTransit(fetchFn, plan, nowSec, tutuOptions);
   if (first.found) return { ...first, source:'tutu' };
   const second = await lookupYandexRasp(fetchFn, yandexKey, plan, nowSec);
