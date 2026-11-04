@@ -1,9 +1,9 @@
-name: Tutu MCP multimodal schema inspection
+name: Tutu real bus and flight smoke (one-off read-only)
 on:
   push:
     branches: [ops/yandex-api-keycheck-20261104]
 jobs:
-  inspect:
+  check:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -11,16 +11,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Inspect public Tutu MCP tools (no secret data)
+      - name: Validate provider bus flight response formats
         run: |
           node --input-type=module <<'NODE'
           const url='https://mcp.tutu.ru/mcp';
-          const post=async(body,headers={})=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json, text/event-stream',...headers},body:JSON.stringify(body)});const t=await r.text();let j=null;try{j=JSON.parse(t)}catch{const s=t.split('\n').find(x=>x.startsWith('data:'));if(s)j=JSON.parse(s.slice(5))}return {r,j}};
-          const a=await post({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'schema-test',version:'1'}}});
+          const req=async(msg,h={})=>{const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),18000);try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json, text/event-stream',...h},body:JSON.stringify(msg),signal:ctl.signal});const t=await r.text();const lines=t.split('\n').filter(x=>x.startsWith('data:'));let j;try{j=JSON.parse(t)}catch{j=lines.map(x=>{try{return JSON.parse(x.slice(5))}catch{return null}}).find(x=>x?.id===msg.id)}return {r,j}}finally{clearTimeout(timer)}};
+          const a=await req({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'smoke',version:'1.0'}}});
           const h={...(a.r.headers.get('mcp-session-id')?{'Mcp-Session-Id':a.r.headers.get('mcp-session-id')}:{})};
-          await post({jsonrpc:'2.0',method:'notifications/initialized'},h);
-          const b=await post({jsonrpc:'2.0',id:2,method:'tools/list'},h);
-          for(const t of b.j?.result?.tools??[])if(['search_etrain','search_rail','search_bus','search_avia','search_multitransport'].includes(t.name)){
-            console.log(JSON.stringify({tool:t.name,required:t.inputSchema?.required,props:Object.fromEntries(Object.entries(t.inputSchema?.properties??{}).map(([k,v])=>[k,{type:v.type,enum:v.enum,default:v.default}]))}));
-          }
+          await req({jsonrpc:'2.0',method:'notifications/initialized'},h);
+          const date=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(Date.now()+86400000));
+          const cases=[['search_bus','Москва','Тверь'],['search_avia','Москва','Сочи']];
+          for(let i=0;i<cases.length;i++){const [tool,origin,destination]=cases[i];try{
+            const ans=await req({jsonrpc:'2.0',id:i+2,method:'tools/call',params:{name:tool,arguments:{origin,destination,departure_date:date,adults:1,view:'compact',page:1,page_size:3,sort:'departure_asc'}}},h);
+            const result=ans.j?.result;const raw=result?.structuredContent??JSON.parse(result?.content?.find(x=>typeof x.text==='string')?.text??'{}');
+            const data=raw?.result??raw;
+            console.log(JSON.stringify({tool,status:ans.r.status,isError:!!result?.isError,rpcErrorCode:ans.j?.error?.code??null,offersCount:data?.offers?.length??null,fields:Object.keys(data?.offers?.[0]??{}).slice(0,20),hasDepartureIso:typeof data?.offers?.[0]?.departure_at==='string'}));
+          }catch(e){console.log(JSON.stringify({tool,errorClass:e.name??'error',reason:String(e.message??e).slice(0,130)}))}}
           NODE
