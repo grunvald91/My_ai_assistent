@@ -12,7 +12,7 @@ import { lookupRussianTransit } from '../tgcloud/lib/yandex-rasp.js';
 
 const env = (k) => (process.env[k] ?? '').trim();
 const JOB = env('JOB_ID');
-const YANDEX_RASP_KEY = /^(1|true)$/i.test(env('YANDEX_RASP_ALLOWED')) ? (env('YANDEX_RASP_API_KEY') || env('YANDEX_API')) : '';
+const YANDEX_RASP_KEY = /^(1|true)$/i.test(env('YANDEX_RASP_ALLOWED')) ? (env('YANDEX_API') || env('YANDEX_RASP_API_KEY')) : '';
 const OWNER = env('OWNER_IDS').split(/[,;\s]+/)[0];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
