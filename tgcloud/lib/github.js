@@ -117,6 +117,8 @@ export function createGithub({ fetch, token, base = 'https://api.github.com' }) 
       return Array.isArray(list) && list.length ? list[0] : null;
     },
     createPr: (full, { title, head, base, body }) => req('POST', `${repoPath(full)}/pulls`, { title, head, base, body }),
+    createIssue: (full, { title, body }) => req('POST', `${repoPath(full)}/issues`, { title, body }),
+    getIssue: (full, number) => req('GET', `${repoPath(full)}/issues/${encodeURIComponent(number)}`),
 
     // ── GitHub Actions
     listWorkflows: (full) => req('GET', `${repoPath(full)}/actions/workflows?per_page=30`),

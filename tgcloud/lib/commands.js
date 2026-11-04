@@ -32,7 +32,7 @@ export function parseAmount(s) {
 
 export function createCommands(D, mods) {
   const { store, out, core, cfg, llm } = D;
-  const { business, posts, replies, code } = mods;
+  const { business, posts, replies, code, superagent } = mods;
 
   const HELP =
     '🤖 <b>Я твой ИИ-помощник</b> — работаю на результат: чем больше зарабатываешь ты, тем лучше для нас обоих. Помогаю с деньгами, текстами, перепиской и всем остальным.\n\n' +
@@ -49,6 +49,7 @@ export function createCommands(D, mods) {
     '/group — как отвечать в группах: выкл / по запросу / на все\n' +
     '/business — ответы от моего имени в личке (Telegram Business)\n' +
     '/gh · /repo · /code — писать код и пушить в твои репозитории (кроме бота)\n' +
+    '/agent — отправлять задания отдельному DeepSeek Superagent через GitHub Issues\n' +
     '/runs — GitHub Actions: последние запуски и кнопка Run workflow\n\n' +
     '<b>Память</b>\n' +
     '/memory — что я помню · /remember текст · /forget номер\n' +
@@ -149,6 +150,8 @@ export function createCommands(D, mods) {
       case 'code':
         await code.startTask(chat, arg);
         return true;
+      case 'agent':
+        return superagent.command(chatId, arg);
       case 'post':
         await posts.startPost(chat, arg);
         return true;

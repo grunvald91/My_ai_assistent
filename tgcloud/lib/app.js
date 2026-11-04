@@ -12,6 +12,7 @@ import { createBusiness } from './business.js';
 import { createReplies } from './replies.js';
 import { createCommands } from './commands.js';
 import { createCode } from './code.js';
+import { createSuperagent } from './superagent.js';
 import { createBg } from './bg.js';
 import { createExa } from './exa.js';
 import { createGithub } from './github.js';
@@ -43,9 +44,10 @@ export function createApp(base) {
   const business = createBusiness(D);
   const replies = createReplies(D);
   const code = createCode(D);
+  const superagent = createSuperagent(D);
   D.bg = createBg(D, chatMod); // тяжёлые модели в фоне (GitHub Actions)
   D.repoContext = code.repoContext; // чат читает репозиторий по просьбе владельца
-  const commands = createCommands(D, { posts, business, replies, code });
+  const commands = createCommands(D, { posts, business, replies, code, superagent });
 
   // ───────── кто я ─────────
 
@@ -323,6 +325,8 @@ export function createApp(base) {
           return await replies.callback(cq, parts.slice(1));
         case 'x':
           return await code.callback(cq, parts.slice(1));
+        case 'sa':
+          return await superagent.callback(cq, parts.slice(1));
         case 'bg':
           return await D.bg.callback(cq, parts.slice(1));
         case 'sr':

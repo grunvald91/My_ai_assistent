@@ -140,7 +140,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
     failures: new Map(), // method → очередь ошибок BotApiError
     nextMessageId: 100,
     modelFetches: 0,
-    gh: { calls: [], repos: {}, prs: [], refs: [], commits: [], blobs: [], putFiles: [], dispatches: [], reruns: [] }, // заглушка GitHub (см. ниже)
+    gh: { calls: [], repos: {}, prs: [], issues: [], refs: [], commits: [], blobs: [], putFiles: [], dispatches: [], reruns: [] }, // заглушка GitHub (см. ниже)
     files: new Map(), // file_id → байты для api.getFileContent
     balance: { balance: 1234.5, currency: 'RUB' },
   };
@@ -324,6 +324,17 @@ function fakeGithub(w, path, opts) {
   const repo = g.repos[key];
   const rest = m[3] ?? '';
   if (rest === '') return res(200, { full_name: repo.canonical ?? key, private: !!repo.private, default_branch: repo.default_branch ?? 'main' });
+  if (rest === '/issues' && method === 'POST') {
+    if (repo.issuesDenied) return res(403, { message: 'Resource not accessible by personal access token' });
+    const number = g.issues.filter((i) => i.repo === key).length + 1;
+    const issue = { repo: key, number, title: body.title, body: body.body, state: 'open', html_url: 'https://github.com/' + key + '/issues/' + number };
+    g.issues.push(issue);
+    return res(201, issue);
+  }
+  if ((m = /^\/issues\/(\d+)$/.exec(rest)) && method === 'GET') {
+    const issue = g.issues.find((i) => i.repo === key && i.number === Number(m[1]));
+    return issue ? res(200, issue) : res(404, { message: 'Not Found' });
+  }
   const filesOf = (branch) => repo.branchFiles?.[branch] ?? repo.files;
   if (rest.startsWith('/git/trees/')) {
     if (repo.empty) return res(409, { message: 'Git Repository is empty.' });
