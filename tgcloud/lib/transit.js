@@ -138,7 +138,10 @@ export async function callTutuTool(fetchFn, tool, args, url = TUTU_MCP_URL) {
   const session = init.session;
   const version = init.payload?.protocolVersion || '2025-11-25';
   await postMcp(fetchFn, url, { jsonrpc: '2.0', method: 'notifications/initialized' }, session, version);
-  const PAGE_SIZE = 30;
+  // Flight searches can be slow; the caller retries slow operations via Actions.
+  // Ask for a small departure-sorted first page instead of exhausting all flight pages.
+  const PAGE_SIZE = tool === 'search_avia' ? 5 : tool === 'search_multitransport' ? 10 : 30;
+  const MAX_PAGES = tool === 'search_avia' ? 1 : tool === 'search_multitransport' ? 2 : 10;
   async function loadPage(page) {
     const res = await postMcp(fetchFn, url, {
       jsonrpc: '2.0', id: page + 1, method: 'tools/call',
@@ -174,7 +177,7 @@ export async function callTutuTool(fetchFn, tool, args, url = TUTU_MCP_URL) {
   let complete = last.meta?.has_more === false || (first.offers.length < PAGE_SIZE && last.meta?.has_more !== true);
   // Price-sorted page 1 is NOT enough to determine the next chronological departure.
   // Load additional pages until the provider establishes an end or safety limit is reached.
-  for (let page = 2; page <= 10 && !complete; page++) {
+  for (let page = 2; page <= MAX_PAGES && !complete; page++) {
     last = await loadPage(page);
     if (!Array.isArray(last.offers)) break;
     let added = 0;
