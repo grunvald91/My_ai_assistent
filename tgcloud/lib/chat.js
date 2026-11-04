@@ -269,11 +269,11 @@ export function createChat(D) {
           }
           // Yandex's official API is licensed separately. Only use it if enabled.
           // A timeout should retry Tutu in Actions; an empty response needn't repeat Tutu.
-          if ((result.slow || D.yandexRaspKey) && D.bg && await D.bg.canRun()) {
+          if ((result.slow || result.error || D.yandexRaspKey) && D.bg && await D.bg.canRun()) {
             try {
               const started = await D.bg.start(chatId, {
                 model, messages, think: null,
-                transit: { ...plan, skipTutu: !result.slow },
+                transit: { ...plan, skipTutu: !result.slow && !result.error },
                 asked: currentQuestion,
                 reason: result.slow
                   ? '🚆 Туту не успел ответить. Продолжаю поиск в фоне.'
