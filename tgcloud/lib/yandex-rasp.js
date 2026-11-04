@@ -113,24 +113,55 @@ export function formatYandexRasp(data, plan, nowSec, { fromTitle, toTitle } = {}
     if (departure.slice(0, 10) !== plan.date) continue;
     const timestamp = Date.parse(departure);
     if (!Number.isFinite(timestamp) || timestamp < nowSec * 1000) continue;
+    const arrival = String(segment.arrival ?? '');
+    const duration = Number(segment.duration);
     valid.push({ timestamp, departure: departure.slice(11, 16),
       from: safeName(segment.from?.title || fromTitle || plan.origin),
       to: safeName(segment.to?.title || toTitle || plan.destination),
-      number: safeName(segment.thread?.number ?? '').slice(0, 20) });
+      number: safeName(segment.thread?.number ?? '').slice(0, 20),
+      carrier: safeName(segment.thread?.carrier?.title ?? ''),
+      arrival: /^\d{4}-\d\d-\d\dT\d\d:\d\d:/.test(arrival)
+        ? arrival.slice(11, 16) + (arrival.slice(0, 10) !== plan.date ? ' ('+arrival.slice(0, 10)+')' : '') : '',
+      durationMin: Number.isFinite(duration) && duration >= 0 ? Math.round(duration/60) : null,
+      transfers: segment.has_transfers === true, uid: String(segment.thread?.uid ?? '').slice(0, 100),
+      fromCode: String(segment.from?.code ?? ''), toCode: String(segment.to?.code ?? ''),
+    });
   }
   valid.sort((a,b)=>a.timestamp-b.timestamp);
   const offset = Math.max(0, Math.min(20, Number(plan.offset)||0));
   const chosen = valid.slice(offset, offset+3);
   if (!chosen.length) return { found: false, count: valid.length };
-  const rows=chosen.map((s,i)=>String(offset+i+1)+'. '+s.departure+' — '+s.from+' → '+s.to+(s.number ? ' (№ '+s.number+')' : ''));
+  const rows=chosen.map((s,i)=>String(offset+i+1)+'. '+s.departure+' — '+s.from+' → '+s.to+
+    (s.arrival ? ', прибытие '+s.arrival : '')+
+    (s.durationMin !== null ? ', в пути '+Math.floor(s.durationMin/60)+' ч '+(s.durationMin%60)+' мин' : '')+
+    (s.number ? ' (№ '+s.number+')' : '')+
+    (s.carrier ? ', '+s.carrier : '')+
+    (s.transfers ? ' (с пересадкой)' : ''));
   return {
-    found: true, count: valid.length,
+    found: true, count: valid.length, selected: chosen,
     text:'Яндекс Расписания: '+safeName(plan.origin)+' → '+safeName(plan.destination)+', '+plan.date+'\n' +
       (normalized(plan.destination)==='красная поляна' ? 'Ближайшая ж/д станция направления: Роза Хутор.\n' : '')+
       rows.join('\n')+'\nДанные предоставлены сервисом Яндекс.Расписания: '+YANDEX_RASP_SITE+
       '\nВремя местное для станции отправления. Проверь изменения перед поездкой.',
   };
 }
+
+
+function formatThreadDetails(thread) {
+  if (!Array.isArray(thread?.stops) || !thread.stops.length) return '';
+  const rows = thread.stops.slice(0, 12).map((stop) => {
+    const name = safeName(stop?.station?.title ?? '');
+    const arrival = typeof stop?.arrival === 'string' && /^\d{4}-\d\d-\d\dT/.test(stop.arrival)
+      ? stop.arrival.slice(11, 16) : '';
+    const departure = typeof stop?.departure === 'string' && /^\d{4}-\d\d-\d\dT/.test(stop.departure)
+      ? stop.departure.slice(11, 16) : '';
+    return name ? '• '+name+
+      (arrival ? ' приб. '+arrival : '')+(departure ? ' отпр. '+departure : '') : '';
+  }).filter(Boolean);
+  return rows.length ? '\nОстановки по маршруту:\n'+rows.join('\n')+
+    (thread.stops.length>12 ? '\n… и ещё '+(thread.stops.length-12)+' остановок.' : '') : '';
+}
+
 
 export async function lookupYandexRasp(fetchFn, key, plan, nowSec) {
   if (!key) return { found: false, unavailable: 'key', text: yandexFallbackNotice(plan, 'Ключ Яндекс Расписаний ещё не подключён.') };
@@ -167,7 +198,23 @@ export async function lookupYandexRasp(fetchFn, key, plan, nowSec) {
       if (all.length >= total || page.segments.length < 100) break;
     }
     const response = formatYandexRasp({segments:all},plan,nowSec,{fromTitle:from.title,toTitle:to.title});
-    if (response.found) return response;
+    if (response.found) {
+      if (plan.details === true) {
+        const best = response.selected?.[0];
+        if (best?.uid && best.uid.length <= 100 && !/[\u0000-\u001f<>]/.test(best.uid)) {
+          try {
+            const thread = await readJson(fetchFn, key, 'thread/', {
+              uid:best.uid, from:best.fromCode||from.code, to:best.toCode||to.code, date:plan.date,
+            });
+            response.text += formatThreadDetails(thread);
+          } catch {
+            response.text += '\nДетали остановок сейчас недоступны в API.';
+          }
+        } else response.text += '\nДля этого рейса API не вернул идентификатор подробного маршрута.';
+      }
+      delete response.selected;
+      return response;
+    }
     return {found:false, text:yandexFallbackNotice(plan, 'Яндекс API не вернул подтверждённых будущих отправлений по выбранным станциям.') };
   } catch (error) {
     return {found:false,unavailable:'api', text:yandexFallbackNotice(plan,
