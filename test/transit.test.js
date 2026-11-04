@@ -203,3 +203,15 @@ test('Фоновый ИИ-разбор оплачивается как вызо�
   assert.equal(after.tokensOut - before.tokensOut, 70);
   assert.match(w.last(OWNER).text, /15:49/);
 });
+
+
+test('Расписание через неделю не отбрасывается ограничением в 72 часа', () => {
+  const plan = { origin: 'Адлер', destination: 'Красная Поляна', kind: 'search_etrain',
+    date: '2027-01-22', timezoneHours: 3 };
+  const now = Date.parse('2027-01-15T09:00:00+03:00') / 1000;
+  const results = normalizeDepartures({ offers: [
+    { departure_at: '2027-01-22T14:25:00+03:00', from: { name: 'Адлер' }, to: { name: 'Красная Поляна' } },
+    { departure_at: '2027-01-23T14:25:00+03:00', from: { name: 'Адлер' }, to: { name: 'Красная Поляна' } },
+  ] }, plan, now);
+  assert.deepEqual(results.map(x => [x.day, x.time]), [['2027-01-22', '14:25']]);
+});
