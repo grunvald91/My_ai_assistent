@@ -103,7 +103,26 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
     llmCalls: [], // тела запросов к ClaudeHub
     llmPaths: [], // путь каждого запроса (/v1/chat/completions или /v1/messages)
     llmReplies: [], // очередь ответов: строка или функция (body) => строка | { status, body }
-    llmDefault: (body) => `Ответ на: ${[...body.messages].reverse().find((m) => m.role === 'user')?.content ?? ''}`.slice(0, 200),
+    llmDefault: (body) => {
+      // Semantic AI mock for tests, not a production route parser.
+      if (String(body.messages?.[0]?.content ?? '').includes('TRANSIT_INTENT_JSON')) {
+        const input = JSON.parse(body.messages.at(-1).content);
+        const q = String(input.question).toLowerCase();
+        const mode = 'commuter';
+        if (q.includes('из сочи в адлер')) return JSON.stringify({
+          intent: 'schedule', origin: 'Сочи', destination: 'Адлер', date: 'today', mode, next: false,
+        });
+        if (q.includes('из адлера на красную поляну')) return JSON.stringify({
+          intent: 'schedule', origin: 'Адлер', destination: 'Красная Поляна', date: 'today', mode, next: false,
+        });
+        if (q.includes('следующ') && input.previous) return JSON.stringify({
+          intent: 'schedule', origin: input.previous.origin, destination: input.previous.destination,
+          date: input.previous.date, mode, next: true,
+        });
+        return JSON.stringify({ intent: 'clarify', origin: '', destination: '', date: 'today', mode, next: false });
+      }
+      return ('Ответ на: ' + ([...body.messages].reverse().find((m) => m.role === 'user')?.content ?? '')).slice(0, 200);
+    },
     failures: new Map(), // method → очередь ошибок BotApiError
     nextMessageId: 100,
     modelFetches: 0,
