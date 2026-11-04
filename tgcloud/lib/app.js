@@ -4,6 +4,7 @@
 // D: { api, store, llm, cfg, now(), sleep(ms), ownerIds: number[], InputFile }
 
 import { createOut } from './out.js';
+import { createTypingHeartbeat } from './activity.js';
 import { createCore } from './core.js';
 import { createChat } from './chat.js';
 import { createAttach, POST_INTENT, parseDecline } from './attach.js';
@@ -151,6 +152,9 @@ export function createApp(base) {
       return stranger(msg, bot, '🔒 Это личный бот, он отвечает только своему владельцу.');
     }
 
+    const activity = createTypingHeartbeat(() => out.typing(chatId));
+    await activity.start();
+    try {
     const chat = await store.ensureChat(chatId, { type: 'private', title: displayName(msg.from) }, D.now());
     if (!(await store.getSetting('owner_name'))) await store.setSetting('owner_name', msg.from.first_name ?? '');
     await commands.ensureCommands();
@@ -221,6 +225,9 @@ export function createApp(base) {
     if (await code.maybeAutoTask(chat, said)) return; // «создай ветку и залей код» без /code
     if (rc.items.length) return chatMod.answerMedia(chatId, rc.prefix + said, rc.items); // ответ на сообщение с фото/файлом
     await chatMod.answerOwner(msg, chat, rc.prefix + said);
+    } finally {
+      activity.stop();
+    }
   }
 
   async function dispatchState(msg, chat) {
