@@ -5,4 +5,3 @@ export const GH_PAT = '';
 export const SELF_REPO = 'grunvald91/my_ai_assistent';
 export const EXA_API_KEY = '';
 export const YANDEX_RASP_API_KEY = '';
-export const YANDEX_RASP_ALLOWED = false;
