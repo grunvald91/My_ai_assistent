@@ -7,7 +7,7 @@ import { createLlm } from './llm.js';
 import { createApp } from './app.js';
 import { API_BASE, DEFAULTS } from './config.js';
 import { nowSec, parseIdList } from './util.js';
-import { CLAUDEHUB_API_KEY, OWNER_IDS, GH_PAT, SELF_REPO, EXA_API_KEY, YANDEX_RASP_API_KEY } from './secrets.js';
+import { CLAUDEHUB_API_KEY, OWNER_IDS, GH_PAT, SELF_REPO, EXA_API_KEY, YANDEX_RASP_API_KEY, YANDEX_RASP_ALLOWED } from './secrets.js';
 
 const sleep = (ms) => (typeof setTimeout === 'function' ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
 
@@ -25,7 +25,7 @@ export const app = createApp({
   ghToken: GH_PAT,
   selfRepo: SELF_REPO,
   exaKey: EXA_API_KEY,
-  yandexRaspKey: YANDEX_RASP_API_KEY,
+  yandexRaspKey: YANDEX_RASP_ALLOWED ? YANDEX_RASP_API_KEY : '',
   pulse: store.ping,
   ownerIds: parseIdList(OWNER_IDS),
 });
