@@ -108,7 +108,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
       if (String(body.messages?.[0]?.content ?? '').includes('TRANSIT_INTENT_JSON')) {
         const input = JSON.parse(body.messages.at(-1).content);
         const q = String(input.question).toLowerCase();
-        const mode = 'commuter';
+        const mode = ({search_etrain:'commuter',search_rail:'rail',search_bus:'bus',search_avia:'plane',search_multitransport:'mixed'})[input.previous?.mode] ?? 'commuter';
         if (q.includes('из сочи в адлер')) return JSON.stringify({
           intent: 'schedule', origin: 'Сочи', destination: 'Адлер', date: 'today', mode, next: false,
         });
