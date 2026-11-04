@@ -616,60 +616,60 @@ export function createChat(D) {
     const activity = createTypingHeartbeat(() => out.typing(chatId, { threadId }));
     await activity.start();
     try {
-    await store.addMessage({ chatKey: key, role: 'user', name, text: stored, ts: t });
+      await store.addMessage({ chatKey: key, role: 'user', name, text: stored, ts: t });
 
-    const model = await core.resolveModel(chat);
-    const memories = await core.memoryTexts(['group:' + chatId]);
-    const system = groupSystem({
-      ownerName: await core.ownerName(),
-      title: chat.title ?? msg.chat.title ?? 'группа',
-      memories,
-      nowSec: t,
-      tz: core.tz(),
-      mode,
-    });
-    // в группах сводку не ведём (там чужие люди) — только свежая история
-    const messages = await core.contextFor({ key, chat: { ...chat, summary: null, summaryUpto: 0 }, system });
-    const searchEnabled = !!D.exa && await D.exa.available();
-    messages[0].content += searchEnabled
-      ? '\n\nИНСТРУМЕНТЫ ГРУППЫ: Exa настроен, но конкретный поиск выполняется только по прямому обращению к боту (mention/ask). Не утверждай, что веб-поиска в приложении нет.'
-      : '\n\nИНСТРУМЕНТЫ ГРУППЫ: Exa сейчас выключен или не настроен; не утверждай, что интернет проверен.';
-    let searchNote = '';
-    if (mode === 'mention' && searchEnabled) {
-      const result = await D.exa.augment(messages, text);
-      searchNote = result.note ?? '';
-      messages[0].content += searchNote.startsWith('🔎 Искал в интернете:')
-        ? '\nИТОГ ПОИСКА: Exa ответил, источники приложены.'
-        : searchNote ? '\nИТОГ ПОИСКА: нет достоверных результатов. Не выдумывай меняющиеся факты.'
-          : '\nИТОГ ПОИСКА: поиск для этого сообщения не запускался. Не утверждай обратное.';
-    }
-
-    let res;
-    try {
-      res = await core.generate({ model, messages, maxTokens: cfg.maxTokensGroup });
-    } catch (e) {
-      if (e instanceof LimitError || e instanceof LlmError) {
-        await notifyOwnerOnce(e);
-        if (mode === 'mention') {
-          await out.sendText({ chatId, text: 'Сейчас не могу ответить. Попробуй чуть позже.', replyTo: msg.message_id, threadId });
-        }
-        return 'error';
+      const model = await core.resolveModel(chat);
+      const memories = await core.memoryTexts(['group:' + chatId]);
+      const system = groupSystem({
+        ownerName: await core.ownerName(),
+        title: chat.title ?? msg.chat.title ?? 'группа',
+        memories,
+        nowSec: t,
+        tz: core.tz(),
+        mode,
+      });
+      // в группах сводку не ведём (там чужие люди) — только свежая история
+      const messages = await core.contextFor({ key, chat: { ...chat, summary: null, summaryUpto: 0 }, system });
+      const searchEnabled = !!D.exa && await D.exa.available();
+      messages[0].content += searchEnabled
+        ? '\n\nИНСТРУМЕНТЫ ГРУППЫ: Exa настроен, но конкретный поиск выполняется только по прямому обращению к боту (mention/ask). Не утверждай, что веб-поиска в приложении нет.'
+        : '\n\nИНСТРУМЕНТЫ ГРУППЫ: Exa сейчас выключен или не настроен; не утверждай, что интернет проверен.';
+      let searchNote = '';
+      if (mode === 'mention' && searchEnabled) {
+        const result = await D.exa.augment(messages, text);
+        searchNote = result.note ?? '';
+        messages[0].content += searchNote.startsWith('🔎 Искал в интернете:')
+          ? '\nИТОГ ПОИСКА: Exa ответил, источники приложены.'
+          : searchNote ? '\nИТОГ ПОИСКА: нет достоверных результатов. Не выдумывай меняющиеся факты.'
+            : '\nИТОГ ПОИСКА: поиск для этого сообщения не запускался. Не утверждай обратное.';
       }
-      throw e;
-    }
 
-    const reply = guardSearchCapabilityAnswer(res.text.trim() || '…', searchEnabled) + (searchNote ? '\n\n' + searchNote : '');
-    await out.sendText({ chatId, text: reply, replyTo: msg.message_id, threadId, ephemeralTo: chat.ephemeral ? msg.from.id : null });
-    await store.addMessage({ chatKey: key, role: 'assistant', text: reply, model: model.id, tokens: res.tokensOut, ts: D.now() });
-    await store.updateChat(chatId, { lastReplyAt: D.now() });
-    await store.trimMessages(key, 120);
+      let res;
+      try {
+        res = await core.generate({ model, messages, maxTokens: cfg.maxTokensGroup });
+      } catch (e) {
+        if (e instanceof LimitError || e instanceof LlmError) {
+          await notifyOwnerOnce(e);
+          if (mode === 'mention') {
+            await out.sendText({ chatId, text: 'Сейчас не могу ответить. Попробуй чуть позже.', replyTo: msg.message_id, threadId });
+          }
+          return 'error';
+        }
+        throw e;
+      }
 
-    if (chat.notifyOwner) {
-      await out.toOwner(
-        `💬 <b>${escapeHtml(chat.title ?? 'группа')}</b> · ${escapeHtml(name)}:\n«${escapeHtml(truncate(text, 300))}»\n\n↩️ ${escapeHtml(truncate(reply, 1500))}`,
-      );
-    }
-    return 'ok';
+      const reply = guardSearchCapabilityAnswer(res.text.trim() || '…', searchEnabled) + (searchNote ? '\n\n' + searchNote : '');
+      await out.sendText({ chatId, text: reply, replyTo: msg.message_id, threadId, ephemeralTo: chat.ephemeral ? msg.from.id : null });
+      await store.addMessage({ chatKey: key, role: 'assistant', text: reply, model: model.id, tokens: res.tokensOut, ts: D.now() });
+      await store.updateChat(chatId, { lastReplyAt: D.now() });
+      await store.trimMessages(key, 120);
+
+      if (chat.notifyOwner) {
+        await out.toOwner(
+          `💬 <b>${escapeHtml(chat.title ?? 'группа')}</b> · ${escapeHtml(name)}:\n«${escapeHtml(truncate(text, 300))}»\n\n↩️ ${escapeHtml(truncate(reply, 1500))}`,
+        );
+      }
+      return 'ok';
     } finally {
       activity.stop();
     }
