@@ -9,7 +9,7 @@ const key = (process.env.CLAUDEHUB_API_KEY ?? '').trim();
 const owners = (process.env.OWNER_IDS ?? '').trim();
 const ghPat = (process.env.GH_PAT ?? '').trim();
 const exaKey = (process.env.EXA_API_KEY ?? '').trim(); // необязательный: без него веб-поиск выключен
-const yandexRaspKey = (process.env.YANDEX_RASP_API_KEY ?? '').trim(); // официальный API расписаний; необязательный
+const yandexRaspKey = (process.env.YANDEX_RASP_API_KEY || process.env.YANDEX_API || '').trim(); // API Расписаний; alias YANDEX_API accepted only if issued for this API
 // Enable only for a publicly accessible free service or after written permission/licence from Yandex.
 const yandexRaspAllowed = /^(?:true|1)$/i.test((process.env.YANDEX_RASP_ALLOWED ?? '').trim());
 // Репозиторий бота: GitHub Actions сам задаёт GITHUB_REPOSITORY. Код в нём бот менять не вправе.
