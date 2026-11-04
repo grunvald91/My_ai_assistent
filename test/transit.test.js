@@ -166,6 +166,40 @@ test('Если ИИ не вернул JSON, бот не просит станц�
   w.llmReplies.push('Не могу преобразовать сообщение в JSON');
   await w.say('Посмотри электрички на сегодня из Адлера на красную поляну');
   assert.equal(w.tutuCalls.length, 0);
-  assert.match(w.last(OWNER).text, /Не получилось обработать маршрут через ИИ/);
+  assert.match(w.last(OWNER).text, /Поиск расписания не завершился/);
   assert.doesNotMatch(w.last(OWNER).text, /откуда и куда/);
+});
+
+
+test('Регрессия: сбой ИИ не обрывает запрос, а передаёт семантический поиск в Actions', async () => {
+  const w = await createWorld({ cfg: { bgViaActions: true } });
+  w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
+  w.llmReplies.push({ status: 503, body: { error: { message: 'model unavailable' } } });
+  await w.say('Посмотри электрички на сегодня из Адлера на красную поляну');
+  assert.equal(w.llmCalls.length, 1, 'сначала модель выбранного чата');
+  assert.equal(w.llmCalls[0].model, 'claude-sonnet-5-5', 'не подменять выбранную модель на haiku-5-5');
+  const dispatch = w.gh.dispatches.find((d) => d.workflow === 'bgjob.yml');
+  assert.ok(dispatch, 'проверенная запасная цепочка запускает фоновый поиск');
+  assert.deepEqual(Object.keys(dispatch.inputs), ['job'], 'в параметрах публичного Actions нет текста запроса');
+  const req = JSON.parse((await w.app.bg.getRequest(dispatch.inputs.job, 0)).text);
+  assert.equal(req.transitIntent.question, 'Посмотри электрички на сегодня из Адлера на красную поляну');
+  assert.equal(req.transitIntent.previous, null);
+  assert.ok(!req.transit, 'маршрут ещё не выдуман и будет разобран ИИ внутри Actions');
+  assert.doesNotMatch(w.last(OWNER).text, /Не получилось обработать маршрут через ИИ/);
+  assert.match(w.last(OWNER).text, /в фоне/);
+});
+
+test('Фоновый ИИ-разбор оплачивается как вызов модели, а выдача остаётся доверенной Туту', async () => {
+  const w = await createWorld({ cfg: { bgViaActions: true } });
+  w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
+  w.llmReplies.push({ status: 503, body: { error: { message: 'model unavailable' } } });
+  await w.say('Посмотри электрички на сегодня из Адлера на красную поляну');
+  const id = w.gh.dispatches.at(-1).inputs.job;
+  const before = await w.app.core.todayUsage();
+  await w.app.bg.receivePart(id, 0, 'Туту MCP: Адлер → Красная Поляна, 2027-01-15\n1. 15:49 — Адлер → Красная Поляна\nИсточник: https://mcp.tutu.ru/mcp');
+  await w.app.bg.finish({ job: id, n: 1, finish: 'stop', usage: { in: 100, out: 70 }, model: 'claude-sonnet-5-5', error: null });
+  const after = await w.app.core.todayUsage();
+  assert.equal(after.tokensIn - before.tokensIn, 100);
+  assert.equal(after.tokensOut - before.tokensOut, 70);
+  assert.match(w.last(OWNER).text, /15:49/);
 });
