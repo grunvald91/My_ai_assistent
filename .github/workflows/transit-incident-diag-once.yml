@@ -1,0 +1,40 @@
+name: Transit incident diagnostics (one-off read-only)
+on:
+  push:
+    branches: [ops/transit-incident-diag-20261104]
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TGCLOUD_TOKEN: ${{ secrets.TELEGRAM_CLI_ACCESS }}
+      CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
+      OWNER_IDS: ${{ secrets.OWNER_IDS || vars.OWNER_IDS }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Fetch sanitized production diagnostic (no chat texts)
+        run: |
+          node scripts/write-secrets.mjs
+          OWNER="${OWNER_IDS%%,*}"
+          npx tgcloud run endpoints/diag "{ bgtest: 'no' }" --ctx "{ initData: { user: { id: ${OWNER} } } }" > /tmp/transit-diagnostic.txt
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const raw = fs.readFileSync('/tmp/transit-diagnostic.txt','utf8');
+          let data=null;
+          for(let pos=raw.indexOf('{'); pos>=0;pos=raw.indexOf('{',pos+1)){
+            try{data=JSON.parse(raw.slice(pos));break;}catch{}
+          }
+          if(!data){console.log('Diagnostic output non-JSON; not printing');process.exit(1)}
+          console.log(JSON.stringify({
+            captured_at:data.now,chat_model:data.chat_model,settings:data.settings,
+            journal:data.journal?.slice(0,80)?.filter(x=>['llm','llm_fail','transit_intent_fail','error'].includes(x.type)).map(x=>({age_s:x.ago_s,type:x.type,chat:x.chat,data:x.data??null})),
+            last_messages:data.last_messages?.slice(0,6)
+          },null,2));
+          NODE
