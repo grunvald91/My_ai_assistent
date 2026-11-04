@@ -8,24 +8,7 @@ export const TUTU_MCP_URL = 'https://mcp.tutu.ru/mcp';
 const FOLLOWUP = /^(?:а\s+)?(?:следующ|позже|через\s+час|до\s+аэропорта|а\s+до\s+аэропорта)/i;
 const TRAIN = /электричк|ласточк|пригородн.{0,15}поезд/i;
 const RAIL = /поезд(?:а|ов|ом|ы)?|железнодорожн/i;
-const DATE_WORD = /завтра/i;
 const MAX_AGE_SECONDS = 3600;
-
-export function parseTransitIntent(question, previous, nowSec, timezoneHours = 3) {
-  const text = String(question ?? '').trim();
-  if (!text) return null;
-  const fresh = previous && nowSec - Number(previous.savedAt ?? 0) <= MAX_AGE_SECONDS;
-  const followup = !!fresh && FOLLOWUP.test(text);
-  const transit = (TRAIN.test(text) || RAIL.test(text)) && isLiveTransitQuestion(text);
-  if (!transit && !followup) return null;
-  const route = /(?:^|\s)(?:из|от)\s+([^,.!?]+?)\s+(?:в|до)\s+([^,.!?]+)/i.exec(text);
-  const origin = route?.[1]?.trim() || (followup ? previous.origin : '');
-  const destination = route?.[2]?.trim() || (followup ? (/аэропорт/i.test(text) ? 'Аэропорт Сочи' : previous.destination) : '');
-  const kind = TRAIN.test(text) ? 'search_etrain' : RAIL.test(text) ? 'search_rail' : previous?.kind || 'search_etrain';
-  const tomorrow = DATE_WORD.test(text);
-  const date = followup && !tomorrow ? previous.date : dayKey(nowSec + (tomorrow ? 86400 : 0), timezoneHours);
-  return { origin, destination, kind, date, offset: followup && /следующ/i.test(text) ? Math.min(20, (Number(previous.offset) || 0) + 1) : 0, savedAt: nowSec, timezoneHours };
-}
 
 /**
  * A cheap gate only determines whether the user is asking for a live rail lookup.
@@ -36,7 +19,8 @@ export function isTransitCandidate(question, previous, nowSec) {
   const recent = previous && nowSec - Number(previous.savedAt ?? 0) <= MAX_AGE_SECONDS;
   return !!(text && (
     ((TRAIN.test(text) || RAIL.test(text)) && isLiveTransitQuestion(text)) ||
-    (recent && previous.origin && previous.destination && FOLLOWUP.test(text))
+    (recent && previous.origin && previous.destination && (FOLLOWUP.test(text) ||
+      (text.length <= 90 && !text.startsWith('/'))))
   ));
 }
 
@@ -47,7 +31,7 @@ const TRANSIT_INTENT_SYSTEM = [
   'При запросе расписания intent=schedule. Заполни обе станции из живой разговорной речи, учитывай падежи, предлоги и порядок слов.',
   'Пример: «посмотри электрички на сегодня из Адлера на Красную Поляну» => origin="Адлер", destination="Красная Поляна", date="today", mode="commuter".',
   'Не подменяй указанное пользователем направление названием другой станции или курорта без подтверждения.',
-  'При коротком уточнении («а следующая?») используй предыдущий маршрут и дату и next=true.',
+  'При коротком уточнении («а следующая?») используй предыдущий маршрут и дату и next=true; «а завтра?» меняет дату на завтра и next=false.',
   'Если НЕ ХВАТАЕТ станции и нельзя вывести её из контекста, intent=clarify и неизвестное поле пустое.',
   'Если речь НЕ о поиске актуального железнодорожного расписания, intent=other.',
   'НЕ придумывай время отправления, стоимость, доступность и подтверждение от Туту: эти данные придут только из инструмента.',
