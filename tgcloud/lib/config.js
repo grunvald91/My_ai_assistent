@@ -65,7 +65,7 @@ export const DEFAULTS = {
 };
 
 // Меню команд владельца. Менять список — поднимай COMMANDS_VERSION: бот сам обновит меню.
-export const COMMANDS_VERSION = 10;
+export const COMMANDS_VERSION = 11;
 export const OWNER_COMMANDS = [
   ['start', 'Начало и справка'],
   ['model', 'Выбрать модель ИИ'],
@@ -88,6 +88,7 @@ export const OWNER_COMMANDS = [
   ['gh', 'GitHub: подключение и репозитории'],
   ['repo', 'Выбрать репозиторий для кода'],
   ['code', 'Написать код и запушить в репозиторий'],
+  ['agent', 'Задача DeepSeek Superagent из Telegram'],
   ['runs', 'GitHub Actions: запуски и Run workflow'],
   ['usage', 'Расход и баланс'],
   ['limit', 'Дневной лимит токенов'],
