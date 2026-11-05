@@ -38,6 +38,8 @@ export function createCommands(D, mods) {
     '🤖 <b>Я твой ИИ-помощник</b> — работаю на результат: чем больше зарабатываешь ты, тем лучше для нас обоих. Помогаю с деньгами, текстами, перепиской и всем остальным.\n\n' +
     '<b>Просто пиши</b> — отвечу. Ответ приходит «набегающим» текстом; кнопка «Стоп» останавливает его.\n\n' +
     '<b>Основное</b>\n' +
+    '/panel — моя панель: задачи, память, календарь, маршруты\n' +
+    '/tasks — список задач · /task add текст — добавить задачу\n' +
     '/model — выбрать модель ИИ\n' +
     '/think — уровень размышлений: выкл / низкий / средний / высокий\n' +
     '/auto — автоподбор модели: простые вопросы отвечает быстрая дешёвая, сложные — выбранная\n' +
@@ -102,6 +104,10 @@ export function createCommands(D, mods) {
         await store.setState(chatId, null);
         await out.sendHtml(chatId, 'Отменено.');
         return true;
+      case 'panel':
+      case 'tasks':
+      case 'task':
+        return D.cards.command(chatId, cmd, arg);
       case 'model':
         return model(msg, chat, arg);
       case 'think':
