@@ -29,6 +29,9 @@ jobs:
           test "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
           ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" -o ConnectTimeout=10 root@157.22.203.28 'bash -s' <<'REMOTE'
           set -euo pipefail
+          for candidate in /usr/bin/jq /usr/local/bin/jq /opt/dsh-toolchain/bin/jq /srv/dsh-agent/.local/bin/jq; do
+            if test -x "$candidate"; then echo "JQ_AVAILABLE_AT=$candidate"; fi
+          done
           echo "SERVICE_STATE=$(systemctl is-active dsh-superagent || true)"
           echo "SERVICE_USER=$(systemctl show dsh-superagent -p User --value)"
           echo "TIMER_STATE=$(systemctl is-active superagent-capability.timer || true)"
