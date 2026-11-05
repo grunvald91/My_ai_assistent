@@ -1,0 +1,107 @@
+name: DSH Multi-Repo readiness timer (one-off install)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-multirepo-enable-timer.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - name: Install only the isolated DSH capability heartbeat systemd timer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_KEY_157:-}" || { echo 'Missing SSH_KEY_157'; exit 10; }
+          umask 077
+          K="$(mktemp)"; H="$(mktemp)"
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          unset SSH_KEY_157
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          test "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
+          ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" -o ConnectTimeout=10 root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          ROOT=/srv/dsh-agent
+          BIN="$ROOT/.local/bin"
+          test "$(systemctl show dsh-superagent -p User --value)" = dsh-agent
+          test "$(systemctl is-active dsh-superagent)" = active
+          for file in superagent-prepare-worktree.sh superagent-terminal-relay.sh superagent-capability-heartbeat.sh; do
+            test -r "$BIN/$file"
+            bash -n "$BIN/$file"
+          done
+          python3 - <<'PY'
+          import urllib.request,json
+          base='http://127.0.0.1:3082/orchestrator/api/'
+          def get(p):
+              req=urllib.request.Request(base+p,headers={'x-orchestrator-request':'1'})
+              with urllib.request.urlopen(req,timeout=10) as response: return json.load(response)
+          s=get('settings'); p=get('prompts'); st=get('state')
+          prepare=s['blocks']['executor']['value']['prepare']
+          assert prepare=='bash /srv/dsh-agent/.local/bin/superagent-prepare-worktree.sh', 'Unexpected DSH prepare command'
+          assert 'superagent-external-pr-v1' in p['current']['config']['delivery'], 'External PR rule absent'
+          assert not st['paused'] and not st['setup'].get('problem'), 'DSH unhealthy'
+          assert any(x['kind']=='github' and x['value']['enabled'] and x['value']['config']['repository']=='grunvald91/Ai_growth_os' for x in s['sources']), 'Wrong GitHub Source'
+          print('ROOT_TIMER_PREFLIGHT_VERIFIED')
+          PY
+          umask 077
+          SAVE="$ROOT/config/multirepo-systemd-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+          install -d -m 0700 -o root -g root "$SAVE"
+          for f in /etc/systemd/system/superagent-capability.service /etc/systemd/system/superagent-capability.timer; do
+            if test -e "$f"; then cp -p "$f" "$SAVE/"; fi
+          done
+          cat >/etc/systemd/system/superagent-capability.service <<'SERVICE'
+          [Unit]
+          Description=Verify DSH Superagent Multi-Repo readiness
+          Wants=network-online.target
+          After=network-online.target dsh-superagent.service
+
+          [Service]
+          Type=oneshot
+          User=dsh-agent
+          Group=dsh-agent
+          WorkingDirectory=/srv/dsh-agent
+          Environment=HOME=/srv/dsh-agent
+          Environment=PATH=/opt/dsh-toolchain/bin:/usr/local/bin:/usr/bin:/bin
+          Environment=DSH_SUPERAGENT_URL=http://127.0.0.1:3082
+          Environment=DSH_MULTI_REPO_PREPARE=/srv/dsh-agent/.local/bin/superagent-prepare-worktree.sh
+          Environment=DSH_MULTI_REPO_RELAY=/srv/dsh-agent/.local/bin/superagent-terminal-relay.sh
+          ExecStart=/usr/bin/env bash /srv/dsh-agent/.local/bin/superagent-capability-heartbeat.sh
+          NoNewPrivileges=true
+          ProtectSystem=strict
+          ReadWritePaths=/srv/dsh-agent
+          ProtectHome=true
+          PrivateTmp=true
+          UMask=0077
+          MemoryMax=256M
+          SERVICE
+          cat >/etc/systemd/system/superagent-capability.timer <<'TIMER'
+          [Unit]
+          Description=Recheck DSH Multi-Repo readiness at five-minute intervals
+
+          [Timer]
+          OnBootSec=1min
+          OnUnitActiveSec=5min
+          AccuracySec=30s
+          Unit=superagent-capability.service
+
+          [Install]
+          WantedBy=timers.target
+          TIMER
+          chmod 0644 /etc/systemd/system/superagent-capability.service /etc/systemd/system/superagent-capability.timer
+          systemctl daemon-reload
+          systemctl enable --now superagent-capability.timer >/dev/null
+          systemctl start superagent-capability.service
+          test "$(systemctl is-active superagent-capability.timer)" = active
+          test "$(systemctl show superagent-capability.service -p Result --value)" = success
+          echo 'TIMER_ENABLED_AND_ACTIVE=1'
+          echo 'CAPABILITY_HEARTBEAT=success'
+          echo 'DSH_SERVICE_REMAINS_ACTIVE='"$(systemctl is-active dsh-superagent)"
+          REMOTE
