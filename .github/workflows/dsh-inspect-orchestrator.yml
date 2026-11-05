@@ -1,4 +1,4 @@
-name: DSH inspect active orchestrator compressed model selection
+name: DSH verify persisted main Session model after switch
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
@@ -64,7 +64,7 @@ jobs:
               const t=e.type||e.kind||'unknown';counts[t]=(counts[t]||0)+1;
               if(['model/selection','request/header'].includes(t)){
                 const x=e.data||e.payload||{};
-                console.log('SESSION_MODEL_EVENT',t,'provider',x.provider||x.modelSelection?.provider||null,'model',x.model||x.modelSelection?.model||null);
+                console.log('SESSION_MODEL_EVENT',t,'matches',JSON.stringify(['deepseek-official','deepseek-flash','deepseek-v4.1-flash','claude-haiku-4.5','claude-opus-5-5'].filter(name=>JSON.stringify(e).includes(name))),'dataKeys',Object.keys(x).slice(0,12));
               }
             }
             console.log('SESSION_PARSED_RECORDS',parsed,'EVENT_TYPES',JSON.stringify(counts).slice(0,800));
