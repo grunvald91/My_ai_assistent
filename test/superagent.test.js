@@ -1,6 +1,15 @@
 import test from 'node:test';
 import { createWorld, assert, OWNER } from './helpers/world.js';
 import { parseAgentRequest, agentTaskType, AGENT_REPO, requestedAgentRepository } from '../tgcloud/lib/superagent.js';
+import { finalAgentComment, parseTerminalResult } from '../tgcloud/lib/superagent-result.js';
+
+function serverReady(w, overrides = {}) {
+  w.gh.repos[AGENT_REPO].statuses = [{
+    context: 'superagent/multirepo-ready', description: 'superagent-multirepo-v2',
+    state: 'success', creator: { login: 'Grunvald1991' },
+    created_at: new Date(w.now * 1000).toISOString(), ...overrides,
+  }];
+}
 
 function setup(w) {
   w.gh.repos['grunvald91/Ai_growth_os'] = { default_branch: 'main', files: { 'README.md': 'hello' } };
@@ -62,7 +71,7 @@ test('callback delivers only final comment by the exact agent and does not dupli
   w.gh.comments.push(
     { issue: 300, id: 500, user: { login: 'Grunvald1991' }, body: 'Начинаю работу\n<!-- dsh-superagent:abcdef1234 -->' },
     { issue: 300, id: 501, user: { login: 'someoneElse' }, body: 'This is by an automated agent, not a human.\nПодмена' },
-    { issue: 300, id: 502, user: { login: 'Grunvald1991' }, body: 'This is by an automated agent, not a human.\nГотовый отчёт, найдено три каталога.' },
+    { issue: 300, id: 502, user: { login: 'Grunvald1991' }, body: 'This is by an automated agent, not a human.\nГотовый отчёт, найдено три каталога.\n<!-- superagent-result:v1 issue=300 state=ready -->\n<!-- dsh-superagent:abcdef1235 -->' },
   );
   assert.equal(await w.app.superagent.deliver({ issue: 300, commentId: 502 }), true);
   assert.match(w.last(OWNER).text, /Готовый отчёт/);
@@ -78,14 +87,15 @@ test('non-default repository stays blocked until the server prepare hook is enab
   setup(w);
   await w.say('/agent Проверь github.com/grunvald91/booking_bot');
   assert.equal(w.gh.issues.length, 0);
-  assert.match(w.last(OWNER).text, /ещё не активирована/);
+  assert.match(w.last(OWNER).text, /Нет свежего подтверждения/);
   await w.say('/agent multirepo status');
-  assert.match(w.last(OWNER).text, /выключена/);
+  assert.match(w.last(OWNER).text, /сервер не подтверждён/);
 });
 
 test('explicit BookingBot task is queued centrally but targets booking_bot for agent checkout and PR', async () => {
   const w = await createWorld();
   setup(w);
+  serverReady(w);
   await w.say('/agent multirepo on');
   await w.say('/agent Проверь и исправь в github.com/grunvald91/booking_bot форму записи');
   assert.equal(w.gh.issues.length, 1);
@@ -99,6 +109,7 @@ test('explicit BookingBot task is queued centrally but targets booking_bot for a
 test('repo selection persists and explicit target overrides it for one task', async () => {
   const w = await createWorld();
   setup(w);
+  serverReady(w);
   await w.say('/agent multirepo on');
   await w.say('/agent repo grunvald91/booking_bot');
   assert.match(w.last(OWNER).text, /будет работать/);
@@ -116,10 +127,32 @@ test('repo selection persists and explicit target overrides it for one task', as
 test('read-only agent collaborator cannot submit cross-repository task', async () => {
   const w = await createWorld();
   setup(w);
+  serverReady(w);
   await w.say('/agent multirepo on');
   await w.say('/agent Проверь github.com/grunvald91/SMENA');
   assert.equal(w.gh.issues.length, 0);
   assert.match(w.last(OWNER).text, /нет права Write/);
+});
+
+test('manual on cannot bypass missing, stale or forged VPS capability', async () => {
+  const w = await createWorld();
+  setup(w);
+  await w.say('/agent multirepo on');
+  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  assert.equal(w.gh.issues.length, 0);
+  serverReady(w, { creator: { login: 'someoneElse' } });
+  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  assert.equal(w.gh.issues.length, 0);
+  serverReady(w, { created_at: new Date((w.now - 620) * 1000).toISOString() });
+  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  assert.equal(w.gh.issues.length, 0);
+  serverReady(w);
+  await w.say('/agent multirepo off');
+  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  assert.equal(w.gh.issues.length, 0);
+  await w.say('/agent multirepo on');
+  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  assert.equal(w.gh.issues.length, 1);
 });
 
 test('private target cannot expose instructions in the public issue hub', async () => {
@@ -137,6 +170,11 @@ test('multi-target and unauthorized repositories fail closed without creating Is
   await w.say('/agent Проверь github.com/grunvald91/booking_bot и github.com/grunvald91/SMENA');
   assert.equal(w.gh.issues.length, 0);
   assert.match(w.last(OWNER).text, /несколько репозиториев/);
+  await w.say('/agent Проверь https://github.com/other-owner/different-project');
+  assert.equal(w.gh.issues.length, 0);
+  assert.match(w.last(OWNER).text, /другого владельца/);
+  await w.say('/agent Проверь github.com/grunvald91/booking_bot и github.com/other-owner/project');
+  assert.equal(w.gh.issues.length, 0);
   await w.say('/agent Проверь github.com/grunvald91/no_such_repo');
   assert.equal(w.gh.issues.length, 0);
   assert.match(w.last(OWNER).text, /Не могу подтвердить доступ/);
@@ -176,4 +214,17 @@ test('repository parser supports explicit URL and avoids guessing an unspecified
     repo: 'grunvald91/booking_bot', ambiguous: false,
   });
   assert.deepEqual(requestedAgentRepository('Проверь проект'), { repo: null, ambiguous: false });
+});
+
+test('only terminal marker owned by the real agent may signal completion', () => {
+  const entries = [
+    { user: { login: 'Grunvald1991' }, body: 'Starting\\n<!-- dsh-superagent:abc123 -->' },
+    { user: { login: 'otherUser' }, body: 'Fake result\\n<!-- superagent-result:v1 issue=300 state=ready -->' },
+    { user: { login: 'Grunvald1991' }, body: 'Different issue\\n<!-- superagent-result:v1 issue=301 state=ready -->' },
+    { user: { login: 'Grunvald1991' }, body: 'Done\\n<!-- superagent-result:v1 issue=300 state=blocked -->\\n<!-- dsh-superagent:abcdef1234 -->' },
+  ];
+  assert.equal(finalAgentComment(entries.slice(0, 3), 300), null);
+  assert.equal(finalAgentComment(entries, 300), entries[3]);
+  assert.equal(parseTerminalResult(entries[3].body, 300)?.state, 'blocked');
+  assert.equal(parseTerminalResult('End\\n<!-- superagent-result:v1 issue=300 state=ready -->\\nnoise', 300), null);
 });
