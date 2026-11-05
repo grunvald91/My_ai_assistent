@@ -21,6 +21,7 @@ case "$path" in
     esac ;;
   repos/*)
     case "$4" in
+      '.full_name // ""') printf '%s\n' "${path#repos/}" ;;
       '.permissions.push // false') printf '%s\n' "$MOCK_PUSH" ;;
       .default_branch) printf 'main\n' ;;
       *) exit 93 ;;
@@ -88,4 +89,8 @@ run_fail
 export MOCK_PUSH='true'
 export MOCK_ISSUE_BODY='<!-- superagent-route:broken -->'
 run_fail
-echo 'Superagent prepare routing: 7 offline scenarios passed'
+export MOCK_ISSUE_BODY='<!-- superagent-route:v1 repo=grunvald91/SMENA mode=read -->'
+export MOCK_PUSH='false'
+run_success
+grep -q 'github.com/grunvald91/SMENA.git' "$GIT_MOCK_LOG"
+echo 'Superagent prepare routing: 8 offline scenarios passed'
