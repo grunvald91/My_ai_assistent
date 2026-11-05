@@ -23,7 +23,7 @@ if ! grep -q 'claudehub-anthropic:' "$profile" || ! grep -q 'claudehub-openai:' 
   echo 'WARNING: provider route missing after plugin registration; preserving backup'
   exit 15
 fi
-if [ "$(grep -c '^[[:space:]]*\\- id:' "$profile")" -lt 3 ]; then
+if [ "$(grep -c '^- id:' "$profile")" -lt 3 ]; then
   echo 'ERROR: agent profile appears incomplete'
   exit 16
 fi
