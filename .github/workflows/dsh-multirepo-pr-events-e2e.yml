@@ -1,0 +1,73 @@
+name: DSH external PR review and CI change E2E (one-off)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-multirepo-pr-events-e2e.yml]
+permissions:
+  contents: read
+jobs:
+  events:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - name: Test synthetic CI status transitions and real PR review via server monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GH_TOKEN:-}" && test -n "${SSH_KEY_157:-}" || exit 10
+          repo=grunvald91/booking_bot
+          sha=9ea6ebbe4d2d03712c37f05d84757c472af280dd
+          test "$(gh api user --jq .login | tr '[:upper:]' '[:lower:]')" = grunvald91
+          test "$(gh api "repos/$repo/pulls/139" --jq .head.sha)" = "$sha"
+          test "$(gh api "repos/$repo/pulls/139" --jq .draft)" = true
+          test "$(gh api "repos/$repo/pulls/139" --jq .changed_files)" = 1
+          test "$(gh api "repos/$repo/pulls/139" --jq .files)" = null || true
+          echo 'PR_E2E_GUARDS_OK=1'
+          umask 077
+          K="$(mktemp)"; H="$(mktemp)"
+          trap 'rm -f "$K" "$H"; gh api "repos/$repo/statuses/$sha" --method POST -f state=success -f context=superagent/e2e-synthetic -f "description=E2E synthetic test finished (not production CI)" >/dev/null 2>&1 || true' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          unset SSH_KEY_157
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          test "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
+          SSH=(ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" -o ConnectTimeout=10 root@157.22.203.28)
+          start_monitor() {
+            "${SSH[@]}" 'systemctl start superagent-capability.service && test "$(systemctl show superagent-capability.service -p Result --value)" = success'
+          }
+          comment_state() {
+            gh api "repos/grunvald91/Ai_growth_os/issues/295/comments?per_page=100" --jq '
+              [.[] | select(.user.login == "Grunvald1991" and (.body | contains("<!-- superagent-prwatch:v1 issue=295"))) | .body] | last // ""'
+          }
+          # A real code-review comment was posted separately by the owner.
+          start_monitor
+          baseline="$(comment_state)"
+          printf '%s' "$baseline" | grep -q 'Комментарии к коду:\*\* 1'
+          echo 'REAL_REVIEW_COMMENT_TRACKED=1'
+
+          # Synthetic GitHub commit status: explicitly NOT real CI and NOT a repository code change.
+          gh api "repos/$repo/statuses/$sha" --method POST \
+            -f state=failure -f context=superagent/e2e-synthetic \
+            -f "description=E2E synthetic failure (not production CI)" >/dev/null
+          start_monitor
+          failed="$(comment_state)"
+          printf '%s' "$failed" | grep -q 'CI:\*\* есть ошибки'
+          echo 'FAILED_CI_CHANGE_DETECTED=1'
+
+          gh api "repos/$repo/statuses/$sha" --method POST \
+            -f state=success -f context=superagent/e2e-synthetic \
+            -f "description=E2E synthetic success (not production CI)" >/dev/null
+          start_monitor
+          passed="$(comment_state)"
+          printf '%s' "$passed" | grep -q 'CI:\*\* успешно'
+          echo 'SUCCESSFUL_CI_CHANGE_DETECTED=1'
+
+          # Trigger again with no changes: must not create an extra Issue comment.
+          count_before="$(gh api "repos/grunvald91/Ai_growth_os/issues/295/comments?per_page=100" --jq 'length')"
+          start_monitor
+          count_after="$(gh api "repos/grunvald91/Ai_growth_os/issues/295/comments?per_page=100" --jq 'length')"
+          test "$count_before" = "$count_after"
+          echo 'PR_UPDATE_DEDUPLICATION_VERIFIED=1'
+          echo "DSH_ACTIVE=$("${SSH[@]}" 'systemctl is-active dsh-superagent')"
