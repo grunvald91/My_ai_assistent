@@ -1,4 +1,4 @@
-name: DSH inspect selected default provider for pending ticket
+name: DSH verify DeepSeek V4.1 and Opus model availability
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
