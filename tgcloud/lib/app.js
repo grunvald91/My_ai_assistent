@@ -455,5 +455,5 @@ export function createApp(base) {
     }
   }
 
-  return { handle, dispatch, commands, posts, business, replies, code, bg: D.bg, chat: chatMod, core, out, D };
+  return { handle, dispatch, commands, posts, business, replies, code, superagent: D.superagent, bg: D.bg, chat: chatMod, core, out, D };
 }
