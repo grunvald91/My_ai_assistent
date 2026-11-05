@@ -1,10 +1,12 @@
 // superagent.js — поручения DeepSeek Superagent прямо из личного Telegram-чата.
 // GitHub Issue — внутренняя очередь; пользователю не нужен GitHub Actions UI.
-// Текущая версия Superagent принимает задания только в Ai_growth_os.
+// Один Superagent обслуживает Growth и импортированный BookingBot в Ai_growth_os.
 import { escapeHtml, truncate } from './util.js';
 import { findSecrets } from './codeparse.js';
 
 export const AGENT_REPO = 'grunvald91/Ai_growth_os';
+export const BOOKING_SOURCE_REPO = 'grunvald91/booking_bot';
+export const BOOKING_MODULE_PATH = 'services/booking_bot/';
 export const AGENT_ACCOUNT = 'Grunvald1991';
 const WATCH_WORKFLOW = 'superagent-watch.yml';
 const ACK_MARKER = /<!--\s*dsh-superagent:[\da-f]+\s*-->/i;
@@ -22,9 +24,14 @@ export function agentTaskType(text) {
   return WORK_VERBS.test(text) ? 'code-change' : 'report-only';
 }
 
+export function isBookingTask(text) {
+  return /booking[_\s-]?bot|букинг(?:а|у|ом)?[\s-]*бот(?:а|у|ом)?|grunvald91\/booking_bot/i.test(String(text ?? ''));
+}
+
 function unsupportedRepository(text) {
   const links = [...String(text).matchAll(/(?:https?:\/\/github\.com\/)?(grunvald91\/[a-z0-9_.-]+)/gi)];
-  return links.some((m) => m[1].toLowerCase() !== AGENT_REPO.toLowerCase());
+  const allowed = new Set([AGENT_REPO.toLowerCase(), BOOKING_SOURCE_REPO.toLowerCase()]);
+  return links.some((m) => !allowed.has(m[1].toLowerCase()));
 }
 
 function resultComment(comments) {
@@ -44,7 +51,7 @@ export function createSuperagent(D) {
     const text = String(raw ?? '').trim();
     if (!text) {
       await store.setState(chatId, 'agent_task');
-      await out.sendHtml(chatId, '🛠 <b>Что поручить агенту?</b>\nПросто напиши задачу следующим сообщением. Я сам передам её, а результат верну сюда.\nПока агент работает с <code>Ai_growth_os</code>.');
+      await out.sendHtml(chatId, '🛠 <b>Что поручить агенту?</b>\nПросто напиши задачу следующим сообщением. Я сам передам её, а результат верну сюда.\nАгент работает с <code>Ai_growth_os</code>, включая BookingBot.');
       return true;
     }
     if (/^(?:статус|status|проверить|проверь)$/i.test(text)) return status(chatId);
@@ -57,7 +64,7 @@ export function createSuperagent(D) {
       return true;
     }
     if (unsupportedRepository(text)) {
-      await out.sendHtml(chatId, '⚠️ Сейчас Superagent принимает задачи только для <code>grunvald91/Ai_growth_os</code>. Другой репозиторий не буду подменять им.');
+      await out.sendHtml(chatId, '⚠️ Superagent поддерживает только Ai_growth_os и импортированный BookingBot. Другой репозиторий не буду подменять ими.');
       return true;
     }
     if (findSecrets(text).length) {
@@ -65,13 +72,19 @@ export function createSuperagent(D) {
       return true;
     }
     const type = agentTaskType(text);
-    const title = '[Telegram] ' + truncate(text.replace(/\s+/g, ' ').split(/[.!?\n]/)[0], 135);
+    const bookingTask = isBookingTask(text);
+    const title = '[Telegram] ' + (bookingTask ? 'BookingBot: ' : '') + truncate(text.replace(/\s+/g, ' ').split(/[.!?\n]/)[0], bookingTask ? 120 : 135);
     const body = [
       '@' + AGENT_ACCOUNT,
       '',
       '## Задание от владельца через My AI Assistant',
       '',
       text,
+      '',
+      '## Рабочий репозиторий и каталог',
+      bookingTask
+        ? 'BookingBot теперь входит в grunvald91/Ai_growth_os: код находится в services/booking_bot/. Даже если пользователь прислал старую ссылку github.com/grunvald91/booking_bot, все чтения, коммиты и Pull Request делай в grunvald91/Ai_growth_os и в каталоге services/booking_bot/. Исходный репозиторий booking_bot и production не трогай: его деплой ещё не переведён в монорепозиторий.'
+        : 'Рабочий репозиторий: grunvald91/Ai_growth_os. Не изменяй BookingBot без явного запроса.',
       '',
       '## Правила исполнения',
       '',
@@ -108,7 +121,7 @@ export function createSuperagent(D) {
     await D.log?.('superagent_sent', chatId, { issue: number, type });
     await out.sendHtml(chatId,
       '✅ <b>Передал задачу агенту.</b>\n' +
-      'Проект: <code>Ai_growth_os</code>\n' +
+      'Проект: <code>' + (bookingTask ? 'ServGo / BookingBot' : 'Ai_growth_os') + '</code>\n' +
       'Режим: ' + (type === 'report-only' ? 'проверка и отчёт' : 'изменения через PR') + '\n' +
       '<a href="' + link + '">Открыть задачу #' + number + '</a>\n\n' +
       (tracking ? 'Результат пришлю сюда, когда агент закончит.' :
