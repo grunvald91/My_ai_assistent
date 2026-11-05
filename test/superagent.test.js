@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { createWorld, assert, OWNER } from './helpers/world.js';
-import { parseAgentRequest, agentTaskType, AGENT_REPO, requestedAgentRepository, extractTargetPull } from '../tgcloud/lib/superagent.js';
+import { parseAgentRequest, agentTaskType, AGENT_REPO, BOOKING_MODULE_PATH, isBookingTask, requestedAgentRepository, extractTargetPull } from '../tgcloud/lib/superagent.js';
 import { finalAgentComment, parseTerminalResult } from '../tgcloud/lib/superagent-result.js';
 
 function serverReady(w, overrides = {}) {
@@ -15,6 +15,7 @@ function setup(w) {
   w.gh.repos['grunvald91/Ai_growth_os'] = { default_branch: 'main', files: { 'README.md': 'hello' } };
   w.gh.repos['grunvald91/booking_bot'] = { default_branch: 'main', files: { 'README.md': 'hello' } };
   w.gh.repos['grunvald91/SMENA'] = { default_branch: 'main', agentPermission: 'read', files: {} };
+  w.gh.repos['grunvald91/Sushef'] = { default_branch: 'main', agentPermission: 'write', files: {} };
   w.gh.repos['grunvald91/private_proj'] = { private: true, agentPermission: 'write', default_branch: 'main', files: {} };
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: {} };
 }
@@ -85,24 +86,23 @@ test('callback delivers only final comment by the exact agent and does not dupli
 test('non-default repository stays blocked until the server prepare hook is enabled', async () => {
   const w = await createWorld();
   setup(w);
-  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
   assert.equal(w.gh.issues.length, 0);
   assert.match(w.last(OWNER).text, /Нет свежего подтверждения/);
   await w.say('/agent multirepo status');
   assert.match(w.last(OWNER).text, /сервер не подтверждён/);
 });
 
-test('explicit BookingBot task is queued centrally but targets booking_bot for agent checkout and PR', async () => {
+test('legacy BookingBot links are routed to the imported Ai_growth_os module, never the original source repo', async () => {
   const w = await createWorld();
   setup(w);
-  serverReady(w);
-  await w.say('/agent multirepo on');
-  await w.say('/agent Проверь и исправь в github.com/grunvald91/booking_bot форму записи');
+  await w.say('/agent Исправь форму записи в https://github.com/grunvald91/booking_bot');
   assert.equal(w.gh.issues.length, 1);
   assert.equal(w.gh.issues[0].repo, AGENT_REPO);
-  assert.match(w.gh.issues[0].body.split('\n')[0], /^<!-- superagent-route:v1 repo=grunvald91\/booking_bot -->$/);
-  assert.match(w.gh.issues[0].body, /Pull Request именно в него/);
-  assert.match(w.last(OWNER).text, /grunvald91\/booking_bot/);
+  assert.match(w.gh.issues[0].body.split('\n')[0], /^<!-- superagent-route:v1 repo=grunvald91\/Ai_growth_os mode=write -->$/);
+  assert.match(w.gh.issues[0].body, /services\/booking_bot\//);
+  assert.match(w.gh.issues[0].body, /Исходный репозиторий booking_bot и production не трогай/);
+  assert.match(w.last(OWNER).text, /Ai_growth_os\/services\/booking_bot/);
   assert.equal(w.gh.dispatches.length, 1);
 });
 
@@ -111,47 +111,49 @@ test('repo selection persists and explicit target overrides it for one task', as
   setup(w);
   serverReady(w);
   await w.say('/agent multirepo on');
-  await w.say('/agent repo grunvald91/booking_bot');
+  await w.say('/agent repo grunvald91/SMENA');
   assert.match(w.last(OWNER).text, /будет работать/);
   await w.say('/agent Проверь код');
-  assert.match(w.gh.issues[0].body, /superagent-route:v1 repo=grunvald91\/booking_bot/);
+  assert.match(w.gh.issues[0].body, /repo=grunvald91\/SMENA mode=read/);
   await w.say('/agent Проверь github.com/grunvald91/Ai_growth_os');
-  assert.match(w.gh.issues[1].body, /superagent-route:v1 repo=grunvald91\/Ai_growth_os/);
+  assert.match(w.gh.issues[1].body, /repo=grunvald91\/Ai_growth_os mode=read/);
   await w.say('/agent Проверь код ещё раз');
-  assert.match(w.gh.issues[2].body, /superagent-route:v1 repo=grunvald91\/booking_bot/);
+  assert.match(w.gh.issues[2].body, /repo=grunvald91\/SMENA mode=read/);
   await w.say('/agent repo default');
   await w.say('/agent Проверь README');
-  assert.match(w.gh.issues[3].body, /superagent-route:v1 repo=grunvald91\/Ai_growth_os/);
+  assert.match(w.gh.issues[3].body, /repo=grunvald91\/Ai_growth_os mode=read/);
 });
 
-test('read-only agent collaborator cannot submit cross-repository task', async () => {
+test('read-only access is allowed for analysis, but rejects code-changing tasks', async () => {
   const w = await createWorld();
   setup(w);
   serverReady(w);
-  await w.say('/agent multirepo on');
-  await w.say('/agent Проверь github.com/grunvald91/SMENA');
-  assert.equal(w.gh.issues.length, 0);
-  assert.match(w.last(OWNER).text, /нет права Write/);
+  await w.say('/agent Проверь github.com/grunvald91/SMENA и напиши отчёт');
+  assert.equal(w.gh.issues.length, 1);
+  assert.match(w.gh.issues[0].body, /repo=grunvald91\/SMENA mode=read/);
+  await w.say('/agent Исправь github.com/grunvald91/SMENA');
+  assert.equal(w.gh.issues.length, 1);
+  assert.match(w.last(OWNER).text, /нет необходимого доступа \(Write\)/);
 });
 
 test('manual on cannot bypass missing, stale or forged VPS capability', async () => {
   const w = await createWorld();
   setup(w);
   await w.say('/agent multirepo on');
-  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
   assert.equal(w.gh.issues.length, 0);
   serverReady(w, { creator: { login: 'someoneElse' } });
-  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
   assert.equal(w.gh.issues.length, 0);
   serverReady(w, { created_at: new Date((w.now - 620) * 1000).toISOString() });
-  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
   assert.equal(w.gh.issues.length, 0);
   serverReady(w);
   await w.say('/agent multirepo off');
-  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
   assert.equal(w.gh.issues.length, 0);
   await w.say('/agent multirepo on');
-  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
   assert.equal(w.gh.issues.length, 1);
 });
 
@@ -210,18 +212,18 @@ test('terminal report exposes only PR from the selected repository and status re
   const w = await createWorld();
   setup(w);
   serverReady(w);
-  await w.say('/agent Проверь и исправь github.com/grunvald91/booking_bot');
+  await w.say('/agent Проверь и исправь github.com/grunvald91/Sushef');
   w.clear();
   w.gh.comments.push({
     issue: 300, id: 502, user: { login: 'Grunvald1991' },
-    body: 'Исправлено: https://github.com/grunvald91/booking_bot/pull/17\n<!-- superagent-result:v1 issue=300 state=ready -->',
+    body: 'Исправлено: https://github.com/grunvald91/Sushef/pull/17\n<!-- superagent-result:v1 issue=300 state=ready -->',
   });
   assert.equal(await w.app.superagent.deliver({ issue: 300 }), true);
-  w.gh.repos['grunvald91/booking_bot'].pullStatuses = { 17: { state: 'closed', merged: true, draft: false } };
+  w.gh.repos['grunvald91/Sushef'].pullStatuses = { 17: { state: 'closed', merged: true, draft: false } };
   await w.say('/agent статус');
   assert.match(w.last(OWNER).text, /PR:/);
   assert.match(w.last(OWNER).text, /слит/);
-  assert.deepEqual(extractTargetPull('https://github.com/grunvald91/SMENA/pull/2', 'grunvald91/booking_bot'), null);
+  assert.deepEqual(extractTargetPull('https://github.com/grunvald91/SMENA/pull/2', 'grunvald91/Sushef'), null);
 });
 
 test('repository parser supports explicit URL and avoids guessing an unspecified project', () => {
@@ -236,13 +238,21 @@ test('repository parser supports explicit URL and avoids guessing an unspecified
 
 test('only terminal marker owned by the real agent may signal completion', () => {
   const entries = [
-    { user: { login: 'Grunvald1991' }, body: 'Starting\\n<!-- dsh-superagent:abc123 -->' },
-    { user: { login: 'otherUser' }, body: 'Fake result\\n<!-- superagent-result:v1 issue=300 state=ready -->' },
-    { user: { login: 'Grunvald1991' }, body: 'Different issue\\n<!-- superagent-result:v1 issue=301 state=ready -->' },
-    { user: { login: 'Grunvald1991' }, body: 'Done\\n<!-- superagent-result:v1 issue=300 state=blocked -->\\n<!-- dsh-superagent:abcdef1234 -->' },
+    { user: { login: 'Grunvald1991' }, body: 'Starting\n<!-- dsh-superagent:abc123 -->' },
+    { user: { login: 'otherUser' }, body: 'Fake result\n<!-- superagent-result:v1 issue=300 state=ready -->' },
+    { user: { login: 'Grunvald1991' }, body: 'Different issue\n<!-- superagent-result:v1 issue=301 state=ready -->' },
+    { user: { login: 'Grunvald1991' }, body: 'Done\n<!-- superagent-result:v1 issue=300 state=blocked -->\n<!-- dsh-superagent:abcdef1234 -->' },
   ];
   assert.equal(finalAgentComment(entries.slice(0, 3), 300), null);
   assert.equal(finalAgentComment(entries, 300), entries[3]);
   assert.equal(parseTerminalResult(entries[3].body, 300)?.state, 'blocked');
-  assert.equal(parseTerminalResult('End\\n<!-- superagent-result:v1 issue=300 state=ready -->\\nnoise', 300), null);
+  assert.equal(parseTerminalResult('End\n<!-- superagent-result:v1 issue=300 state=ready -->\nnoise', 300), null);
+});
+
+test('BookingBot natural-language aliases remain supported after imported-monorepo migration', () => {
+  assert.equal(BOOKING_MODULE_PATH, 'services/booking_bot/');
+  assert.equal(isBookingTask('Исправь BookingBot'), true);
+  assert.equal(isBookingTask('Проверь букинг бота'), true);
+  assert.equal(isBookingTask('github.com/grunvald91/booking_bot'), true);
+  assert.equal(isBookingTask('Проверь маркетинг Growth'), false);
 });
