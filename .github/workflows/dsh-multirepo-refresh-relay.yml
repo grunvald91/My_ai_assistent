@@ -1,0 +1,73 @@
+name: DSH Multi-Repo relay pipefail fix (one-off VPS)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-multirepo-refresh-relay.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 1840a5ac6ea77f1fff5048149e8ed11fb4110f09
+      - name: Verify patch scripts locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/superagent-terminal-relay.sh scripts/superagent-capability-heartbeat.sh
+          bash test/superagent-terminal-relay.test.sh
+      - name: Copy only tested VPS relay/heartbeat scripts and verify service
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_KEY_157:-}"
+          umask 077
+          K="$(mktemp)"; H="$(mktemp)"
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          unset SSH_KEY_157
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          test "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
+          SSH=(ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" -o ConnectTimeout=10 root@157.22.203.28)
+          STAGE=/srv/dsh-agent/config/multirepo-relay-fix-1840a5ac6ea77f1fff5048149e8ed11fb4110f09
+          "${SSH[@]}" "install -d -m 0700 -o root -g root '$STAGE'"
+          tar -cf - scripts/superagent-terminal-relay.sh scripts/superagent-capability-heartbeat.sh | "${SSH[@]}" "tar -C '$STAGE' -xf -"
+          "${SSH[@]}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          STAGE=/srv/dsh-agent/config/multirepo-relay-fix-1840a5ac6ea77f1fff5048149e8ed11fb4110f09
+          BIN=/srv/dsh-agent/.local/bin
+          test "$(systemctl is-active dsh-superagent)" = active
+          test "$(systemctl is-active superagent-capability.timer)" = active
+          test "$(systemctl show dsh-superagent -p User --value)" = dsh-agent
+          for file in superagent-terminal-relay.sh superagent-capability-heartbeat.sh; do
+            test -f "$STAGE/scripts/$file"
+            bash -n "$STAGE/scripts/$file"
+            test -f "$BIN/$file"
+            cp -p "$BIN/$file" "$STAGE/$file.before"
+            install -o dsh-agent -g dsh-agent -m 0755 "$STAGE/scripts/$file" "$BIN/$file"
+            cmp "$STAGE/scripts/$file" "$BIN/$file"
+          done
+          echo 'RELAY_AND_HEARTBEAT_SCRIPTS_PATCHED=1'
+          if ! systemctl start superagent-capability.service; then
+            echo 'CAPABILITY_SERVICE_FAILED_AFTER_PATCH'
+            echo "EXIT_CODE=$(systemctl show superagent-capability.service -p ExecMainStatus --value)"
+            journalctl -u superagent-capability.service -n 16 -o cat --no-pager | \
+              grep -Ei 'error|failed|refused|missing|permission|status|not|cannot|denied|parse|curl|jq|gh|mkdir|python|broken pipe' | \
+              sed -E 's/(ghp_|github_pat_|sk-)[A-Za-z0-9_-]{12,}/[REDACTED]/g; s/(token|password|secret|authorization)([=: ][^ ]+)/\\1=[REDACTED]/Ig' | \
+              cut -c1-180 | tail -12 || true
+            exit 1
+          fi
+          test "$(systemctl show superagent-capability.service -p Result --value)" = success
+          test "$(systemctl is-active superagent-capability.timer)" = active
+          echo 'CAPABILITY_HEARTBEAT_SUCCESS=1'
+          echo 'SCHEDULED_TIMER_ACTIVE=1'
+          echo "DSH_STILL_ACTIVE=$(systemctl is-active dsh-superagent)"
+          REMOTE
