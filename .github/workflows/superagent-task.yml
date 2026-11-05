@@ -1,9 +1,6 @@
 name: Superagent - submit task
 run-name: Agent task - ${{ inputs.title }}
 on:
-  push:
-    branches: [main]
-    paths: [.github/workflows/superagent-task.yml]
   workflow_dispatch:
     inputs:
       title:
@@ -31,9 +28,9 @@ jobs:
     timeout-minutes: 4
     env:
       GH_TOKEN: ${{ secrets.GH_PAT }}
-      TASK_TITLE: ${{ inputs.title || '[Smoke] Проверка работы Superagent из My_ai_assistent' }}
-      TASK_INSTRUCTIONS: "${{ inputs.instructions || 'Проверка подключения: изучи структуру репозитория Ai_growth_os и напиши короткий отчёт в этом Issue. Не изменяй файлы, не открывай Pull Request, не запускай деплой и не обращайся к ключам.' }}"
-      TASK_TYPE: ${{ inputs.task_type || 'report-only' }}
+      TASK_TITLE: ${{ inputs.title }}
+      TASK_INSTRUCTIONS: "${{ inputs.instructions }}"
+      TASK_TYPE: ${{ inputs.task_type }}
       TARGET_REPO: grunvald91/Ai_growth_os
     steps:
       - name: Create GitHub Issue mentioning separate agent account
