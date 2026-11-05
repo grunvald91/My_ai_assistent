@@ -1,0 +1,42 @@
+name: Superagent Telegram result delivery
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'Issue number in Ai_growth_os'
+        required: true
+        type: string
+      chat_id:
+        description: 'Telegram owner ID (verified against OWNER_IDS)'
+        required: true
+        type: string
+
+concurrency:
+  group: superagent-watch-${{ inputs.issue }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_PAT: ${{ secrets.GH_PAT }}
+      TGCLOUD_TOKEN: ${{ secrets.TELEGRAM_CLI_ACCESS }}
+      CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
+      OWNER_IDS: ${{ secrets.OWNER_IDS || vars.OWNER_IDS }}
+      AGENT_ISSUE: ${{ inputs.issue }}
+      AGENT_CHAT_ID: ${{ inputs.chat_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Deliver agent response to Telegram, or report still in progress
+        run: |
+          node scripts/write-secrets.mjs
+          node scripts/superagent-watch.mjs

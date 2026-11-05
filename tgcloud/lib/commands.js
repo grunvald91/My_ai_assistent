@@ -49,6 +49,7 @@ export function createCommands(D, mods) {
     '/group — как отвечать в группах: выкл / по запросу / на все\n' +
     '/business — ответы от моего имени в личке (Telegram Business)\n' +
     '/gh · /repo · /code — писать код и пушить в твои репозитории (кроме бота)\n' +
+    '/agent задача — поручить работу Superagent, результат верну сюда\n' +
     '/runs — GitHub Actions: последние запуски и кнопка Run workflow\n\n' +
     '<b>Память</b>\n' +
     '/memory — что я помню · /remember текст · /forget номер\n' +
@@ -146,6 +147,8 @@ export function createCommands(D, mods) {
       case 'runs':
         await code.runsCommand(chatId, arg);
         return true;
+      case 'agent':
+        return D.superagent.command(chatId, arg);
       case 'code':
         await code.startTask(chat, arg);
         return true;
