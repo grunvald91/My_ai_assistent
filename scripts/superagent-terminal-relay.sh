@@ -49,7 +49,32 @@ for stage in open ended; do
       author="$(printf '%s' "$entry" | jq -r '.user.login // ""')"
       line="$(printf '%s' "$entry" | jq -r '.body // ""' | head -n1)"
       [[ "${author,,}" == grunvald91 ]] || continue
-      [[ "$line" =~ ^'<!-- superagent-route:v1 repo='([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)'( mode='(read|write)')?' -->'$ ]] || continue
+      route_re='^<!-- superagent-route:v1 repo=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)( mode=(read|write))? -->
+
+      # Avoid a duplicate comment if the process crashed after GitHub accepted POST.
+      existing="$(gh api "repos/$HUB/issues/$issue/comments?per_page=100" --paginate --jq '.[].body' || true)"
+      relay_marker="<!-- superagent-relay:v1 report=$report_tag -->"
+      if [[ "$existing" != *"$relay_marker"* ]]; then
+        summary="$(printf '%s' "$report" | jq -r '.summary // "Задание завершено без подробного описания."')"
+        body="$(printf '%s
+
+%s
+%s
+<!-- superagent-result:v1 issue=%s state=%s -->'           "Результат DeepSeek Superagent ($status):" "$summary" "$relay_marker" "$issue" "$status")"
+        gh api "repos/$HUB/issues/$issue/comments" --method POST -f body="$body" >/dev/null
+      fi
+      printf '%s
+' "$report_tag" >> "$seen"
+      count=$((count+1))
+    done < <(printf '%s' "$page" | jq -r '.items[].id')
+    offset=$((offset+n))
+    [[ "$n" -lt 100 ]] && break
+    if [[ "$offset" -ge 1000 ]]; then echo "Ticket pagination safety limit reached" >&2; exit 49; fi
+  done
+done
+echo "Superagent terminal reports relayed: $count"
+
+      [[ "$line" =~ $route_re ]] || continue
 
       # Avoid a duplicate comment if the process crashed after GitHub accepted POST.
       existing="$(gh api "repos/$HUB/issues/$issue/comments?per_page=100" --paginate --jq '.[].body' || true)"
