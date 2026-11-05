@@ -105,7 +105,8 @@ export function prUpdateComment(issue, snapshot, fp) {
     '**CI:** ' + ci + ' (' + snapshot.runs.length + ' checks, ' + snapshot.legacy.length + ' commit statuses)',
     '**Ревью:** ' + (changes.length ? 'запрошены изменения ' + changes.join(', ') :
       approvals.length ? 'одобрено ' + approvals.join(', ') : 'нет активных требований изменить код'),
-    '**Запрошенные ревьюеры:** ' + [...snapshot.requestedUsers.map(x => '@'+x), ...snapshot.requestedTeams.map(x => 'team:'+x)].join(', ').slice(0, 250) || '**Запрошенные ревьюеры:** нет',
+    '**Запрошенные ревьюеры:** ' +
+      ([...snapshot.requestedUsers.map(x => '@'+x), ...snapshot.requestedTeams.map(x => 'team:'+x)].join(', ').slice(0, 250) || 'нет'),
     '**Комментарии к коду:** ' + snapshot.reviewCommentCount,
     '',
     'Слежение выполняется на VPS без слияния, деплоя и автоматического изменения ветки.',
