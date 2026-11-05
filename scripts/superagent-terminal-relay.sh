@@ -31,8 +31,10 @@ for stage in open ended; do
       [[ "$ticket" =~ ^[A-Za-z0-9_-]+$ ]] || continue
       detail="$(api "tickets/$ticket")"
       report="$(printf '%s' "$detail" | jq -c '
-        [.assignments[]?.report | select(. != null and
-          (.state == "ready" or .state == "blocked" or .state == "failed" or .state == "dropped"))] | last // empty')"
+        if .stage == "person" or .stage == "ended" then
+          .assignments[-1].report |
+          select(. != null and (.state == "ready" or .state == "blocked" or .state == "failed" or .state == "dropped"))
+        else empty end')"
       [[ -n "$report" ]] || continue
       status="$(printf '%s' "$report" | jq -r .state)"
       at="$(printf '%s' "$report" | jq -r '.at // empty')"
@@ -49,7 +51,13 @@ for stage in open ended; do
       author="$(printf '%s' "$data" | jq -r '.user.login // ""')"
       first_line="$(printf '%s' "$data" | jq -r '.body // ""' | head -n1)"
       [[ "${author,,}" == grunvald91 ]] || continue
-      [[ "$first_line" =~ $route_re ]] || continue
+      # The pre-multi-repo bridge did not add a route marker, but it did add this fixed owner-task heading.
+      # Continue delivering results for those already accepted tickets as well.
+      if ! [[ "$first_line" =~ $route_re ]]; then
+        old_issue="$(printf '%s' "$data" | jq -r '.body // ""')"
+        [[ "$old_issue" == *'## Задание от владельца через My AI Assistant'* ]] || continue
+        [[ "$old_issue" == *'@Grunvald1991'* ]] || continue
+      fi
 
       relay_marker="<!-- superagent-relay:v1 report=$tag -->"
       prior="$("$cli" api "repos/$hub/issues/$issue/comments?per_page=100" --paginate \
