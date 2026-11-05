@@ -1,4 +1,4 @@
-name: DSH audit GitHub notification delivery
+name: DSH audit GitHub event cursor after observed comment
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
