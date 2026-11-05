@@ -1,9 +1,11 @@
 import test from 'node:test';
 import { createWorld, assert, OWNER } from './helpers/world.js';
-import { parseAgentRequest, agentTaskType, AGENT_REPO } from '../tgcloud/lib/superagent.js';
+import { parseAgentRequest, agentTaskType, AGENT_REPO, requestedAgentRepository } from '../tgcloud/lib/superagent.js';
 
 function setup(w) {
   w.gh.repos['grunvald91/Ai_growth_os'] = { default_branch: 'main', files: { 'README.md': 'hello' } };
+  w.gh.repos['grunvald91/booking_bot'] = { default_branch: 'main', files: { 'README.md': 'hello' } };
+  w.gh.repos['grunvald91/SMENA'] = { default_branch: 'main', files: {} };
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: {} };
 }
 
@@ -70,16 +72,51 @@ test('callback delivers only final comment by the exact agent and does not dupli
   assert.match(w.last(OWNER).text, /уже выполнена/);
 });
 
-test('agent does not leak recognized tokens or route work to an unsupported repository', async () => {
+test('explicit BookingBot task is queued centrally but targets booking_bot for agent checkout and PR', async () => {
   const w = await createWorld();
   setup(w);
-  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  await w.say('/agent Проверь и исправь в github.com/grunvald91/booking_bot форму записи');
+  assert.equal(w.gh.issues.length, 1);
+  assert.equal(w.gh.issues[0].repo, AGENT_REPO);
+  assert.match(w.gh.issues[0].body.split('\\n')[0], /^<!-- superagent-route:v1 repo=grunvald91\\/booking_bot -->$/);
+  assert.match(w.gh.issues[0].body, /Pull Request именно в него/);
+  assert.match(w.last(OWNER).text, /grunvald91\\/booking_bot/);
+  assert.equal(w.gh.dispatches.length, 1);
+});
+
+test('repo selection persists and explicit target overrides it for one task', async () => {
+  const w = await createWorld();
+  setup(w);
+  await w.say('/agent repo grunvald91/booking_bot');
+  assert.match(w.last(OWNER).text, /будет работать/);
+  await w.say('/agent Проверь код');
+  assert.match(w.gh.issues[0].body, /superagent-route:v1 repo=grunvald91\\/booking_bot/);
+  await w.say('/agent Проверь github.com/grunvald91/Ai_growth_os');
+  assert.match(w.gh.issues[1].body, /superagent-route:v1 repo=grunvald91\\/Ai_growth_os/);
+  await w.say('/agent Проверь код ещё раз');
+  assert.match(w.gh.issues[2].body, /superagent-route:v1 repo=grunvald91\\/booking_bot/);
+  await w.say('/agent repo default');
+  await w.say('/agent Проверь README');
+  assert.match(w.gh.issues[3].body, /superagent-route:v1 repo=grunvald91\\/Ai_growth_os/);
+});
+
+test('multi-target and unauthorized repositories fail closed without creating Issues', async () => {
+  const w = await createWorld();
+  setup(w);
+  await w.say('/agent Проверь github.com/grunvald91/booking_bot и github.com/grunvald91/SMENA');
   assert.equal(w.gh.issues.length, 0);
-  assert.match(w.last(OWNER).text, /только для/);
+  assert.match(w.last(OWNER).text, /несколько репозиториев/);
+  await w.say('/agent Проверь github.com/grunvald91/no_such_repo');
+  assert.equal(w.gh.issues.length, 0);
+  assert.match(w.last(OWNER).text, /Не могу подтвердить доступ/);
+  await w.say('/agent Проверь github.com/grunvald91/My_ai_assistent');
+  assert.equal(w.gh.issues.length, 0);
+  assert.match(w.last(OWNER).text, /Репозиторий недопустим/);
   await w.say('/agent Используй токен ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQR');
   assert.equal(w.gh.issues.length, 0);
   assert.match(w.last(OWNER).text, /ключ или токен/);
 });
+
 
 test('if watcher dispatch fails, issue still exists and Telegram gives status fallback', async () => {
   const w = await createWorld();
@@ -98,4 +135,14 @@ test('agent intent classifier accepts explicit requests, but not unrelated text'
   assert.equal(parseAgentRequest('Просто поговорим об агенте'), null);
   assert.equal(agentTaskType('Проверь стили'), 'report-only');
   assert.equal(agentTaskType('Проверь и исправь стили'), 'code-change');
+});
+
+test('repository parser supports explicit URL and avoids guessing an unspecified project', () => {
+  assert.deepEqual(requestedAgentRepository('Посмотри GitHub https://github.com/grunvald91/booking_bot/issues/3'), {
+    repo: 'grunvald91/booking_bot', ambiguous: false,
+  });
+  assert.deepEqual(requestedAgentRepository('В репозитории booking_bot исправь'), {
+    repo: 'grunvald91/booking_bot', ambiguous: false,
+  });
+  assert.deepEqual(requestedAgentRepository('Проверь проект'), { repo: null, ambiguous: false });
 });
