@@ -42,6 +42,12 @@ bash "$ROOT/scripts/superagent-terminal-relay.sh" >/dev/null
 [[ "$(wc -l < "$COMMENT_LOG")" -eq 1 ]]
 grep -q 'superagent-result:v1 issue=300 state=ready' "$COMMENT_BODY"
 grep -q 'superagent-relay:v1 report=' "$COMMENT_BODY"
+RESULT_PATH="$COMMENT_BODY" node --input-type=module -e '
+  import { readFileSync } from "node:fs";
+  import { parseTerminalResult } from "./tgcloud/lib/superagent-result.js";
+  const body = readFileSync(process.env.RESULT_PATH, "utf8");
+  if (parseTerminalResult(body, 300)?.state !== "ready") process.exit(1);
+'
 bash "$ROOT/scripts/superagent-terminal-relay.sh" >/dev/null
 [[ "$(wc -l < "$COMMENT_LOG")" -eq 1 ]]
 echo 'Superagent terminal relay: report signal and idempotency OK'
