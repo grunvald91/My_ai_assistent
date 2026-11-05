@@ -32,7 +32,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GH_PAT }}
       TASK_TITLE: ${{ inputs.title || '[Smoke] Проверка работы Superagent из My_ai_assistent' }}
-      TASK_INSTRUCTIONS: ${{ inputs.instructions || 'Проверка подключения: изучи структуру репозитория Ai_growth_os и напиши короткий отчёт в этом Issue. Не изменяй файлы, не открывай Pull Request, не запускай деплой и не обращайся к ключам.' }}
+      TASK_INSTRUCTIONS: "${{ inputs.instructions || 'Проверка подключения: изучи структуру репозитория Ai_growth_os и напиши короткий отчёт в этом Issue. Не изменяй файлы, не открывай Pull Request, не запускай деплой и не обращайся к ключам.' }}"
       TASK_TYPE: ${{ inputs.task_type || 'report-only' }}
       TARGET_REPO: grunvald91/Ai_growth_os
     steps:
