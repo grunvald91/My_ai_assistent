@@ -1,100 +1,69 @@
 #!/usr/bin/env bash
-# Deterministic terminal-result bridge: DSH local API -> GitHub Issue -> Telegram watcher/status.
-# No LLM interpretation of completion and no extra GitHub Actions. Run from the VPS capability timer.
+# Deterministic DSH report relay. VPS local API -> central GitHub Issue result marker.
 set -euo pipefail
-: "${DSH_SUPERAGENT_URL:?Local DSH URL required}"
-HUB="grunvald91/Ai_growth_os"
+: "${DSH_SUPERAGENT_URL:?Missing local DSH URL}"
+hub="grunvald91/Ai_growth_os"
 base="${DSH_SUPERAGENT_URL%/}/orchestrator/api"
 storage="${DSH_MULTI_REPO_STATE_DIR:-$HOME/.local/state/superagent-multirepo}"
 mkdir -p "$storage"
 seen="$storage/relayed-reports.txt"
 touch "$seen"
 chmod 600 "$seen"
-lock="$storage/relay.lock"
-exec 9>"$lock"
+exec 9>"$storage/relay.lock"
 flock -n 9 || exit 0
 
 api() {
   curl --fail --silent --show-error --max-time 12 -H 'x-orchestrator-request: 1' "$base/$1"
 }
+route_re='^<!-- superagent-route:v1 repo=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)( mode=(read|write))? -->$'
 count=0
-# The DSH API defaults to open tickets; ended tickets are a separate filtered view.
+
 for stage in open ended; do
   offset=0
   while :; do
     page="$(api "tickets?state=$stage&limit=100&offset=$offset")"
     n="$(printf '%s' "$page" | jq -r '.items | length')"
     [[ "$n" =~ ^[0-9]+$ ]] || exit 48
-    [[ "$n" -eq 0 ]] && break
+    [[ "$n" -gt 0 ]] || break
     while IFS= read -r ticket; do
-      [[ "$ticket" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
+      [[ "$ticket" =~ ^[A-Za-z0-9_-]+$ ]] || continue
       detail="$(api "tickets/$ticket")"
-      # Only a worker's actual last terminal report can complete a task.
       report="$(printf '%s' "$detail" | jq -c '
         [.assignments[]?.report | select(. != null and
           (.state == "ready" or .state == "blocked" or .state == "failed" or .state == "dropped"))] | last // empty')"
       [[ -n "$report" ]] || continue
       status="$(printf '%s' "$report" | jq -r .state)"
-      report_at="$(printf '%s' "$report" | jq -r '.at // empty')"
-      [[ -n "$report_at" ]] || continue
-      report_tag="$(printf '%s' "$ticket:$report_at:$status" | sha256sum | cut -c1-20)"
-      grep -Fxq "$report_tag" "$seen" && continue
-      # Use the original central Issue channel, not linked external PRs.
+      at="$(printf '%s' "$report" | jq -r '.at // empty')"
+      [[ -n "$at" ]] || continue
+      tag="$(printf '%s' "$ticket:$at:$status" | sha256sum | cut -c1-20)"
+      if grep -Fxq "$tag" "$seen"; then continue; fi
+
       issue_url="$(printf '%s' "$detail" | jq -r '.channels[]? | select(.url? and
         (.url | test("^https://github.com/grunvald91/Ai_growth_os/issues/[0-9]+$"))) | .url' | head -n1)"
       [[ -n "$issue_url" ]] || continue
       issue="${issue_url##*/}"
       [[ "$issue" =~ ^[1-9][0-9]*$ ]] || continue
-      entry="$(gh api "repos/$HUB/issues/$issue")"
-      author="$(printf '%s' "$entry" | jq -r '.user.login // ""')"
-      line="$(printf '%s' "$entry" | jq -r '.body // ""' | head -n1)"
+      data="$(gh api "repos/$hub/issues/$issue")"
+      author="$(printf '%s' "$data" | jq -r '.user.login // ""')"
+      first_line="$(printf '%s' "$data" | jq -r '.body // ""' | head -n1)"
       [[ "${author,,}" == grunvald91 ]] || continue
-      route_re='^<!-- superagent-route:v1 repo=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)( mode=(read|write))? -->
+      [[ "$first_line" =~ $route_re ]] || continue
 
-      # Avoid a duplicate comment if the process crashed after GitHub accepted POST.
-      existing="$(gh api "repos/$HUB/issues/$issue/comments?per_page=100" --paginate --jq '.[].body' || true)"
-      relay_marker="<!-- superagent-relay:v1 report=$report_tag -->"
-      if [[ "$existing" != *"$relay_marker"* ]]; then
-        summary="$(printf '%s' "$report" | jq -r '.summary // "Задание завершено без подробного описания."')"
-        body="$(printf '%s
-
-%s
-%s
-<!-- superagent-result:v1 issue=%s state=%s -->'           "Результат DeepSeek Superagent ($status):" "$summary" "$relay_marker" "$issue" "$status")"
-        gh api "repos/$HUB/issues/$issue/comments" --method POST -f body="$body" >/dev/null
+      relay_marker="<!-- superagent-relay:v1 report=$tag -->"
+      prior="$(gh api "repos/$hub/issues/$issue/comments?per_page=100" --paginate \
+        --jq '.[] | select(.user.login == "Grunvald1991") | .body')"
+      if [[ "$prior" != *"$relay_marker"* ]]; then
+        summary="$(printf '%s' "$report" | jq -r '.summary // "Отчёт завершён без текста."')"
+        comment="$(printf 'Состояние Superagent: %s\n\n%s\n%s\n<!-- superagent-result:v1 issue=%s state=%s -->' \
+          "$status" "$summary" "$relay_marker" "$issue" "$status")"
+        gh api "repos/$hub/issues/$issue/comments" --method POST -f body="$comment" >/dev/null
       fi
-      printf '%s
-' "$report_tag" >> "$seen"
+      printf '%s\n' "$tag" >> "$seen"
       count=$((count+1))
     done < <(printf '%s' "$page" | jq -r '.items[].id')
     offset=$((offset+n))
     [[ "$n" -lt 100 ]] && break
-    if [[ "$offset" -ge 1000 ]]; then echo "Ticket pagination safety limit reached" >&2; exit 49; fi
-  done
-done
-echo "Superagent terminal reports relayed: $count"
-
-      [[ "$line" =~ $route_re ]] || continue
-
-      # Avoid a duplicate comment if the process crashed after GitHub accepted POST.
-      existing="$(gh api "repos/$HUB/issues/$issue/comments?per_page=100" --paginate --jq '.[].body' || true)"
-      relay_marker="<!-- superagent-relay:v1 report=$report_tag -->"
-      if [[ "$existing" != *"$relay_marker"* ]]; then
-        summary="$(printf '%s' "$report" | jq -r '.summary // "Задание завершено без подробного описания."')"
-        body="$(printf '%s
-
-%s
-%s
-<!-- superagent-result:v1 issue=%s state=%s -->'           "Результат DeepSeek Superagent ($status):" "$summary" "$relay_marker" "$issue" "$status")"
-        gh api "repos/$HUB/issues/$issue/comments" --method POST -f body="$body" >/dev/null
-      fi
-      printf '%s
-' "$report_tag" >> "$seen"
-      count=$((count+1))
-    done < <(printf '%s' "$page" | jq -r '.items[].id')
-    offset=$((offset+n))
-    [[ "$n" -lt 100 ]] && break
-    if [[ "$offset" -ge 1000 ]]; then echo "Ticket pagination safety limit reached" >&2; exit 49; fi
+    [[ "$offset" -lt 1000 ]] || { echo "Pagination limit exceeded" >&2; exit 49; }
   done
 done
 echo "Superagent terminal reports relayed: $count"
