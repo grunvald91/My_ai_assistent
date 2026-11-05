@@ -1,0 +1,34 @@
+name: DSH inspect agent session selection options
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-inspect-session-cli.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - name: Discover safe CLI session model-selection commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          K=$(mktemp); H=$(mktemp)
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          [ "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U' ]
+          ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          export PATH=/opt/dsh-toolchain/bin:/usr/local/bin:/usr/bin:/bin
+          echo '=== DSH CLI HELP ==='
+          timeout 12 dsh --help 2>&1 | sed -n '1,85p' || true
+          echo '=== DSH CONFIG FILE PATHS (no contents) ==='
+          find /srv/dsh-agent/.dsh -maxdepth 3 -type d -print | sed -n '1,70p'
+          echo '=== CURRENT SERVICE ==='
+          systemctl show dsh-superagent -p ActiveState -p SubState -p MemoryCurrent
+          REMOTE
