@@ -1,4 +1,4 @@
-name: DSH audit first GitHub task
+name: DSH audit GitHub notification delivery
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
