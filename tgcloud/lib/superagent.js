@@ -35,6 +35,12 @@ export function agentTaskType(text) {
   return WORK_VERBS.test(text) ? 'code-change' : 'report-only';
 }
 
+export function extractTargetPull(body, target) {
+  const refs = [...String(body ?? '').matchAll(/https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)(?=[/?#\s]|$)/gi)];
+  const selected = refs.find(m => (m[1] + '/' + m[2]).toLowerCase() === String(target).toLowerCase());
+  return selected ? { repo: target, number: Number(selected[3]) } : null;
+}
+
 /** Explicit repo reference wins over chat default; ambiguous multi-repo requests fail closed. */
 export function requestedAgentRepository(text) {
   const source = String(text ?? '');
@@ -282,13 +288,14 @@ export function createSuperagent(D) {
     if (!found) return false;
     const resultState = parseTerminalResult(found.body, n)?.state ?? 'unknown';
     const report = truncate(String(found.body).replace(/<!--[\s\S]*?-->/g, '').trim(), 3000);
+    const pull = extractTargetPull(found.body, state.repo ?? AGENT_REPO);
     await out.sendHtml(chatId,
       (resultState === 'ready' ? '✅ <b>Агент завершил задачу #' : 'ℹ️ <b>Агент закончил попытку выполнить задачу #') + n +
       ' (' + escapeHtml(resultState) + ').</b>\nПроект: <code>' + escapeHtml(state.repo ?? AGENT_REPO) + '</code>\n\n' +
       escapeHtml(report) + '\n\n' +
       '<a href="' + urlFor(n) + '">Полный отчёт, обсуждение и PR</a>'
     );
-    await store.setSetting(keyFor(n), JSON.stringify({ ...state, status: 'done', commentId: found.id }));
+    await store.setSetting(keyFor(n), JSON.stringify({ ...state, status: 'done', resultState, commentId: found.id, ...(pull ? { pull } : {}) }));
     await D.log?.('superagent_completed', chatId, { issue: n, commentId: found.id });
     return true;
   }
@@ -303,7 +310,19 @@ export function createSuperagent(D) {
     let saved = {};
     try { saved = JSON.parse(previous ?? '{}'); } catch { /* ignore */ }
     if (saved.status === 'done') {
-      await out.sendHtml(chatId, '✅ <b>Задача #' + last + ' уже выполнена.</b>\n<a href="' + urlFor(last) + '">Прочитать отчёт или PR</a>');
+      let prStatus = '';
+      if (saved.pull?.repo && Number.isSafeInteger(saved.pull?.number) && gh()) {
+        try {
+          const pr = await gh().getPull(saved.pull.repo, saved.pull.number);
+          const stage = pr?.merged || pr?.merged_at ? 'слит' : pr?.state === 'closed' ? 'закрыт без слияния' : pr?.draft ? 'черновик' : 'открыт';
+          prStatus = '\nPR: <a href="https://github.com/' + escapeHtml(saved.pull.repo) + '/pull/' +
+            saved.pull.number + '">#' + saved.pull.number + '</a> — ' + stage;
+        } catch { prStatus = '\n⚠️ Не удалось проверить состояние внешнего PR в GitHub.'; }
+      }
+      const kind = saved.resultState === 'ready' ? 'выполнена' : 'завершилась со статусом ' + escapeHtml(saved.resultState ?? 'неизвестно');
+      await out.sendHtml(chatId, 'ℹ️ <b>Задача #' + last + ' ' + kind +
+        '.</b>\nПроект: <code>' + escapeHtml(saved.repo ?? AGENT_REPO) + '</code>' + prStatus +
+        '\n<a href="' + urlFor(last) + '">Прочитать отчёт</a>');
       return true;
     }
     try {
