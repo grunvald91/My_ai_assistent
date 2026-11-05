@@ -1,75 +1,98 @@
-# DeepSeek Superagent: один сервис, несколько GitHub-репозиториев
+# DeepSeek Superagent — один сервис, несколько репозиториев
 
-## Состояние
+## Текущее состояние
 
-Этот документ описывает **изменения Telegram-моста и серверную подготовку**, а не подтверждает переключение VPS.
-Upstream `deepseek-ai/dsh-superagent-prototype` имеет один GitHub Source и привязывает PR к нему.
-Источник событий остаётся `grunvald91/Ai_growth_os` (центральная очередь Issue); **код и PR** обрабатываются в целевом репозитории.
-Для разных репозиториев запускаются рабочие каталоги, а не дополнительные `dsh-superagent` процессы.
+Этот код находится в PR #14, пока **не включён на VPS и не прошёл реальный E2E**. Не смешивать прохождение тестов GitHub Actions с работающим production.
 
-## Маршрут
+Один DSH-процесс и один GitHub Source (`grunvald91/Ai_growth_os`) остаются центральной очередью. Из Telegram можно выбрать **один** целевой репозиторий для каждого Ticket. Подготовительная команда создаёт отдельный checkout целевого проекта; код и PR не помещаются в `Ai_growth_os`.
 
-1. Владелец отправляет `/agent repo grunvald91/booking_bot`, затем `/agent проверь код`; или указывает `https://github.com/grunvald91/booking_bot` в самом поручении.
-2. Бот проверяет существование репозитория, доступность своему токену и право Write аккаунта агента `Grunvald1991` на цели, отличные от очереди. Он создаёт **один Issue** в `grunvald91/Ai_growth_os` с первой строкой:
-   `<!-- superagent-route:v1 repo=grunvald91/booking_bot -->`
-3. DSH принимает уведомление в своём единственном GitHub Source и создаёт Ticket.
-4. Команда подготовки [`scripts/superagent-prepare-worktree.sh`](../scripts/superagent-prepare-worktree.sh) читает **только первую строку** Issue, проверяет разрешённый владелец/репозиторий и **права записи самого аккаунта агента**, затем создаёт независимый git checkout в `DSH_SUPERAGENT_DIR`.
-5. Для изменения кода агент создаёт ветку и Pull Request **в целевом репозитории**. Ссылку на PR оставляет комментарием в исходном Issue в `Ai_growth_os`, который бот отслеживает и возвращает в Telegram.
+У upstream `deepseek-ai/dsh-superagent-prototype` встроенная привязка PR использует репозиторий Source. Для внешнего PR в этой интеграции `orchestrator_report(pr_number)` **не используется**: полный URL PR передаётся в итоговом summary. Сам DSH не подписывается на внешние PR. По запросу `/agent статус` Telegram-бот запрашивает текущий статус такого PR напрямую в GitHub.
 
-**Важно:** встроенная привязка PR в upstream DSH рассчитана на PR из репозитория-источника. Для задачи в другом репозитории PR нельзя выдавать через встроенный `pr_number` Ticket: нужно указывать полный URL в отчёте и комментарии центрального Issue. Автоматическое отслеживание закрытия такого PR DSH в этой схеме не выполняет.
+## Проверка входящего задания
 
-## Перед включением: VPS
+1. Команда `/agent repo grunvald91/booking_bot` устанавливает проект чата; явная ссылка в задании имеет приоритет.
+2. Бот отвергает чужих владельцев, неоднозначные ссылки, приватные репозитории (очередь публичная), недоступные проекты и отсутствие у `Grunvald1991` прав `write`.
+3. Непосредственно перед созданием Issue бот требует **свежий серверный GitHub commit status** контекста `superagent/multirepo-ready`, написанный аккаунтом `Grunvald1991`. Старые статусы и простое включение флага в Telegram не проходят.
+4. Бот создаёт Issue с первой строкой `<!-- superagent-route:v1 repo=grunvald91/booking_bot -->` и тегом `@Grunvald1991`.
+5. DSH запускает Ticket. Скрипт `superagent-prepare-worktree.sh` проверяет автора Issue `grunvald91`, корректность маркера и право записи агентского CLI, прежде чем клонировать целевой проект.
 
-Под пользователем `dsh-agent` нужно разместить скрипт в доступном постоянном каталоге, например:
-`/home/dsh-agent/.local/bin/superagent-prepare-worktree.sh`.
-Не копировать туда секреты. GitHub CLI должен работать в контексте **аккаунта агента**, а не владельца Telegram.
+Для Issue вне этого протокола сохраняется прежняя подготовка `Ai_growth_os`. Пользовательское описание задания никогда не даёт прав на смену репозитория само по себе.
 
-В панели DSH → Superagent → **Settings → Execution** задать команду подготовки:
+## Установка на VPS
+
+**Не копировать ключи и токены в GitHub.** Установка выполняется под системным пользователем DSH (пример `dsh-agent`), у которого `gh` уже авторизован как агент. Для следующих путей подставить фактический домашний каталог и порт DSH.
+
+Перенести скрипты из этого PR в постоянный каталог `/home/dsh-agent/.local/bin/`:
+
+- `scripts/superagent-prepare-worktree.sh`
+- `scripts/superagent-terminal-relay.sh`
+- `scripts/superagent-capability-heartbeat.sh`
+- `scripts/superagent-configure-prompts.mjs`
+
+В **Superagent → Settings → Execution → prepare** установить ровно:
+
 ```sh
 bash /home/dsh-agent/.local/bin/superagent-prepare-worktree.sh
 ```
-Она заменяет старую команду, жёстко привязанную к checkout `Ai_growth_os`. Настройку GitHub Source **не менять**.
 
-Проверки при установке:
+Настройку GitHub Source оставить `grunvald91/Ai_growth_os`.
+
+Перед началом сохранить копию нынешних DSH Prompts и запустить настройку системных инструкций:
+
 ```sh
-bash -n /home/dsh-agent/.local/bin/superagent-prepare-worktree.sh
-# Под тем же пользователем/окружением, которым агент запускает gh:
-gh api repos/grunvald91/booking_bot --jq '.permissions.push'
-gh api repos/grunvald91/Ai_growth_os --jq '.permissions.push'
+export DSH_SUPERAGENT_URL=http://127.0.0.1:PORT
+node /home/dsh-agent/.local/bin/superagent-configure-prompts.mjs
 ```
-Оба ответа должны быть `true`. Если нет — дать `Grunvald1991` Write на нужный проект и повторить проверку; без прав скрипт прекращает работу, не подменяя целевой проект на другой.
 
-В разделе **Prompts / team instructions** добавить инструкцию для рабочих сессий:
+Скрипт идемпотентно дополняет `delivery`, `runtime/work` и `skill/github` точными исключениями для внешнего PR. Он не должен удалять имеющиеся правила пользователя.
 
-> Источник уведомлений `DSH_SUPERAGENT_GITHUB_REPOSITORY` — это очередь заданий, а не всегда целевой кодовый проект. Целевой проект всегда равен Git remote `origin` подготовленного `DSH_SUPERAGENT_DIR`. Выполняй анализ и изменения только в нём. Если Issue относится к другому проекту, создавай PR именно там, а в исходном Issue оставляй ссылку на PR целиком; не передавай номер внешнего PR в механизм `pr_number` DSH. Никогда не выполняй merge или production deploy без отдельного разрешения.
+Установить шаблоны `deploy/superagent-capability.service` и `deploy/superagent-capability.timer` в `/etc/systemd/system/`, указать реальный порт в `DSH_SUPERAGENT_URL`, поправить пользователя и пути при необходимости. Дополнительно обязательна переменная `DSH_MULTI_REPO_RELAY`. После проверки:
 
-Проверить рестарт и здоровье `dsh-superagent.service`, чтобы изменение команды действительно применилось. При тесте не запускать дополнительные экземпляры DSH.
+```sh
+sudo systemctl daemon-reload
+sudo systemctl start superagent-capability.service
+sudo systemctl status superagent-capability.service --no-pager
+sudo systemctl enable --now superagent-capability.timer
+```
 
-## Управление из Telegram
+Эта задача работает на **VPS каждые 5 минут**, а не в GitHub Actions. Она сначала проверяет в локальном API DSH правильный Source, точную команду подготовки, наличие инструкции `superagent-external-pr-v1`, активное состояние DSH и идентичность `gh`. Затем читает фактически завершённые отчёты Ticket, отправляет итоговый комментарий через `gh` в центральный Issue и только после этого публикует краткоживущий GitHub status с `success`. Если проверка или доставка завершается ошибкой, новый статус не публикуется; предыдущий перестаёт действовать максимум через 10 минут.
+
+В DSH REST API используется локальный заголовок `x-orchestrator-request: 1`. Нельзя выставлять API без авторизации в публичный интернет.
+
+## Результаты и долгие задачи
+
+Штатный DSH добавляет маркер `<!-- dsh-superagent:... -->` **к каждому** своему комментарию. Он не означает завершение.
+
+Только результат со служебным маркером конца задачи может попасть в Telegram:
 
 ```text
-/agent multirepo status
-/agent repo grunvald91/booking_bot
-/agent multirepo on
-/agent Проверь структуру проекта и напиши отчёт
-/agent Исправь ошибку в https://github.com/grunvald91/SMENA и создай PR
-/agent repo default
-/agent multirepo off
+<!-- superagent-result:v1 issue=300 state=ready -->
 ```
 
-По умолчанию `/agent multirepo off` (безопасный режим): другие репозитории **не получают задач**, пока серверная подготовка не установлена и не проверена. `/agent repo ...` лишь устанавливает предпочтение чата. Явная ссылка внутри поручения имеет приоритет. Для одного Issue допускается **один** целевой репозиторий; многорепозиторные изменения пока надо разбивать на отдельные Tickets.
+Допустимые состояния: `ready`, `blocked`, `failed`, `dropped`. Серверный relay создаёт такой комментарий по настоящему состоянию Ticket в DSH (а не по сообщению модели); при перезапусках защищается от дублей по идентификатору отчёта.
 
-`/agent multirepo on` следует выполнить **только после проверки** подготовительной команды и доступа аккаунта агента. Это ручной флаг, а не автоматическое обнаружение состояния VPS. Если ошибка — `/agent multirepo off` и вернуть прежнюю команду подготовки; исходный режим `Ai_growth_os` сохраняется.
+GitHub Actions watcher продолжает ожидать ответ в течение 25 минут. Если агент выполняет задачу дольше, он отправит временное уведомление; **поздний итог можно получить по `/agent статус`**, поскольку серверный relay опубликует его в Issue. Автоматическую доставку позднего итога без пользовательского запроса текущий код **не гарантирует**. Это ограничение не нужно скрывать.
 
-## Границы и проверки
+## Тестирование и включение
 
-- Нет прав записи у `Grunvald1991` — отказ, не fallback на `Ai_growth_os`.
-- Приватный целевой репозиторий не обслуживается через публичную очередь `Ai_growth_os` — отказ без публикации содержимого поручения. Для приватных проектов нужна приватная очередь.
-- Цель вне `grunvald91/*`, несуществующий проект, репозиторий Telegram-бота или несколько целей — отказ.
-- Telegram-мост не разрешает auto-merge, deploy и изменение production.
-- Целевые проекты не получают новые GitHub Actions: их существующий CI может запускаться при PR по своим правилам.
-- Доступ к приватным репозиториям возможен только если агентский GitHub CLI реально авторизован и имеет права; автоматическое добавление соавторов не выполняется.
-- Скрипт создаёт отдельный `git clone --filter=blob:none` на Ticket; расход памяти одного агента не умножается на число проектов, но объём диска, сеть и число одновременных checkout увеличиваются. Это не гарантия конкретного потребления памяти.
-- Нельзя считать feature end-to-end проверенной без успешного report-only задания для BookingBot и затем проверки PR в выбранном репозитории.
+Проверить offline bash-тесты:
 
-Основа: [DSH README](https://github.com/deepseek-ai/dsh-superagent-prototype), [документация DSH Deployment](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/006-deployment.md), [GitHub REST: repository permissions](https://docs.github.com/en/rest/repos/repos#get-a-repository).
+```sh
+bash test/superagent-prepare.test.sh
+npm test
+```
+
+После настройки сервера:
+
+1. `/agent multirepo status` — должно быть «сервер подтверждён».
+2. Отправить `/agent Проверь README в https://github.com/grunvald91/booking_bot и напиши отчёт`.
+3. Проверить в DSH рабочий каталог и `git remote -v`: целевой origin должен быть BookingBot.
+4. Проверить терминальный комментарий в центральном Issue и ответ в Telegram.
+5. В отдельном тестовом задании создать небольшой PR в BookingBot, убедиться, что он в **правильном** репозитории, и проверить `/agent статус` после изменения состояния PR.
+6. Испытать недоступный репозиторий, неверного автора, тайм-аут и недостающие права.
+
+`/agent multirepo off` — дополнительная ручная пауза. `/agent multirepo on` только снимает её, **не обходит** проверку сервера.
+
+Нет автоматического merge или production deploy. Репозитории Telegram-бота `My_ai_assistent` и приватные цели не разрешены в данной схеме; для приватных задач нужна отдельная приватная очередь.
+
+Основа: [DSH Deployment](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/docs/006-deployment.md), [DSH Executor](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/src/executor/dsh.ts), [DSH PR binding](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/src/sources/github-pull.ts), [GitHub statuses API](https://docs.github.com/en/rest/commits/statuses).
