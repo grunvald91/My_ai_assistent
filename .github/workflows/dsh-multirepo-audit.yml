@@ -41,6 +41,9 @@ jobs:
           echo "SERVICE_USER=$(systemctl show dsh-superagent -p User --value)"
           echo "TIMER_STATE=$(systemctl is-active superagent-capability.timer || true)"
           echo "TIMER_ENABLED=$(systemctl is-enabled superagent-capability.timer 2>/dev/null || true)"
+          echo "TIMER_LAST_TRIGGER=$(systemctl show superagent-capability.timer -p LastTriggerUSec --value 2>/dev/null || true)"
+          echo "TIMER_NEXT_TRIGGER=$(systemctl show superagent-capability.timer -p NextElapseUSecMonotonic --value 2>/dev/null || true)"
+          echo "TIMER_TRIGGER_COUNT=$(systemctl show superagent-capability.timer -p NTriggers --value 2>/dev/null || true)"
           echo "HEARTBEAT_SERVICE=$(systemctl show superagent-capability.service -p Result --value 2>/dev/null || true)"
           echo "HEARTBEAT_EXIT_STATUS=$(systemctl show superagent-capability.service -p ExecMainStatus --value 2>/dev/null || true)"
           echo 'HEARTBEAT_ERRORS_REDACTED:'
