@@ -1,4 +1,4 @@
-name: DSH audit trigger evaluation after first accepted Issue
+name: DSH audit model and assessment first-ticket status
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
