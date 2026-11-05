@@ -26,7 +26,7 @@ settings="$(curl --fail --silent --show-error --max-time 8 -H 'x-orchestrator-re
 state="$(curl --fail --silent --show-error --max-time 8 -H 'x-orchestrator-request: 1' "$api/state")"
 # Use the same GitHub CLI wrapper as the DSH Source, not an unrelated login of the OS user.
 agent_cli="$(printf '%s' "$settings" | jq -r --arg source "$HUB" '
-  .sources[] | select(.kind == "github" and .value.enabled == true and .value.config.repository == $source) | .value.config.cli' | head -n1)"
+  first(.sources[] | select(.kind == "github" and .value.enabled == true and .value.config.repository == $source) | .value.config.cli) // empty')"
 [[ -n "$agent_cli" && "$agent_cli" != null ]] || { echo "DSH agent CLI is not configured" >&2; exit 40; }
 command -v "$agent_cli" >/dev/null || { echo "DSH agent CLI cannot execute: $agent_cli" >&2; exit 41; }
 export DSH_AGENT_GH_CLI="$agent_cli"
