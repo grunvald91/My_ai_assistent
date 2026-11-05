@@ -1,0 +1,80 @@
+name: DSH external PR synthetic CI status via agent (one-off)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-multirepo-pr-status-agent-e2e.yml]
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - name: Use existing DSH agent GitHub CLI to validate CI tracking
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_KEY_157:-}"
+          umask 077
+          K="$(mktemp)"; H="$(mktemp)"
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          unset SSH_KEY_157
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          test "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
+          ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" -o ConnectTimeout=10 root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          HUB=grunvald91/Ai_growth_os
+          REPO=grunvald91/booking_bot
+          SHA=9ea6ebbe4d2d03712c37f05d84757c472af280dd
+          export PATH=/srv/dsh-agent/.local/bin:/opt/dsh-toolchain/bin:/usr/local/bin:/usr/bin:/bin
+          export HOME=/srv/dsh-agent
+          cli="$(python3 - <<'PY'
+          import json,urllib.request
+          req=urllib.request.Request('http://127.0.0.1:3082/orchestrator/api/settings',headers={'x-orchestrator-request':'1'})
+          with urllib.request.urlopen(req,timeout=10) as r: s=json.load(r)
+          v=[x['value']['config']['cli'] for x in s['sources'] if x['kind']=='github' and x['value']['enabled'] and x['value']['config']['repository']=='grunvald91/Ai_growth_os']
+          assert len(v)==1
+          print(v[0])
+          PY
+          )"
+          agentgh() { runuser -u dsh-agent -- env HOME=/srv/dsh-agent PATH="$PATH" "$cli" api "$@"; }
+          test "$(agentgh user --jq .login | tr '[:upper:]' '[:lower:]')" = grunvald1991
+          test "$(agentgh "repos/$REPO/pulls/139" --jq .head.sha)" = "$SHA"
+          test "$(agentgh "repos/$REPO/pulls/139" --jq .draft)" = true
+          test "$(agentgh "repos/$REPO/pulls/139" --jq .changed_files)" = 1
+          trap 'agentgh "repos/$REPO/statuses/$SHA" --method POST -f state=success -f context=superagent/e2e-synthetic -f "description=E2E synthetic status cleanup (not production CI)" >/dev/null 2>&1 || true' EXIT
+          latest() {
+            agentgh "repos/$HUB/issues/295/comments?per_page=100" --jq '[.[] | select(.user.login == "Grunvald1991" and (.body | contains("superagent-prwatch:v1 issue=295"))) | .body] | last // ""'
+          }
+          monitor() {
+            systemctl start superagent-capability.service
+            test "$(systemctl show superagent-capability.service -p Result --value)" = success
+          }
+          monitor
+          review="$(latest)"
+          printf '%s' "$review" | grep -q 'Комментарии к коду:\*\* 1'
+          echo 'REVIEW_COMMENT_AUTOTRACK_CONFIRMED=1'
+          agentgh "repos/$REPO/statuses/$SHA" --method POST \
+            -f state=failure -f context=superagent/e2e-synthetic \
+            -f "description=E2E synthetic failure (not production CI)" >/dev/null
+          monitor
+          fail="$(latest)"
+          printf '%s' "$fail" | grep -q 'CI:\*\* есть ошибки'
+          echo 'SYNTHETIC_CI_FAILURE_DETECTED=1'
+          agentgh "repos/$REPO/statuses/$SHA" --method POST \
+            -f state=success -f context=superagent/e2e-synthetic \
+            -f "description=E2E synthetic success (not production CI)" >/dev/null
+          monitor
+          success="$(latest)"
+          printf '%s' "$success" | grep -q 'CI:\*\* успешно'
+          echo 'SYNTHETIC_CI_RECOVERY_DETECTED=1'
+          count_before="$(agentgh "repos/$HUB/issues/295/comments?per_page=100" --jq length)"
+          monitor
+          count_after="$(agentgh "repos/$HUB/issues/295/comments?per_page=100" --jq length)"
+          test "$count_before" = "$count_after"
+          echo 'NO_DUPLICATE_STATUS_COMMENTS=1'
+          echo "DSH_SERVICE_ACTIVE=$(systemctl is-active dsh-superagent)"
+          REMOTE
