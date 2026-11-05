@@ -13,6 +13,7 @@ import { createBusiness } from './business.js';
 import { createReplies } from './replies.js';
 import { createCommands } from './commands.js';
 import { createCode } from './code.js';
+import { createSuperagent } from './superagent.js';
 import { createBg } from './bg.js';
 import { createExa } from './exa.js';
 import { createGithub } from './github.js';
@@ -44,6 +45,7 @@ export function createApp(base) {
   const business = createBusiness(D);
   const replies = createReplies(D);
   const code = createCode(D);
+  D.superagent = createSuperagent(D);
   D.bg = createBg(D, chatMod); // тяжёлые модели в фоне (GitHub Actions)
   D.repoContext = code.repoContext; // чат читает репозиторий по просьбе владельца
   const commands = createCommands(D, { posts, business, replies, code });
@@ -223,6 +225,7 @@ export function createApp(base) {
         }
       }
 
+      if (await D.superagent.maybeAutoTask(chat, said)) return; // поручение отдельному агенту без ручных Actions
       if (await code.maybeAutoTask(chat, said)) return; // «создай ветку и залей код» без /code
       if (rc.items.length) return chatMod.answerMedia(chatId, rc.prefix + said, rc.items); // ответ на сообщение с фото/файлом
       await chatMod.answerOwner(msg, chat, rc.prefix + said);
@@ -237,6 +240,7 @@ export function createApp(base) {
     if (st.startsWith('biz_')) return business.onState(msg, chat);
     if (st.startsWith('draft_rev:')) return replies.onState(msg, chat);
     if (st === 'code_task') return code.onState(msg, chat);
+    if (st === 'agent_task') return D.superagent.onState(msg, chat);
     await store.setState(chat.chatId, null); // неизвестное состояние — сбрасываем
     return false;
   }
