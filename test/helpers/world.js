@@ -393,6 +393,10 @@ function fakeGithub(w, path, opts) {
     g.reruns.push({ repo: key, run: Number(m[1]) });
     return res(201, {});
   }
+  if (/^\/pulls\/[1-9][0-9]*$/.test(rest) && method === 'GET') {
+    const number = Number(rest.split('/')[2]);
+    return res(200, repo.pullStatuses?.[number] ?? { state: 'open', merged: false, draft: false, html_url: 'https://github.com/' + key + '/pull/' + number });
+  }
   if (rest === '/pulls' && method === 'GET') {
     const head = decodeURIComponent(/head=([^&]*)/.exec(qs ?? '')?.[1] ?? '').split(':')[1];
     const i = g.prs.findIndex((p) => p.repo === key && p.head === head);
