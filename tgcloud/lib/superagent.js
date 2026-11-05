@@ -128,6 +128,12 @@ export function createSuperagent(D) {
       await out.sendHtml(chatId, '⚠️ Не могу подтвердить доступ к репозиторию <code>' + escapeHtml(targetName) + '</code>. Задание не отправлено.');
       return true;
     }
+    if (target.private && target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase()) {
+      await out.sendHtml(chatId, '🔒 Целевой репозиторий приватный, а очередь ' +
+        '<code>' + AGENT_REPO + '</code> публичная. Не отправляю детали задания в публичный Issue. ' +
+        'Для приватных проектов потребуется отдельная приватная очередь.');
+      return true;
+    }
     if (target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase() &&
         (await store.getSetting('agent:multi_repo_ready')) !== '1') {
       await out.sendHtml(chatId, '⚠️ Многорепозиторная работа ещё не активирована на сервере. ' +
