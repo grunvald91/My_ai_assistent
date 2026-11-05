@@ -225,11 +225,7 @@ export function createSuperagent(D) {
         ? 'BookingBot теперь входит в grunvald91/Ai_growth_os: код находится в services/booking_bot/. Даже если пользователь прислал старую ссылку github.com/grunvald91/booking_bot, все чтения, коммиты и Pull Request делай в grunvald91/Ai_growth_os и в каталоге services/booking_bot/. Исходный репозиторий booking_bot и production не трогай: его деплой ещё не переведён в монорепозиторий.'
         : 'Работай с указанным целевым репозиторием; код других проектов не изменяй.',
       'ВАЖНО: внешние PR не привязываются через pr_number штатного DSH; передай его полный URL в summary и вызывай orchestrator_report без pr_number.',
-      'Когда работа завершена (ready/blocked/failed/dropped), оставь в ЭТОМ Issue отдельный заключительный комментарий от аккаунта агента:',
-      '`<!-- superagent-result:v1 issue=ISSUE_NUMBER state=ready -->` (или blocked/failed/dropped).',
-      'Заменяй ISSUE_NUMBER на реальный номер текущего Issue. До маркера дай понятный итог и URL PR, если он есть.',
-      'Не добавляй этот маркер в подтверждения начала работы или промежуточные комментарии.',
-
+      'Состояние задания берётся из DSH: вызови orchestrator_report с корректным итогом. Служебные маркеры завершения публикует только серверный процесс, не добавляй их в GitHub-комментарии.',
       '',
       '## Задание от владельца через My AI Assistant',
       '',
