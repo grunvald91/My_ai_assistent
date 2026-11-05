@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { createWorld, assert, OWNER } from './helpers/world.js';
-import { parseAgentRequest, agentTaskType, AGENT_REPO, requestedAgentRepository } from '../tgcloud/lib/superagent.js';
+import { parseAgentRequest, agentTaskType, AGENT_REPO, requestedAgentRepository, extractTargetPull } from '../tgcloud/lib/superagent.js';
 import { finalAgentComment, parseTerminalResult } from '../tgcloud/lib/superagent-result.js';
 
 function serverReady(w, overrides = {}) {
@@ -79,7 +79,7 @@ test('callback delivers only final comment by the exact agent and does not dupli
   assert.equal(await w.app.superagent.deliver({ issue: 300, commentId: 502 }), true);
   assert.equal(w.sent(OWNER).length, count);
   await w.say('/agent статус');
-  assert.match(w.last(OWNER).text, /уже выполнена/);
+  assert.match(w.last(OWNER).text, /выполнена/);
 });
 
 test('non-default repository stays blocked until the server prepare hook is enabled', async () => {
@@ -204,6 +204,24 @@ test('agent intent classifier accepts explicit requests, but not unrelated text'
   assert.equal(parseAgentRequest('Просто поговорим об агенте'), null);
   assert.equal(agentTaskType('Проверь стили'), 'report-only');
   assert.equal(agentTaskType('Проверь и исправь стили'), 'code-change');
+});
+
+test('terminal report exposes only PR from the selected repository and status reads live GitHub state', async () => {
+  const w = await createWorld();
+  setup(w);
+  serverReady(w);
+  await w.say('/agent Проверь и исправь github.com/grunvald91/booking_bot');
+  w.clear();
+  w.gh.comments.push({
+    issue: 300, id: 502, user: { login: 'Grunvald1991' },
+    body: 'Исправлено: https://github.com/grunvald91/booking_bot/pull/17\\n<!-- superagent-result:v1 issue=300 state=ready -->',
+  });
+  assert.equal(await w.app.superagent.deliver({ issue: 300 }), true);
+  w.gh.repos['grunvald91/booking_bot'].pullStatuses = { 17: { state: 'closed', merged: true, draft: false } };
+  await w.say('/agent статус');
+  assert.match(w.last(OWNER).text, /PR:/);
+  assert.match(w.last(OWNER).text, /слит/);
+  assert.deepEqual(extractTargetPull('https://github.com/grunvald91/SMENA/pull/2', 'grunvald91/booking_bot'), null);
 });
 
 test('repository parser supports explicit URL and avoids guessing an unspecified project', () => {
