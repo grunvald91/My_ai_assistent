@@ -101,7 +101,14 @@ jobs:
           chmod 0644 /etc/systemd/system/superagent-capability.service /etc/systemd/system/superagent-capability.timer
           systemctl daemon-reload
           systemctl enable --now superagent-capability.timer >/dev/null
-          systemctl start superagent-capability.service
+          if ! systemctl start superagent-capability.service; then
+            echo "HEARTBEAT_EXIT_STATUS=$(systemctl show superagent-capability.service -p ExecMainStatus --value)"
+            journalctl -u superagent-capability.service -n 18 -o cat --no-pager | \
+              grep -Ei 'error|failed|refused|missing|permission|status|not|cannot|denied|parse|curl|jq|gh|mkdir|python|Traceback' | \
+              sed -E 's/(ghp_|github_pat_|sk-)[A-Za-z0-9_-]{12,}/[REDACTED]/g; s/(token|password|secret|authorization)([=: ][^ ]+)/\\1=[REDACTED]/Ig' | \
+              cut -c 1-180 | tail -14 || true
+            exit 1
+          fi
           test "$(systemctl is-active superagent-capability.timer)" = active
           test "$(systemctl show superagent-capability.service -p Result --value)" = success
           echo 'TIMER_ENABLED_AND_ACTIVE=1'
