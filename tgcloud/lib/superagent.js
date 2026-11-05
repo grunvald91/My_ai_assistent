@@ -65,13 +65,14 @@ export function createSuperagent(D) {
     // GitHub status is posted by the VPS itself after verifying DSH live settings.
     // A static Telegram flag or a stale status is NOT sufficient.
     const statuses = await gh().listCommitStatuses(AGENT_REPO, 'main');
-    return (Array.isArray(statuses) ? statuses : []).some(s => {
-      const age = D.now() - Date.parse(s?.created_at ?? '') / 1000;
-      return s?.context === STATUS_CONTEXT && s?.state === 'success' &&
-        s?.description === STATUS_DESCRIPTION &&
-        String(s?.creator?.login ?? '').toLowerCase() === AGENT_ACCOUNT.toLowerCase() &&
-        Number.isFinite(age) && age >= 0 && age <= STATUS_MAX_AGE_S;
-    });
+    const latest = (Array.isArray(statuses) ? statuses : [])
+      .filter(s => s?.context === STATUS_CONTEXT)
+      .sort((a, b) => Date.parse(b?.created_at ?? '') - Date.parse(a?.created_at ?? ''))[0];
+    if (!latest) return false;
+    const age = D.now() - Date.parse(latest?.created_at ?? '') / 1000;
+    return latest.state === 'success' && latest.description === STATUS_DESCRIPTION &&
+      String(latest?.creator?.login ?? '').toLowerCase() === AGENT_ACCOUNT.toLowerCase() &&
+      Number.isFinite(age) && age >= 0 && age <= STATUS_MAX_AGE_S;
   }
   const urlFor = (issue) => 'https://github.com/' + AGENT_REPO + '/issues/' + issue;
   const gh = () => D.github;
