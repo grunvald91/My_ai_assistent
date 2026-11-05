@@ -1,0 +1,68 @@
+name: DSH Superagent post-install runtime audit
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-postinstall-check.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - name: Inspect actual runtime and API without dumping credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          K="$(mktemp)"; H="$(mktemp)"
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          test "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
+          ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          echo '=== SERVICE STATE ==='
+          systemctl show dsh-superagent -p ActiveState -p SubState -p MainPID -p NRestarts -p ExecMainStatus -p MemoryCurrent -p MemoryPeak -p Result
+          echo '=== LISTENER ON 3082 ==='
+          ss -H -tlpn '( sport = :3082 )' | cut -c 1-220 || true
+          echo '=== HTTP ENDPOINTS ==='
+          python3 - <<'PY'
+          import urllib.request,urllib.error,json
+          for path in ("/","/orchestrator/api/state"):
+              req=urllib.request.Request("http://127.0.0.1:3082"+path,headers={"x-orchestrator-request":"1"})
+              try:
+                  with urllib.request.urlopen(req,timeout=7) as res:
+                      print("http",path,res.status,res.headers.get("content-type","")[:70])
+                      if path.endswith("/state"):
+                          obj=json.load(res)
+                          h=obj.get("health") or {}
+                          print("health",[(name,d.get("state")) for name,d in h.items() if isinstance(d,dict)])
+                          st=obj.get("setup") or {}
+                          problem=st.get("problem")
+                          print("setup_problem_kind",problem.get("code") if isinstance(problem,dict) else type(problem).__name__ if problem else None)
+              except Exception as e: print("http",path,type(e).__name__,getattr(e,"code",None))
+          PY
+          echo '=== RECENT SAFE ERROR CATEGORIES ==='
+          python3 - <<'PY'
+          import subprocess,re,collections
+          r=subprocess.run(["journalctl","-u","dsh-superagent","--no-pager","--output=cat","-n","160"],text=True,capture_output=True)
+          line_re=re.compile(r"fatal|error|failed|missing|ready|listen|invalid|plugin|cannot find|unknown|ENOENT|EACCES",re.I)
+          rows=[]
+          for line in r.stdout.splitlines():
+              if line_re.search(line):
+                  line=re.sub(r"(sk-[A-Za-z0-9_-]{12,}|github_pat_[A-Za-z0-9_]{12,}|ghp_[A-Za-z0-9]{12,})","[REDACTED]",line)
+                  line=re.sub(r"(api[_-]?key|token|password|authorization)([=: ]+)[^,} ]+",r"\1\2[REDACTED]",line,flags=re.I)
+                  rows.append(line[:200])
+          for line in rows[-38:]: print(line)
+          PY
+          echo '=== ISOLATED CREDENTIAL FLAGS ==='
+          test -s /srv/dsh-agent/.dsh/.env && echo 'CLAUDEHUB_CREDENTIAL_FILE_PRESENT'
+          if [ -e /srv/dsh-agent/.config/gh-agent/hosts.yml ]; then echo 'AGENT_GH_CONFIG_PRESENT'; else echo 'AGENT_GH_CONFIG_MISSING'; fi
+          echo '=== EUNOIA ==='
+          docker ps --format '{{.Names}} {{.Status}}' | grep -E '^eunoia-(web|postgres|backend)-1 '
+          echo '=== RESOURCES ==='
+          free -w -h
+          REMOTE
