@@ -37,31 +37,33 @@ assert state.get("load",{}).get("running",0)==0 and state.get("load",{}).get("qu
 tickets=get("tickets?state=open&limit=1")
 assert int(tickets.get("total",0))==0, "Open task is still active; do not rotate"
 log("ROTATION_PRECHECK_OK idle, correct role models")
-subprocess.run(["systemctl","stop","dsh-superagent"],check=True,timeout=75)
-assert subprocess.run(["systemctl","is-active","--quiet","dsh-superagent"]).returncode != 0, "Service failed to stop"
+try:
+    subprocess.run(["systemctl","stop","dsh-superagent"],check=True,timeout=75)
+    assert subprocess.run(["systemctl","is-active","--quiet","dsh-superagent"]).returncode != 0, "Service failed to stop"
 
-BACKUP.mkdir(parents=True,exist_ok=True)
-with sqlite3.connect(DB,timeout=15) as db:
-    db.execute("PRAGMA busy_timeout=15000")
-    row=db.execute("SELECT value FROM kv WHERE key='master-id'").fetchone()
-    assert row, "Missing master-id"
-    old=json.loads(row[0])
-    assert isinstance(old,str) and old.startswith("orchestrator-"), "Unexpected master-id"
-    if old.endswith(TAIL):
-        log("ROUTER_ALREADY_ROTATED",old)
-    else:
-        filename=BACKUP/"orchestrator.before-router-v41.sqlite"
-        with sqlite3.connect(filename) as to:
-            db.backup(to)
-        filename.chmod(0o600)
-        os.chown(filename,os.getuid(),os.getgid())
-        new=old+TAIL
-        db.execute("BEGIN IMMEDIATE")
-        db.execute("UPDATE kv SET value=? WHERE key='master-id'",(json.dumps(new),))
-        db.commit()
-        log("ROUTER_SESSION_ROTATED",old,"=>",new)
-    log("PRESERVED_OLD_SESSION_AND_SQLITE_BACKUP",str(BACKUP/"orchestrator.before-router-v41.sqlite"))
-subprocess.run(["systemctl","start","dsh-superagent"],check=True,timeout=70)
+    BACKUP.mkdir(parents=True,exist_ok=True)
+    with sqlite3.connect(DB,timeout=15) as db:
+        db.execute("PRAGMA busy_timeout=15000")
+        row=db.execute("SELECT value FROM kv WHERE key='master-id'").fetchone()
+        assert row, "Missing master-id"
+        old=json.loads(row[0])
+        assert isinstance(old,str) and old.startswith("orchestrator-"), "Unexpected master-id"
+        if old.endswith(TAIL):
+            log("ROUTER_ALREADY_ROTATED",old)
+        else:
+            filename=BACKUP/"orchestrator.before-router-v41.sqlite"
+            with sqlite3.connect(filename) as to:
+                db.backup(to)
+            filename.chmod(0o600)
+            os.chown(filename,os.getuid(),os.getgid())
+            new=old+TAIL
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("UPDATE kv SET value=? WHERE key='master-id'",(json.dumps(new),))
+            db.commit()
+            log("ROUTER_SESSION_ROTATED",old,"=>",new)
+        log("PRESERVED_OLD_SESSION_AND_SQLITE_BACKUP",str(BACKUP/"orchestrator.before-router-v41.sqlite"))
+finally:
+    subprocess.run(["systemctl","start","dsh-superagent"],check=True,timeout=70)
 for attempt in range(40):
     try:
         state=get("state")
