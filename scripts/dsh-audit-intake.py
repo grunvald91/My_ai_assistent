@@ -98,3 +98,11 @@ o=read("overview")
 print("OVERVIEW_KEYS",sorted(o.keys()))
 print("HEALTH_STATE_KEYS", sorted((state.get("health") or {}).keys()))
 print("MASTER_SESSION_SET",bool(state.get("masterId")))
+
+for component in ("models","assessment","evals","delivery","launch","relay","reply"):
+    value=(state.get("health") or {}).get(component) or {}
+    print("COMPONENT",component,"state",value.get("state"),"detail_prefix",str(value.get("detail",""))[:140])
+for row in d.get("items",[]):
+    print("THREAD_EVAL",row.get("key"),str(row.get("evaluating"))[:300])
+print("OVERVIEW_PROBLEM_COUNT",len(o.get("problems") or []))
+print("OVERVIEW_FLOW",str(o.get("flow"))[:350])
