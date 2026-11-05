@@ -38,8 +38,11 @@ def choose(models, prefers):
                 return model
     return models[0]
 
-claude_id = choose(claude, ["haiku", "sonnet", "opus"])
-chat_id = choose(chat, ["deepseek-v4-flash", "deepseek", "qwen", "glm", "gpt"])
+claude_id = os.environ.get("DSH_CLAUDE_SMOKE_MODEL", "").strip() or choose(claude, ["haiku", "sonnet", "opus"])
+chat_id = os.environ.get("DSH_CHAT_SMOKE_MODEL", "").strip() or choose(chat, ["deepseek-v4-flash", "deepseek", "qwen", "glm", "gpt"])
+if claude_id not in claude or chat_id not in chat:
+    print("REQUESTED_MODELS_NOT_LISTED_IN_CLAUDEHUB")
+    sys.exit(4)
 
 a = request("https://api.claudehub.fun/v1/messages",
             {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
