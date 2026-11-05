@@ -3,12 +3,12 @@
 // Центральная очередь Issue остаётся в Ai_growth_os; рабочий репозиторий выбирается для каждого задания.
 import { escapeHtml, truncate } from './util.js';
 import { findSecrets } from './codeparse.js';
+import { finalAgentComment, parseTerminalResult } from './superagent-result.js';
 
 export const AGENT_REPO = 'grunvald91/Ai_growth_os';
 export const AGENT_ACCOUNT = 'Grunvald1991';
 const WATCH_WORKFLOW = 'superagent-watch.yml';
 // Only explicitly terminal messages may complete Telegram tracking. Native DSH markers occur on EVERY reply.
-const RESULT_MARKER = /<!--\s*superagent-result:v1\s+issue=(\d+)\s+state=(ready|blocked|failed|dropped)\s*-->/i;
 const STATUS_CONTEXT = 'superagent/multirepo-ready';
 const STATUS_DESCRIPTION = 'superagent-multirepo-v2';
 const STATUS_MAX_AGE_S = 10 * 60;
@@ -56,14 +56,6 @@ function permittedTarget(repo) {
   return REPO_NAME.test(repo) && repo.toLowerCase() !== 'grunvald91/my_ai_assistent';
 }
 
-export function resultComment(comments, issue) {
-  // Native <!-- dsh-superagent:... --> marks EVERY source message, including acknowledgements.
-  // Only an explicit terminal marker from the agent is a completion signal.
-  return (comments ?? []).filter(c =>
-    String(c?.user?.login ?? '').toLowerCase() === AGENT_ACCOUNT.toLowerCase() &&
-    String(c?.body ?? '').match(RESULT_MARKER)?.[1] === String(issue)
-  ).at(-1) ?? null;
-}
 
 export function createSuperagent(D) {
   const { store, out } = D;
@@ -192,6 +184,10 @@ export function createSuperagent(D) {
         return true;
       }
     }
+    if (/superagent-result:v1/i.test(text)) {
+      await out.sendHtml(chatId, '⚠️ Служебный маркер результата нельзя помещать в текст поручения.');
+      return true;
+    }
     if (findSecrets(text).length) {
       await out.sendHtml(chatId, '🔒 В задании обнаружен ключ или токен. Не отправляю его в публичный GitHub Issue. Убери секрет и повтори.');
       return true;
@@ -280,11 +276,10 @@ export function createSuperagent(D) {
       return true;
     }
     const comments = await gh().listIssueComments(AGENT_REPO, n);
-    let found = resultComment(comments, n);
+    let found = finalAgentComment(comments, n, AGENT_ACCOUNT);
     if (commentId != null) found = found && String(found.id) === String(commentId) ? found : null;
     if (!found) return false;
-    const match = String(found.body).match(RESULT_MARKER);
-    const resultState = match?.[2]?.toLowerCase() ?? 'unknown';
+    const resultState = parseTerminalResult(found.body, n)?.state ?? 'unknown';
     const report = truncate(String(found.body).replace(/<!--[\s\S]*?-->/g, '').trim(), 3000);
     await out.sendHtml(chatId,
       (resultState === 'ready' ? '✅ <b>Агент завершил задачу #' : 'ℹ️ <b>Агент закончил попытку выполнить задачу #') + n +
