@@ -12,8 +12,8 @@ export COMMENT_BODY="$temp/body.txt"
 export MOCK_ISSUE_JSON="$temp/large-issue.json"
 python3 - <<'PY'
 import json, os
-body = "<!-- superagent-route:v1 repo=grunvald91/booking_bot -->\\n@Grunvald1991\\n"
-body += "long issue instruction text with no secrets\\n" * 5000
+body = "<!-- superagent-route:v1 repo=grunvald91/booking_bot -->\n@Grunvald1991\n"
+body += "long issue instruction text with no secrets\n" * 5000
 with open(os.environ["MOCK_ISSUE_JSON"], "w", encoding="utf-8") as f:
     json.dump({"user": {"login": "grunvald91"}, "body": body}, f)
 PY
