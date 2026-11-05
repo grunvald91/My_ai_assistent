@@ -214,7 +214,7 @@ test('terminal report exposes only PR from the selected repository and status re
   w.clear();
   w.gh.comments.push({
     issue: 300, id: 502, user: { login: 'Grunvald1991' },
-    body: 'Исправлено: https://github.com/grunvald91/booking_bot/pull/17\\n<!-- superagent-result:v1 issue=300 state=ready -->',
+    body: 'Исправлено: https://github.com/grunvald91/booking_bot/pull/17\n<!-- superagent-result:v1 issue=300 state=ready -->',
   });
   assert.equal(await w.app.superagent.deliver({ issue: 300 }), true);
   w.gh.repos['grunvald91/booking_bot'].pullStatuses = { 17: { state: 'closed', merged: true, draft: false } };
