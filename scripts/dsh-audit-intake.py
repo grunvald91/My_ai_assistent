@@ -122,3 +122,10 @@ print("MODEL_CATALOG_PROVIDERS",model_catalog.get("routableProviders"))
 for group in model_catalog.get("groups",[]):
     print("MODEL_GROUP",group.get("id"),"model_count",len(group.get("models",[])),
           "model_ids",[x.get("id") for x in group.get("models",[])[:8] if isinstance(x,dict)])
+
+print("EXACT_RELEVANT_MODEL_IDS")
+for group in model_catalog.get("groups",[]):
+    for entry in group.get("models",[]):
+        identifier=entry.get("id","") if isinstance(entry,dict) else str(entry)
+        if any(word in identifier.lower() for word in ("deepseek","opus")):
+            print("MODEL_OPTION",group.get("id"),identifier)
