@@ -7,15 +7,20 @@ import { findSecrets } from './codeparse.js';
 export const AGENT_REPO = 'grunvald91/Ai_growth_os';
 export const AGENT_ACCOUNT = 'Grunvald1991';
 const WATCH_WORKFLOW = 'superagent-watch.yml';
-const ACK_MARKER = /<!--\s*dsh-superagent:[\da-f]+\s*-->/i;
+// Only explicitly terminal messages may complete Telegram tracking. Native DSH markers occur on EVERY reply.
+const RESULT_MARKER = /<!--\s*superagent-result:v1\s+issue=(\d+)\s+state=(ready|blocked|failed|dropped)\s*-->/i;
+const STATUS_CONTEXT = 'superagent/multirepo-ready';
+const STATUS_DESCRIPTION = 'superagent-multirepo-v2';
+const STATUS_MAX_AGE_S = 10 * 60;
 const ROUTE_MARKER = 'superagent-route:v1';
 const AGENT_REPO_ALIASES = {
   bookingbot: 'booking_bot', booking_bot: 'booking_bot',
   aigrowthos: 'Ai_growth_os', ai_growth_os: 'Ai_growth_os',
   smena: 'SMENA', sushef: 'Sushef', flightbot: 'flight_bot', flight_bot: 'flight_bot',
 };
-const REPO_REFERENCE = /(?:https?:\/\/github\.com\/)?(grunvald91\/[A-Za-z0-9_.-]+)/gi;
-const REPO_NAME = /^grunvald91\/[A-Za-z0-9_.-]+$/i;
+const GITHUB_URL = /(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)(?=[/?#\s]|$)/gi;
+const REPO_REFERENCE = /(?:^|[^\w./-])(grunvald91\/[A-Za-z0-9._-]+)(?=[^\w./-]|$)/gi;
+const REPO_NAME = /^grunvald91\/[A-Za-z0-9._-]+$/i;
 const WORK_VERBS = /исправ|поправ|добав|внес[иь]|созда|сдела|реализ|передела|перепиш|измени|изменит|обнов|сверста|настрой|интегрир|подготов[ьи]|закоммит|открой\s+(?:pr|pull request)|сделай\s+(?:pr|pull request)/i;
 
 export function parseAgentRequest(text) {
@@ -32,29 +37,50 @@ export function agentTaskType(text) {
 
 /** Explicit repo reference wins over chat default; ambiguous multi-repo requests fail closed. */
 export function requestedAgentRepository(text) {
-  const t = String(text ?? '');
-  const names = [...t.matchAll(REPO_REFERENCE)].map((m) => m[1]);
-  const short = /(?:^|\s)(?:в|для|репозитории|репозитория|repo)\s+(?:репозитории\s+)?([A-Za-z][A-Za-z0-9_-]*)\b/i.exec(t)?.[1]?.toLowerCase();
-  if (short && AGENT_REPO_ALIASES[short]) names.push('grunvald91/' + AGENT_REPO_ALIASES[short]);
-  const unique = [...new Map(names.map((v) => [v.toLowerCase(), v])).values()];
-  return unique.length > 1 ? { ambiguous: true } : { repo: unique[0] ?? null, ambiguous: false };
+  const source = String(text ?? '');
+  const refs = [];
+  // Collect every GitHub URL, not only our own account; foreign owners must never silently fall back.
+  for (const match of source.matchAll(GITHUB_URL)) {
+    const owner = match[1], name = match[2];
+    if (owner.toLowerCase() !== 'grunvald91') return { repo: null, ambiguous: false, unsupported: true };
+    refs.push(owner + '/' + name);
+  }
+  for (const match of source.matchAll(REPO_REFERENCE)) refs.push(match[1]);
+  const short = /(?:^|\s)(?:в|для|репозитории|репозитория|repo)\s+(?:репозитории\s+)?([A-Za-z][A-Za-z0-9_-]*)\b/i.exec(source)?.[1]?.toLowerCase();
+  if (short && AGENT_REPO_ALIASES[short]) refs.push('grunvald91/' + AGENT_REPO_ALIASES[short]);
+  const distinct = [...new Map(refs.map(name => [name.toLowerCase(), name])).values()];
+  return { repo: distinct.length === 1 ? distinct[0] : null, ambiguous: distinct.length > 1 };
 }
 
 function permittedTarget(repo) {
   return REPO_NAME.test(repo) && repo.toLowerCase() !== 'grunvald91/my_ai_assistent';
 }
 
-function resultComment(comments) {
-  return (comments ?? []).find((c) =>
+export function resultComment(comments, issue) {
+  // Native <!-- dsh-superagent:... --> marks EVERY source message, including acknowledgements.
+  // Only an explicit terminal marker from the agent is a completion signal.
+  return (comments ?? []).filter(c =>
     String(c?.user?.login ?? '').toLowerCase() === AGENT_ACCOUNT.toLowerCase() &&
-    !!String(c?.body ?? '').trim() && !ACK_MARKER.test(String(c.body))
-  ) ?? null;
+    String(c?.body ?? '').match(RESULT_MARKER)?.[1] === String(issue)
+  ).at(-1) ?? null;
 }
 
 export function createSuperagent(D) {
   const { store, out } = D;
   const keyFor = (issue) => 'agent:issue:' + issue;
-  const selectedKey = (chatId) => 'agent:repo:' + chatId;
+  const selectedKey = (chatId) => 'agent:repo:' + chatId; 
+  async function remoteReady() {
+    // GitHub status is posted by the VPS itself after verifying DSH live settings.
+    // A static Telegram flag or a stale status is NOT sufficient.
+    const statuses = await gh().listCommitStatuses(AGENT_REPO, 'main');
+    return (Array.isArray(statuses) ? statuses : []).some(s => {
+      const age = D.now() - Date.parse(s?.created_at ?? '') / 1000;
+      return s?.context === STATUS_CONTEXT && s?.state === 'success' &&
+        s?.description === STATUS_DESCRIPTION &&
+        String(s?.creator?.login ?? '').toLowerCase() === AGENT_ACCOUNT.toLowerCase() &&
+        Number.isFinite(age) && age >= 0 && age <= STATUS_MAX_AGE_S;
+    });
+  }
   const urlFor = (issue) => 'https://github.com/' + AGENT_REPO + '/issues/' + issue;
   const gh = () => D.github;
 
@@ -69,11 +95,14 @@ export function createSuperagent(D) {
     const readiness = /^(?:multirepo|мультирепо)\s+(on|off|status)$/i.exec(text);
     if (readiness) {
       const action = readiness[1].toLowerCase();
-      if (action !== 'status') await store.setSetting('agent:multi_repo_ready', action === 'on' ? '1' : '0');
-      const ready = (await store.getSetting('agent:multi_repo_ready')) === '1';
-      await out.sendHtml(chatId, 'Маршрутизация по нескольким репозиториям: <b>' +
-        (ready ? 'включена' : 'выключена') + '</b>.' +
-        '\nВключать только после установки и проверки серверной команды подготовки рабочих каталогов.');
+      if (action === 'off') await store.setSetting('agent:multi_repo_disabled', '1');
+      if (action === 'on') await store.setSetting('agent:multi_repo_disabled', '0');
+      const disabled = (await store.getSetting('agent:multi_repo_disabled')) === '1';
+      let ready = false;
+      try { ready = !!gh() && await remoteReady(); } catch { /* server cannot be verified */ }
+      await out.sendHtml(chatId, 'Многорепозиторная работа: <b>' +
+        (disabled ? 'приостановлена владельцем' : ready ? 'сервер подтверждён' : 'сервер не подтверждён') + '</b>.' +
+        '\nСервер должен сам публиковать свежую проверку конфигурации DSH. Команда on снимает только ручную паузу, но не отключает проверку сервера.');
       return true;
     }
     const choose = /^(?:repo|репозиторий)\s+(.+)$/i.exec(text);
@@ -111,6 +140,10 @@ export function createSuperagent(D) {
       return true;
     }
     const requested = requestedAgentRepository(text);
+    if (requested.unsupported) {
+      await out.sendHtml(chatId, '⚠️ В задании есть ссылка на GitHub-репозиторий другого владельца. Нельзя автоматически заменить его текущим проектом.');
+      return true;
+    }
     if (requested.ambiguous) {
       await out.sendHtml(chatId, '⚠️ В задании указано несколько репозиториев. Выбери один целевой репозиторий для этого Issue.');
       return true;
@@ -134,12 +167,15 @@ export function createSuperagent(D) {
         'Для приватных проектов потребуется отдельная приватная очередь.');
       return true;
     }
-    if (target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase() &&
-        (await store.getSetting('agent:multi_repo_ready')) !== '1') {
-      await out.sendHtml(chatId, '⚠️ Многорепозиторная работа ещё не активирована на сервере. ' +
-        'Сначала нужно установить серверный скрипт маршрутизации; после проверки включить <code>/agent multirepo on</code>. ' +
-        'Задание не отправлено в очередь.');
-      return true;
+    if (target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase()) {
+      const disabled = (await store.getSetting('agent:multi_repo_disabled')) === '1';
+      let ready = false;
+      try { ready = !disabled && await remoteReady(); } catch { /* fail closed */ }
+      if (!ready) {
+        await out.sendHtml(chatId, '⚠️ Нет свежего подтверждения работающей Multi-Repo конфигурации DSH на сервере. ' +
+          'Задание не отправлено. Проверь сервер и команду <code>/agent multirepo status</code>.');
+        return true;
+      }
     }
     if (target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase()) {
       try {
@@ -170,6 +206,12 @@ export function createSuperagent(D) {
       '',
       '`' + target.full_name + '` — рабочий проект. Issue создан в `' + AGENT_REPO + '` только для маршрутизации и отчётов.',
       'Используй подготовленную рабочую копию целевого репозитория. Если она не соответствует указанному проекту, остановись и сообщи об ошибке.',
+      'ВАЖНО: внешние PR не привязываются через pr_number штатного DSH; передай его полный URL в summary и вызывай orchestrator_report без pr_number.',
+      'Когда работа завершена (ready/blocked/failed/dropped), оставь в ЭТОМ Issue отдельный заключительный комментарий от аккаунта агента:',
+      '`<!-- superagent-result:v1 issue=ISSUE_NUMBER state=ready -->` (или blocked/failed/dropped).',
+      'Заменяй ISSUE_NUMBER на реальный номер текущего Issue. До маркера дай понятный итог и URL PR, если он есть.',
+      'Не добавляй этот маркер в подтверждения начала работы или промежуточные комментарии.',
+
       '',
       '## Задание от владельца через My AI Assistant',
       '',
@@ -238,12 +280,15 @@ export function createSuperagent(D) {
       return true;
     }
     const comments = await gh().listIssueComments(AGENT_REPO, n);
-    let found = resultComment(comments);
+    let found = resultComment(comments, n);
     if (commentId != null) found = found && String(found.id) === String(commentId) ? found : null;
     if (!found) return false;
+    const match = String(found.body).match(RESULT_MARKER);
+    const resultState = match?.[2]?.toLowerCase() ?? 'unknown';
     const report = truncate(String(found.body).replace(/<!--[\s\S]*?-->/g, '').trim(), 3000);
     await out.sendHtml(chatId,
-      '✅ <b>Агент ответил по задаче #' + n + '.</b>\nПроект: <code>' + escapeHtml(state.repo ?? AGENT_REPO) + '</code>\n\n' +
+      (resultState === 'ready' ? '✅ <b>Агент завершил задачу #' : 'ℹ️ <b>Агент закончил попытку выполнить задачу #') + n +
+      ' (' + escapeHtml(resultState) + ').</b>\nПроект: <code>' + escapeHtml(state.repo ?? AGENT_REPO) + '</code>\n\n' +
       escapeHtml(report) + '\n\n' +
       '<a href="' + urlFor(n) + '">Полный отчёт, обсуждение и PR</a>'
     );
