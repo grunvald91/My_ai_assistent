@@ -1,0 +1,46 @@
+name: DSH select ClaudeHub router and worker models
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-select-role-models.yml]
+permissions:
+  contents: read
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure explicit role models and restart only Superagent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/dsh-select-claudehub-role-models.py
+          umask 077
+          K=$(mktemp); H=$(mktemp)
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          [ "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U' ]
+          s=(-i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H")
+          ssh "${s[@]}" root@157.22.203.28 'python3 -' < scripts/dsh-select-claudehub-role-models.py
+          ssh "${s[@]}" root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          systemctl restart dsh-superagent
+          for n in $(seq 1 35); do
+            result=$(curl -fsS --max-time 3 -H 'x-orchestrator-request: 1' http://127.0.0.1:3082/orchestrator/api/state 2>/dev/null || true)
+            if [ -n "$result" ]; then
+              if printf '%s' "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); h=d.get("health",{}); assert h.get("runtime",{}).get("state")=="ready" and d.get("setup",{}).get("problem") is None'; then
+                echo 'DSH_CLAUDEHUB_ROLES_RESTARTED_AND_READY'
+                break
+              fi
+            fi
+            if [ "$n" = 35 ]; then echo 'DSH_NOT_READY_AFTER_RESTART'; exit 12; fi
+            sleep 2
+          done
+          systemctl show dsh-superagent -p ActiveState -p SubState -p NRestarts -p MemoryCurrent
+          REMOTE
+      - name: Check EUNOIA remains alive
+        run: curl --max-time 15 -fsS -o /dev/null -w 'EUNOIA_HTTPS=%{http_code}\n' https://spokoino.site/
