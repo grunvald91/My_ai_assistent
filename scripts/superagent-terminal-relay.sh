@@ -3,6 +3,8 @@
 set -euo pipefail
 : "${DSH_SUPERAGENT_URL:?Missing local DSH URL}"
 hub="grunvald91/Ai_growth_os"
+cli="${DSH_AGENT_GH_CLI:-gh}"
+command -v "$cli" >/dev/null || { echo "Agent GitHub CLI not found: $cli" >&2; exit 50; }
 base="${DSH_SUPERAGENT_URL%/}/orchestrator/api"
 storage="${DSH_MULTI_REPO_STATE_DIR:-$HOME/.local/state/superagent-multirepo}"
 mkdir -p "$storage"
@@ -43,20 +45,20 @@ for stage in open ended; do
       [[ -n "$issue_url" ]] || continue
       issue="${issue_url##*/}"
       [[ "$issue" =~ ^[1-9][0-9]*$ ]] || continue
-      data="$(gh api "repos/$hub/issues/$issue")"
+      data="$("$cli" api "repos/$hub/issues/$issue")"
       author="$(printf '%s' "$data" | jq -r '.user.login // ""')"
       first_line="$(printf '%s' "$data" | jq -r '.body // ""' | head -n1)"
       [[ "${author,,}" == grunvald91 ]] || continue
       [[ "$first_line" =~ $route_re ]] || continue
 
       relay_marker="<!-- superagent-relay:v1 report=$tag -->"
-      prior="$(gh api "repos/$hub/issues/$issue/comments?per_page=100" --paginate \
+      prior="$("$cli" api "repos/$hub/issues/$issue/comments?per_page=100" --paginate \
         --jq '.[] | select(.user.login == "Grunvald1991") | .body')"
       if [[ "$prior" != *"$relay_marker"* ]]; then
         summary="$(printf '%s' "$report" | jq -r '.summary // "Отчёт завершён без текста."')"
         comment="$(printf 'Состояние Superagent: %s\n\n%s\n%s\n<!-- superagent-result:v1 issue=%s state=%s -->' \
           "$status" "$summary" "$relay_marker" "$issue" "$status")"
-        gh api "repos/$hub/issues/$issue/comments" --method POST -f body="$comment" >/dev/null
+        "$cli" api "repos/$hub/issues/$issue/comments" --method POST -f body="$comment" >/dev/null
       fi
       printf '%s\n' "$tag" >> "$seen"
       count=$((count+1))
