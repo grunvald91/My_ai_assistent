@@ -1,0 +1,30 @@
+name: Install and launch DSH Superagent on VPS157
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-install-agent.yml]
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install resource-capped service and check health
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          K="$(mktemp)"
+          H="$(mktemp)"
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          test "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
+          ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" \
+            -o ConnectTimeout=12 root@157.22.203.28 'bash -s' \
+            < scripts/dsh-superagent-install-service.sh
