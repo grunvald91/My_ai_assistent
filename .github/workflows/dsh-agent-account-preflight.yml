@@ -1,0 +1,36 @@
+name: DSH Agent Account and Access Preflight
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-agent-account-preflight.yml]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_PAT: ${{ secrets.GH_PAT }}
+      AGENT_GH_PAT: ${{ secrets.AGENT_GH_PAT }}
+      AGENT_GITHUB_TOKEN: ${{ secrets.AGENT_GITHUB_TOKEN }}
+      DSH_GITHUB_TOKEN: ${{ secrets.DSH_GITHUB_TOKEN }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - name: Check account and token readiness without revealing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'ACCOUNT LOGIN: Grunvald1991'
+          echo 'PRIVATE TOKEN AVAILABILITY (present/absent only):'
+          for key in AGENT_GH_PAT AGENT_GITHUB_TOKEN DSH_GITHUB_TOKEN DEEPSEEK_API_KEY; do
+            if [ -n "${!key:-}" ]; then echo "${key}: present"; else echo "${key}: absent"; fi
+          done
+          [ -n "${GH_PAT:-}" ] || { echo 'GH_PAT: absent'; exit 0; }
+          echo 'Checking administrator invitation support.'
+          if GH_TOKEN="$GH_PAT" gh api --method PUT repos/grunvald91/Ai_growth_os/collaborators/Grunvald1991 -f permission=push --silent 2>/tmp/gh_agent_invite_error; then
+            echo 'COLLABORATOR_INVITATION_REQUEST: accepted by API; recipient may need to accept'
+          else
+            code="$(grep -o 'HTTP [0-9][0-9][0-9]' /tmp/gh_agent_invite_error | tail -1 || true)"
+            echo "COLLABORATOR_INVITATION_REQUEST: unavailable (${code:-permission not granted})"
+          fi
+          echo 'ACCOUNT PREFLIGHT FINISHED'
