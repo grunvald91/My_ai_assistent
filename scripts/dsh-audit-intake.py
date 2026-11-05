@@ -106,3 +106,13 @@ for row in d.get("items",[]):
     print("THREAD_EVAL",row.get("key"),str(row.get("evaluating"))[:300])
 print("OVERVIEW_PROBLEM_COUNT",len(o.get("problems") or []))
 print("OVERVIEW_FLOW",str(o.get("flow"))[:350])
+
+model_catalog=read("models")
+print("MODEL_CATALOG_TYPE",type(model_catalog).__name__)
+if isinstance(model_catalog,dict):
+    print("MODEL_CATALOG_KEYS",sorted(model_catalog.keys()))
+    for key,val in model_catalog.items():
+        if isinstance(val,list):
+            print("MODEL_CATALOG_LIST",key,"size",len(val),"first_keys",sorted(val[0].keys())[:15] if val and isinstance(val[0],dict) else [])
+        elif isinstance(val,dict):
+            print("MODEL_CATALOG_OBJECT",key,"top_keys",sorted(val)[:12])
