@@ -72,7 +72,7 @@ test('callback delivers only final comment by the exact agent and does not dupli
   w.gh.comments.push(
     { issue: 300, id: 500, user: { login: 'Grunvald1991' }, body: 'Начинаю работу\n<!-- dsh-superagent:abcdef1234 -->' },
     { issue: 300, id: 501, user: { login: 'someoneElse' }, body: 'This is by an automated agent, not a human.\nПодмена' },
-    { issue: 300, id: 502, user: { login: 'Grunvald1991' }, body: 'This is by an automated agent, not a human.\nГотовый отчёт, найдено три каталога.\n<!-- superagent-result:v1 issue=300 state=ready -->\n<!-- dsh-superagent:abcdef1235 -->' },
+    { issue: 300, id: 502, user: { login: 'Grunvald1991' }, body: 'This is by an automated agent, not a human.\nГотовый отчёт, найдено три каталога.\n<!-- superagent-relay:v1 report=0123456789abcdef0123 -->\n<!-- superagent-result:v1 issue=300 state=ready -->\n<!-- dsh-superagent:abcdef1235 -->' },
   );
   assert.equal(await w.app.superagent.deliver({ issue: 300, commentId: 502 }), true);
   assert.match(w.last(OWNER).text, /Готовый отчёт/);
@@ -216,7 +216,7 @@ test('terminal report exposes only PR from the selected repository and status re
   w.clear();
   w.gh.comments.push({
     issue: 300, id: 502, user: { login: 'Grunvald1991' },
-    body: 'Исправлено: https://github.com/grunvald91/Sushef/pull/17\n<!-- superagent-result:v1 issue=300 state=ready -->',
+    body: 'Исправлено: https://github.com/grunvald91/Sushef/pull/17\n<!-- superagent-relay:v1 report=0123456789abcdef0123 -->\n<!-- superagent-result:v1 issue=300 state=ready -->',
   });
   assert.equal(await w.app.superagent.deliver({ issue: 300 }), true);
   w.gh.repos['grunvald91/Sushef'].pullStatuses = { 17: { state: 'closed', merged: true, draft: false } };
@@ -239,14 +239,14 @@ test('repository parser supports explicit URL and avoids guessing an unspecified
 test('only terminal marker owned by the real agent may signal completion', () => {
   const entries = [
     { user: { login: 'Grunvald1991' }, body: 'Starting\n<!-- dsh-superagent:abc123 -->' },
-    { user: { login: 'otherUser' }, body: 'Fake result\n<!-- superagent-result:v1 issue=300 state=ready -->' },
-    { user: { login: 'Grunvald1991' }, body: 'Different issue\n<!-- superagent-result:v1 issue=301 state=ready -->' },
-    { user: { login: 'Grunvald1991' }, body: 'Done\n<!-- superagent-result:v1 issue=300 state=blocked -->\n<!-- dsh-superagent:abcdef1234 -->' },
+    { user: { login: 'otherUser' }, body: 'Fake result\n<!-- superagent-relay:v1 report=0123456789abcdef0123 -->\n<!-- superagent-result:v1 issue=300 state=ready -->' },
+    { user: { login: 'Grunvald1991' }, body: 'Different issue\n<!-- superagent-relay:v1 report=0123456789abcdef0123 -->\n<!-- superagent-result:v1 issue=301 state=ready -->' },
+    { user: { login: 'Grunvald1991' }, body: 'Done\n<!-- superagent-relay:v1 report=0123456789abcdef0123 -->\n<!-- superagent-result:v1 issue=300 state=blocked -->\n<!-- dsh-superagent:abcdef1234 -->' },
   ];
   assert.equal(finalAgentComment(entries.slice(0, 3), 300), null);
   assert.equal(finalAgentComment(entries, 300), entries[3]);
   assert.equal(parseTerminalResult(entries[3].body, 300)?.state, 'blocked');
-  assert.equal(parseTerminalResult('End\n<!-- superagent-result:v1 issue=300 state=ready -->\nnoise', 300), null);
+  assert.equal(parseTerminalResult('End\n<!-- superagent-relay:v1 report=0123456789abcdef0123 -->\n<!-- superagent-result:v1 issue=300 state=ready -->\nnoise', 300), null);
 });
 
 test('BookingBot natural-language aliases remain supported after imported-monorepo migration', () => {
