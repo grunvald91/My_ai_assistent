@@ -1,0 +1,30 @@
+name: DSH ClaudeHub profile staging (no agent start)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: ['.github/workflows/dsh-claudehub-vps157.yml']
+permissions:
+  contents: read
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure ClaudeHub routes for isolated agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          keyfile="$(mktemp)"
+          known="$(mktemp)"
+          trap 'rm -f "$keyfile" "$known"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$keyfile"
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$known"
+          test "$(ssh-keygen -lf "$known" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
+          ssh -i "$keyfile" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" root@157.22.203.28 'bash -s' < scripts/dsh-claudehub-profile.sh
+      - name: Check site after stage
+        run: |
+          curl --max-time 15 -fsSI https://spokoino.site/ | head -4
