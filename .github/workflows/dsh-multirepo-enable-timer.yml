@@ -69,7 +69,7 @@ jobs:
           Group=dsh-agent
           WorkingDirectory=/srv/dsh-agent
           Environment=HOME=/srv/dsh-agent
-          Environment=PATH=/opt/dsh-toolchain/bin:/usr/local/bin:/usr/bin:/bin
+          Environment=PATH=/srv/dsh-agent/.local/bin:/opt/dsh-toolchain/bin:/usr/local/bin:/usr/bin:/bin
           Environment=DSH_SUPERAGENT_URL=http://127.0.0.1:3082
           Environment=DSH_MULTI_REPO_PREPARE=/srv/dsh-agent/.local/bin/superagent-prepare-worktree.sh
           Environment=DSH_MULTI_REPO_RELAY=/srv/dsh-agent/.local/bin/superagent-terminal-relay.sh
