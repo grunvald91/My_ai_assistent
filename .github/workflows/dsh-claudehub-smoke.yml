@@ -1,0 +1,17 @@
+name: ClaudeHub two-protocol API smoke test
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: ['.github/workflows/dsh-claudehub-smoke.yml']
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify ClaudeHub Messages and Chat Completions
+        run: python3 scripts/dsh-claudehub-smoke.py
