@@ -38,7 +38,7 @@ export function agentTaskType(text) {
 }
 
 export function isBookingTask(text) {
-  return /booking[_\\s-]?bot|букинг(?:а|у|ом)?[\\s-]*бот(?:а|у|ом)?|grunvald91\\/booking_bot/i.test(String(text ?? ''));
+  return /booking[_\s-]?bot|букинг(?:а|у|ом)?[\s-]*бот(?:а|у|ом)?|grunvald91\/booking_bot/i.test(String(text ?? ''));
 }
 
 export function extractTargetPull(body, target) {
