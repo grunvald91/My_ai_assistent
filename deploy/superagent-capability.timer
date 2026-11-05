@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh Superagent multi-repository readiness status every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=superagent-capability.service
+
+[Install]
+WantedBy=timers.target
