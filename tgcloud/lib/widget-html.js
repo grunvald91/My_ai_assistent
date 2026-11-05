@@ -1,7 +1,7 @@
 // Telegram Bot API 10.4 HTMLBubble. Source is immutable; only chat_data changes.
 // No external resources, no user data in HTML/public_data; forwarded copies
 // cannot see private state. Keep under 32 KB HTML / 4 KB zlib-compressed.
-export const ASSISTANT_WIDGET_HTML = String.raw\`<!doctype html>
+export const ASSISTANT_WIDGET_HTML = String.raw`<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 *{box-sizing:border-box}
@@ -84,4 +84,4 @@ current=parse(tw.chatData);
 tw.onEvent('chatDataChanged',function(){current=parse(tw.chatData)||current;paint()});
 paint();tw.ready();
 })();
-</script></body></html>\`;
+</script></body></html>`;
