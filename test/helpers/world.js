@@ -140,7 +140,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
     failures: new Map(), // method → очередь ошибок BotApiError
     nextMessageId: 100,
     modelFetches: 0,
-    gh: { calls: [], repos: {}, prs: [], refs: [], commits: [], blobs: [], putFiles: [], dispatches: [], reruns: [] }, // заглушка GitHub (см. ниже)
+    gh: { calls: [], repos: {}, prs: [], refs: [], commits: [], blobs: [], putFiles: [], dispatches: [], reruns: [], issues: [], comments: [] }, // заглушка GitHub (см. ниже)
     files: new Map(), // file_id → байты для api.getFileContent
     balance: { balance: 1234.5, currency: 'RUB' },
   };
@@ -361,6 +361,16 @@ function fakeGithub(w, path, opts) {
   if (rest.startsWith('/git/refs/heads/') && method === 'PATCH') {
     g.refs.push({ repo: key, ref: 'refs/heads/' + rest.slice('/git/refs/heads/'.length), sha: body.sha, kind: 'update' });
     return res(200, {});
+  }
+  // ── Superagent Issues
+  if (rest === '/issues' && method === 'POST') {
+    if (repo.issuesDenied) return res(403, { message: 'Forbidden' });
+    const number = g.issues.length + 300;
+    g.issues.push({ repo: key, number, title: body.title, body: body.body });
+    return res(201, { number, html_url: 'https://github.com/' + key + '/issues/' + number });
+  }
+  if ((m = /^\/issues\/(\d+)\/comments$/.exec(rest)) && method === 'GET') {
+    return res(200, g.comments.filter((c) => c.issue === Number(m[1])));
   }
   // ── Actions
   if (rest.startsWith('/actions/workflows') && method === 'GET' && rest.includes('/runs')) {
