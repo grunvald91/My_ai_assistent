@@ -3,6 +3,7 @@
 import { execFileSync } from 'node:child_process';
 
 const REPO = 'grunvald91/Ai_growth_os';
+const RESULT_MARKER = /<!--\s*superagent-result:v1\s+issue=(\d+)\s+state=(ready|blocked|failed|dropped)\s*-->/i;
 const issue = Number(process.env.AGENT_ISSUE);
 const owner = Number(process.env.AGENT_CHAT_ID);
 const approvedOwners = String(process.env.OWNER_IDS ?? '').split(/[,;\s]+/).map(Number).filter(Number.isSafeInteger);
@@ -29,11 +30,12 @@ async function agentReply() {
   });
   if (!res.ok) throw new Error('GitHub comment API status ' + res.status);
   const comments = await res.json();
-  return comments.find((c) =>
+  // Every DSH message has its own dsh-superagent marker; never treat that as an acknowledgement filter.
+  // A separate terminal marker identifies the job that has actually finished.
+  return comments.filter((c) =>
     String(c?.user?.login ?? '').toLowerCase() === 'grunvald1991' &&
-    !!String(c?.body ?? '').trim() &&
-    !/<!--\s*dsh-superagent:[\da-f]+\s*-->/i.test(String(c.body))
-  ) ?? null;
+    String(c?.body ?? '').match(RESULT_MARKER)?.[1] === String(issue)
+  ).at(-1) ?? null;
 }
 
 function notify(body) {
