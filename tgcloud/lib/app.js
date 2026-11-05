@@ -12,6 +12,7 @@ import { createPosts } from './posts.js';
 import { createBusiness } from './business.js';
 import { createReplies } from './replies.js';
 import { createCommands } from './commands.js';
+import { createCards } from './cards.js';
 import { createCode } from './code.js';
 import { createSuperagent } from './superagent.js';
 import { createBg } from './bg.js';
@@ -33,6 +34,7 @@ export function createApp(base) {
   D.github = base.ghToken ? createGithub({ fetch: base.fetch, token: base.ghToken }) : null;
   D.out = createOut(D);
   D.core = createCore(D);
+  D.cards = createCards(D);
   const { out, core } = D;
   D.exaKey = base.exaKey ?? '';
   D.yandexRaspKey = base.yandexRaspKey ?? '';
@@ -241,6 +243,7 @@ export function createApp(base) {
     if (st.startsWith('draft_rev:')) return replies.onState(msg, chat);
     if (st === 'code_task') return code.onState(msg, chat);
     if (st === 'agent_task') return D.superagent.onState(msg, chat);
+    if (st === 'ui_add_task') return D.cards.onState(msg);
     await store.setState(chat.chatId, null); // неизвестное состояние — сбрасываем
     return false;
   }
@@ -339,6 +342,8 @@ export function createApp(base) {
           return await D.bg.callback(cq, parts.slice(1));
         case 'sr':
           return await D.exa.callback(cq, parts.slice(1));
+        case 'ui':
+          return await D.cards.callback(cq, parts.slice(1));
         case 'a': {
           const chatId = cq.message.chat.id;
           await out.dropButtons(chatId, cq.message.message_id);
