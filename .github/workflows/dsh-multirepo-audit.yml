@@ -32,6 +32,7 @@ jobs:
           for candidate in /usr/bin/jq /usr/local/bin/jq /opt/dsh-toolchain/bin/jq /srv/dsh-agent/.local/bin/jq; do
             if test -x "$candidate"; then echo "JQ_AVAILABLE_AT=$candidate"; fi
           done
+          echo 'AUDIT_REV=3'
           echo "SERVICE_STATE=$(systemctl is-active dsh-superagent || true)"
           echo "SERVICE_USER=$(systemctl show dsh-superagent -p User --value)"
           echo "TIMER_STATE=$(systemctl is-active superagent-capability.timer || true)"
