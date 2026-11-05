@@ -1,0 +1,71 @@
+name: Superagent - submit task
+run-name: Agent task - ${{ inputs.title }}
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: 'Название задания (без секретов и личных данных)'
+        required: true
+        type: string
+      instructions:
+        description: 'Что проверить или исправить; результат будет в GitHub Issue'
+        required: true
+        type: string
+      task_type:
+        description: 'Тип задания'
+        type: choice
+        required: true
+        default: 'report-only'
+        options:
+          - report-only
+          - code-change
+permissions:
+  contents: read
+jobs:
+  dispatch:
+    name: Open task for DSH Superagent
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      TASK_TITLE: ${{ inputs.title }}
+      TASK_INSTRUCTIONS: ${{ inputs.instructions }}
+      TASK_TYPE: ${{ inputs.task_type }}
+      TARGET_REPO: grunvald91/Ai_growth_os
+    steps:
+      - name: Create GitHub Issue mentioning separate agent account
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN" || { echo 'Missing secret GH_PAT'; exit 10; }
+          test -n "$TASK_TITLE" && test -n "$TASK_INSTRUCTIONS"
+          test "${#TASK_TITLE}" -le 180 || { echo 'Title too long'; exit 11; }
+          test "${#TASK_INSTRUCTIONS}" -le 6000 || { echo 'Instructions too long'; exit 12; }
+          author=$(gh api user --jq '.login')
+          test "${author,,}" = grunvald91 || { echo 'GH_PAT must belong to grunvald91 to pass agent allow-list'; exit 13; }
+          canpush=$(gh api "repos/$TARGET_REPO" --jq '.permissions.push')
+          test "$canpush" = true || { echo 'GH_PAT cannot create issues in target repository'; exit 14; }
+          body=$(mktemp)
+          trap 'rm -f "$body"' EXIT
+          {
+            printf '@Grunvald1991\n\n'
+            printf '## Задача\n\n%s\n\n' "$TASK_INSTRUCTIONS"
+            printf '## Режим\n\n'
+            if [ "$TASK_TYPE" = report-only ]; then
+              printf 'Только анализ и отчёт. Не изменять файлы, не создавать ветки и PR.\n'
+            else
+              printf 'Разрешены исправления кода и PR. Не выполнять merge, deploy, изменение production, секретов или данных.\n'
+            fi
+            printf '\n---\nСоздано через My_ai_assistent / GitHub Actions. Автор задач: grunvald91.\n'
+          } > "$body"
+          url=$(gh issue create -R "$TARGET_REPO" --title "$TASK_TITLE" --body-file "$body")
+          printf 'Created task: %s\n' "$url"
+          {
+            echo '## Superagent task submitted'
+            echo
+            echo "[Открыть задачу]($url)"
+            echo
+            echo "Repository: $TARGET_REPO"
+            echo
+            echo "Mode: $TASK_TYPE"
+          } >> "$GITHUB_STEP_SUMMARY"
