@@ -6,6 +6,8 @@ import { findSecrets } from './codeparse.js';
 import { finalAgentComment, parseTerminalResult } from './superagent-result.js';
 
 export const AGENT_REPO = 'grunvald91/Ai_growth_os';
+export const BOOKING_SOURCE_REPO = 'grunvald91/booking_bot';
+export const BOOKING_MODULE_PATH = 'services/booking_bot/';
 export const AGENT_ACCOUNT = 'Grunvald1991';
 const WATCH_WORKFLOW = 'superagent-watch.yml';
 // Only explicitly terminal messages may complete Telegram tracking. Native DSH markers occur on EVERY reply.
@@ -33,6 +35,10 @@ export function parseAgentRequest(text) {
 
 export function agentTaskType(text) {
   return WORK_VERBS.test(text) ? 'code-change' : 'report-only';
+}
+
+export function isBookingTask(text) {
+  return /booking[_\\s-]?bot|букинг(?:а|у|ом)?[\\s-]*бот(?:а|у|ом)?|grunvald91\\/booking_bot/i.test(String(text ?? ''));
 }
 
 export function extractTargetPull(body, target) {
@@ -147,7 +153,14 @@ export function createSuperagent(D) {
       await out.sendHtml(chatId, '⚠️ В задании указано несколько репозиториев. Выбери один целевой репозиторий для этого Issue.');
       return true;
     }
-    const targetName = requested.repo ?? (await store.getSetting(selectedKey(chatId))) ?? AGENT_REPO;
+    const selected = (await store.getSetting(selectedKey(chatId))) ?? AGENT_REPO;
+    const declaredTarget = requested.repo ?? selected;
+    // BookingBot has been imported to Ai_growth_os/services/booking_bot. Do not edit the legacy source repo.
+    const bookingTask = declaredTarget.toLowerCase() === BOOKING_SOURCE_REPO.toLowerCase() ||
+      (declaredTarget.toLowerCase() === AGENT_REPO.toLowerCase() && !requested.repo && isBookingTask(text));
+    const targetName = bookingTask ? AGENT_REPO : declaredTarget;
+    const type = agentTaskType(text);
+    const requiredAccess = type === 'report-only' ? ['read', 'triage', 'write', 'maintain', 'admin'] : ['write', 'maintain', 'admin'];
     if (!permittedTarget(targetName)) {
       await out.sendHtml(chatId, '⚠️ Репозиторий недопустим. Укажи <code>grunvald91/имя</code>, кроме репозитория самого бота.');
       return true;
@@ -179,9 +192,9 @@ export function createSuperagent(D) {
     if (target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase()) {
       try {
         const access = await gh().getRepoCollaboratorPermission(target.full_name, AGENT_ACCOUNT);
-        if (!['write', 'maintain', 'admin'].includes(String(access?.permission ?? '').toLowerCase())) {
+        if (!requiredAccess.includes(String(access?.permission ?? '').toLowerCase())) {
           await out.sendHtml(chatId, '⚠️ У аккаунта агента <code>' + AGENT_ACCOUNT +
-            '</code> нет права Write в <code>' + escapeHtml(target.full_name) +
+            '</code> нет необходимого доступа (' + (type === 'report-only' ? 'Read' : 'Write') + ') к <code>' + escapeHtml(target.full_name) +
             '</code>. Добавь его как соавтора с доступом на запись. Задание не отправлено.');
           return true;
         }
@@ -199,16 +212,18 @@ export function createSuperagent(D) {
       await out.sendHtml(chatId, '🔒 В задании обнаружен ключ или токен. Не отправляю его в публичный GitHub Issue. Убери секрет и повтори.');
       return true;
     }
-    const type = agentTaskType(text);
-    const title = '[Telegram][' + target.full_name.split('/')[1] + '] ' + truncate(text.replace(/\s+/g, ' ').split(/[.!?\n]/)[0], 110);
+    const title = '[Telegram][' + (bookingTask ? 'BookingBot' : target.full_name.split('/')[1]) + '] ' + truncate(text.replace(/\s+/g, ' ').split(/[.!?\n]/)[0], 110);
     const body = [
-      '<!-- ' + ROUTE_MARKER + ' repo=' + target.full_name + ' -->',
+      '<!-- ' + ROUTE_MARKER + ' repo=' + target.full_name + ' mode=' + (type === 'report-only' ? 'read' : 'write') + ' -->',
       '@' + AGENT_ACCOUNT,
       '',
       '## Целевой репозиторий',
       '',
       '`' + target.full_name + '` — рабочий проект. Issue создан в `' + AGENT_REPO + '` только для маршрутизации и отчётов.',
       'Используй подготовленную рабочую копию целевого репозитория. Если она не соответствует указанному проекту, остановись и сообщи об ошибке.',
+      bookingTask
+        ? 'BookingBot теперь входит в grunvald91/Ai_growth_os: код находится в services/booking_bot/. Даже если пользователь прислал старую ссылку github.com/grunvald91/booking_bot, все чтения, коммиты и Pull Request делай в grunvald91/Ai_growth_os и в каталоге services/booking_bot/. Исходный репозиторий booking_bot и production не трогай: его деплой ещё не переведён в монорепозиторий.'
+        : 'Работай с указанным целевым репозиторием; код других проектов не изменяй.',
       'ВАЖНО: внешние PR не привязываются через pr_number штатного DSH; передай его полный URL в summary и вызывай orchestrator_report без pr_number.',
       'Когда работа завершена (ready/blocked/failed/dropped), оставь в ЭТОМ Issue отдельный заключительный комментарий от аккаунта агента:',
       '`<!-- superagent-result:v1 issue=ISSUE_NUMBER state=ready -->` (или blocked/failed/dropped).',
@@ -242,7 +257,7 @@ export function createSuperagent(D) {
       await out.sendHtml(chatId, '⚠️ GitHub принял запрос, но не вернул номер Issue. Не отправляю повторно, чтобы не создать дубль.');
       return true;
     }
-    await store.setSetting(keyFor(number), JSON.stringify({ chatId, title, type, repo: target.full_name, status: 'sent', at: D.now() }));
+    await store.setSetting(keyFor(number), JSON.stringify({ chatId, title, type, repo: target.full_name, ...(bookingTask ? { module: BOOKING_MODULE_PATH } : {}), status: 'sent', at: D.now() }));
     await store.setSetting('agent:last:' + chatId, String(number));
     const link = urlFor(number);
     let tracking = true;
@@ -255,7 +270,7 @@ export function createSuperagent(D) {
     await D.log?.('superagent_sent', chatId, { issue: number, type, repo: target.full_name });
     await out.sendHtml(chatId,
       '✅ <b>Передал задачу агенту.</b>\n' +
-      'Проект: <code>' + escapeHtml(target.full_name) + '</code>\n' +
+      'Проект: <code>' + escapeHtml(target.full_name + (bookingTask ? '/' + BOOKING_MODULE_PATH : '')) + '</code>\n' +
       'Режим: ' + (type === 'report-only' ? 'проверка и отчёт' : 'изменения через PR') + '\n' +
       '<a href="' + link + '">Открыть задачу #' + number + '</a>\n\n' +
       (tracking ? 'Результат пришлю сюда, когда агент закончит.' :
