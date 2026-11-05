@@ -6,6 +6,7 @@ function setup(w) {
   w.gh.repos['grunvald91/Ai_growth_os'] = { default_branch: 'main', files: { 'README.md': 'hello' } };
   w.gh.repos['grunvald91/booking_bot'] = { default_branch: 'main', files: { 'README.md': 'hello' } };
   w.gh.repos['grunvald91/SMENA'] = { default_branch: 'main', agentPermission: 'read', files: {} };
+  w.gh.repos['grunvald91/private_proj'] = { private: true, agentPermission: 'write', default_branch: 'main', files: {} };
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: {} };
 }
 
@@ -119,6 +120,15 @@ test('read-only agent collaborator cannot submit cross-repository task', async (
   await w.say('/agent Проверь github.com/grunvald91/SMENA');
   assert.equal(w.gh.issues.length, 0);
   assert.match(w.last(OWNER).text, /нет права Write/);
+});
+
+test('private target cannot expose instructions in the public issue hub', async () => {
+  const w = await createWorld();
+  setup(w);
+  await w.say('/agent multirepo on');
+  await w.say('/agent Проверь github.com/grunvald91/private_proj');
+  assert.equal(w.gh.issues.length, 0);
+  assert.match(w.last(OWNER).text, /очередь.*публичная/);
 });
 
 test('multi-target and unauthorized repositories fail closed without creating Issues', async () => {
