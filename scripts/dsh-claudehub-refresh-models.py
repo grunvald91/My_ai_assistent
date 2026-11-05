@@ -80,7 +80,7 @@ def main():
         print("REFUSED: no initialized DSH profile")
         return 5
     current = PROFILE.read_text()
-    if current.count("- id: ") != 3 or "- id: llm-pi-ai\n" not in current:
+    if len(re.findall(r"(?m)^- id: ", current)) != 3 or "- id: llm-pi-ai\n" not in current:
         print("REFUSED: DSH profile has customizations; preserve and edit manually")
         return 6
     prefix = current.split("- id: llm-pi-ai\n", 1)[0]
