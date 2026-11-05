@@ -9,6 +9,14 @@ export DSH_MULTI_REPO_STATE_DIR="$temp/state"
 export DSH_SUPERAGENT_URL="http://127.0.0.1:9999"
 export COMMENT_LOG="$temp/post.log"
 export COMMENT_BODY="$temp/body.txt"
+export MOCK_ISSUE_JSON="$temp/large-issue.json"
+python3 - <<'PY'
+import json, os
+body = "<!-- superagent-route:v1 repo=grunvald91/booking_bot -->\n@Grunvald1991\n"
+body += "long issue instruction text with no secrets\n" * 5000
+with open(os.environ["MOCK_ISSUE_JSON"], "w", encoding="utf-8") as f:
+    json.dump({"user": {"login": "grunvald91"}, "body": body}, f)
+PY
 cat > "$temp/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -27,7 +35,7 @@ set -euo pipefail
 [[ "$1" == api ]] || exit 90
 case "$2" in
   repos/grunvald91/Ai_growth_os/issues/300)
-    echo '{"user":{"login":"grunvald91"},"body":"<!-- superagent-route:v1 repo=grunvald91/booking_bot -->\n@Grunvald1991"}' ;;
+    cat "$MOCK_ISSUE_JSON" ;;
   repos/grunvald91/Ai_growth_os/issues/300/comments)
     [[ "$3" == '--method' && "$4" == 'POST' ]] || exit 91
     printf 'POST\n' >> "$COMMENT_LOG"
