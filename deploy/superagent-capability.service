@@ -1,0 +1,12 @@
+[Unit]
+Description=Verify DSH Superagent multi-repository capability and refresh GitHub status
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=dsh-agent
+Environment="DSH_SUPERAGENT_URL=http://127.0.0.1:PORT"
+Environment="DSH_MULTI_REPO_PREPARE=/home/dsh-agent/.local/bin/superagent-prepare-worktree.sh"
+Environment="DSH_MULTI_REPO_RELAY=/home/dsh-agent/.local/bin/superagent-terminal-relay.sh"
+ExecStart=/usr/bin/env bash /home/dsh-agent/.local/bin/superagent-capability-heartbeat.sh
+NoNewPrivileges=true

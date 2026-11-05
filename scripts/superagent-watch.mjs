@@ -1,6 +1,7 @@
 // scripts/superagent-watch.mjs — фоновая доставка результата агента в Telegram.
 // Этот workflow запускает сам бот при создании Issue, никаких ручных Actions.
 import { execFileSync } from 'node:child_process';
+import { finalAgentComment } from '../tgcloud/lib/superagent-result.js';
 
 const REPO = 'grunvald91/Ai_growth_os';
 const issue = Number(process.env.AGENT_ISSUE);
@@ -29,11 +30,9 @@ async function agentReply() {
   });
   if (!res.ok) throw new Error('GitHub comment API status ' + res.status);
   const comments = await res.json();
-  return comments.find((c) =>
-    String(c?.user?.login ?? '').toLowerCase() === 'grunvald1991' &&
-    !!String(c?.body ?? '').trim() &&
-    !/<!--\s*dsh-superagent:[\da-f]+\s*-->/i.test(String(c.body))
-  ) ?? null;
+  // Every DSH message has its own dsh-superagent marker; never treat that as an acknowledgement filter.
+  // A separate terminal marker identifies the job that has actually finished.
+  return finalAgentComment(comments, issue, 'Grunvald1991');
 }
 
 function notify(body) {

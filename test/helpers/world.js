@@ -324,6 +324,8 @@ function fakeGithub(w, path, opts) {
   const repo = g.repos[key];
   const rest = m[3] ?? '';
   if (rest === '') return res(200, { full_name: repo.canonical ?? key, private: !!repo.private, default_branch: repo.default_branch ?? 'main' });
+  if (/^\/collaborators\/[^/]+\/permission$/.test(rest)) return res(200, { permission: repo.agentPermission ?? 'write' });
+  if (/^\/commits\/[^/]+\/statuses$/.test(rest)) return res(200, repo.statuses ?? []);
   const filesOf = (branch) => repo.branchFiles?.[branch] ?? repo.files;
   if (rest.startsWith('/git/trees/')) {
     if (repo.empty) return res(409, { message: 'Git Repository is empty.' });
@@ -390,6 +392,10 @@ function fakeGithub(w, path, opts) {
   if ((m = /^\/actions\/runs\/(\d+)\/rerun-failed-jobs$/.exec(rest))) {
     g.reruns.push({ repo: key, run: Number(m[1]) });
     return res(201, {});
+  }
+  if (/^\/pulls\/[1-9][0-9]*$/.test(rest) && method === 'GET') {
+    const number = Number(rest.split('/')[2]);
+    return res(200, repo.pullStatuses?.[number] ?? { state: 'open', merged: false, draft: false, html_url: 'https://github.com/' + key + '/pull/' + number });
   }
   if (rest === '/pulls' && method === 'GET') {
     const head = decodeURIComponent(/head=([^&]*)/.exec(qs ?? '')?.[1] ?? '').split(':')[1];
