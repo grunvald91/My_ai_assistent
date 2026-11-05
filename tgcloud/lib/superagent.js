@@ -156,6 +156,13 @@ export function createSuperagent(D) {
       await out.sendHtml(chatId, 'Пока нет отправленных задач. Напиши <code>/agent задача</code> или «Поручи агенту ...».');
       return true;
     }
+    const previous = await store.getSetting(keyFor(last));
+    let saved = {};
+    try { saved = JSON.parse(previous ?? '{}'); } catch { /* ignore */ }
+    if (saved.status === 'done') {
+      await out.sendHtml(chatId, '✅ <b>Задача #' + last + ' уже выполнена.</b>\n<a href="' + urlFor(last) + '">Прочитать отчёт или PR</a>');
+      return true;
+    }
     try {
       if (await deliver({ issue: last })) return true;
     } catch (e) {
