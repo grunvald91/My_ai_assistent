@@ -66,6 +66,16 @@ export function createSuperagent(D) {
       return true;
     }
     if (/^(?:статус|status|проверить|проверь)$/i.test(text)) return status(chatId);
+    const readiness = /^(?:multirepo|мультирепо)\s+(on|off|status)$/i.exec(text);
+    if (readiness) {
+      const action = readiness[1].toLowerCase();
+      if (action !== 'status') await store.setSetting('agent:multi_repo_ready', action === 'on' ? '1' : '0');
+      const ready = (await store.getSetting('agent:multi_repo_ready')) === '1';
+      await out.sendHtml(chatId, 'Маршрутизация по нескольким репозиториям: <b>' +
+        (ready ? 'включена' : 'выключена') + '</b>.' +
+        '\nВключать только после установки и проверки серверной команды подготовки рабочих каталогов.');
+      return true;
+    }
     const choose = /^(?:repo|репозиторий)\s+(.+)$/i.exec(text);
     if (choose) {
       const name = choose[1].trim();
@@ -116,6 +126,13 @@ export function createSuperagent(D) {
       if (!permittedTarget(target.full_name)) throw new Error('Invalid canonical repository');
     } catch {
       await out.sendHtml(chatId, '⚠️ Не могу подтвердить доступ к репозиторию <code>' + escapeHtml(targetName) + '</code>. Задание не отправлено.');
+      return true;
+    }
+    if (target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase() &&
+        (await store.getSetting('agent:multi_repo_ready')) !== '1') {
+      await out.sendHtml(chatId, '⚠️ Многорепозиторная работа ещё не активирована на сервере. ' +
+        'Сначала нужно установить серверный скрипт маршрутизации; после проверки включить <code>/agent multirepo on</code>. ' +
+        'Задание не отправлено в очередь.');
       return true;
     }
     if (findSecrets(text).length) {
