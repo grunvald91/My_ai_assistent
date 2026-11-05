@@ -1,0 +1,61 @@
+name: DSH Multi-Repo VPS readiness audit (read-only)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-multirepo-audit.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - name: Read-only VPS DSH readiness, no secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_KEY_157:-}" || { echo 'BLOCKED: SSH_KEY_157 missing'; exit 12; }
+          umask 077
+          K="$(mktemp)"; H="$(mktemp)"
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          unset SSH_KEY_157
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          test "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
+          ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" -o ConnectTimeout=10 root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          echo "SERVICE_STATE=$(systemctl is-active dsh-superagent || true)"
+          echo "SERVICE_USER=$(systemctl show dsh-superagent -p User --value)"
+          echo "TIMER_STATE=$(systemctl is-active superagent-capability.timer || true)"
+          echo "TIMER_ENABLED=$(systemctl is-enabled superagent-capability.timer 2>/dev/null || true)"
+          for script in superagent-prepare-worktree.sh superagent-terminal-relay.sh superagent-capability-heartbeat.sh superagent-configure-prompts.mjs; do
+            if test -f "/srv/dsh-agent/.local/bin/$script"; then echo "SCRIPT_${script}=present"; else echo "SCRIPT_${script}=absent"; fi
+          done
+          python3 - <<'PY'
+          import json,urllib.request,urllib.error,os
+          base="http://127.0.0.1:3082/orchestrator/api/"
+          def get(path):
+              req=urllib.request.Request(base+path,headers={"x-orchestrator-request":"1"})
+              with urllib.request.urlopen(req,timeout=8) as r: return json.load(r)
+          try:
+              s=get("settings"); p=get("prompts"); st=get("state")
+              sources=[v for v in s.get("sources",[]) if v.get("kind")=="github" and v.get("value",{}).get("enabled")]
+              print("GITHUB_SOURCE_COUNT",len(sources))
+              print("SOURCE_IS_AI_GROWTH_OS",int(any(v.get("value",{}).get("config",{}).get("repository")=="grunvald91/Ai_growth_os" for v in sources)))
+              print("DSH_GH_WRAPPER_CONFIGURED",int(any(bool(v.get("value",{}).get("config",{}).get("cli")) for v in sources)))
+              print("EXEC_PREPARE_IS_MULTI_REPO",int("superagent-prepare-worktree.sh" in s.get("blocks",{}).get("executor",{}).get("value",{}).get("prepare","")))
+              config=p.get("current",{}).get("config",{})
+              print("PROMPTS_EXTERNAL_PR_RULE",int("superagent-external-pr-v1" in config.get("delivery","")))
+              print("DSH_PAUSED",bool(st.get("paused")))
+              print("DSH_SETUP_PROBLEM",bool(st.get("setup",{}).get("problem")))
+              print("API_HEALTH_READY",int(not st.get("paused") and not st.get("setup",{}).get("problem")))
+          except Exception as exc:
+              print("DSH_API_CHECK_FAILED",type(exc).__name__)
+              raise
+          PY
+          REMOTE
