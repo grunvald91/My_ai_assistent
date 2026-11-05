@@ -1,0 +1,49 @@
+name: Telegram Superagent live owner-message smoke
+on:
+  push:
+    branches: [ops/telegram-superagent-live-smoke-20261105]
+    paths: [.github/workflows/telegram-superagent-live-smoke.yml]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    env:
+      TGCLOUD_TOKEN: ${{ secrets.TELEGRAM_CLI_ACCESS }}
+      CLAUDEHUB_API_KEY: ${{ secrets.CLAUDEHUB_API_KEY }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+      OWNER_IDS: ${{ secrets.OWNER_IDS || vars.OWNER_IDS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Send safe test task through deployed bot handler
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/write-secrets.mjs
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          const owner = Number(String(process.env.OWNER_IDS || '').split(/[,;\s]+/)[0]);
+          if (!Number.isSafeInteger(owner) || owner <= 0) throw new Error('OWNER_IDS not configured');
+          const message = {
+            message_id: 9800511, date: Math.floor(Date.now() / 1000),
+            from: { id: owner, first_name: 'Owner', is_bot: false },
+            chat: { id: owner, type: 'private' },
+            text: 'Поручи агенту проверить только README.md в Ai_growth_os и дать короткий отчёт о трёх основных компонентах. Это проверка доставки из Telegram, код не меняй.'
+          };
+          try {
+            execFileSync('npx', ['tgcloud', 'run', 'handlers/message', JSON.stringify(message),
+              '--ctx', JSON.stringify({update: {update_id: 9800511}})],
+              { timeout: 170000, stdio: 'pipe', maxBuffer: 1024 * 1024 });
+            console.log('TELEGRAM_SUPERAGENT_HANDLER_LIVE_SMOKE_OK');
+          } catch (error) {
+            console.error('TELEGRAM_HANDLER_LIVE_SMOKE_FAILED', error?.status ?? error?.signal ?? 'unknown');
+            console.error(String(error?.stderr ?? '').slice(0, 1000).replace(/ghp_[a-z0-9]+|sk-[a-z0-9-]+/ig,'***'));
+            process.exit(1);
+          }
+          NODE
