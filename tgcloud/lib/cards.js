@@ -34,9 +34,10 @@ export function createCards(D) {
     });
   }
 
-  async function modify(chatId, change) {
+  async function modify(chatId, change, expectedVersion = null) {
     for (let attempt = 0; attempt < 5; attempt++) {
       const current = await board(chatId);
+      if (expectedVersion !== null && current.version !== expectedVersion) return { ok: false, current };
       const items = taskItems(current);
       const updated = change(items);
       if (!updated) return { ok: false, current };
@@ -202,7 +203,7 @@ export function createCards(D) {
         if (idx >= items.length) return null;
         items[idx] = { ...items[idx], done: !items[idx].done };
         return items;
-      });
+      }, Number(revision));
       await out.answerCb(cq.id, changed.ok ? 'Готово' : 'Карточка изменилась — обновляю');
       return show(chatId, 'tasks', id, Number.isSafeInteger(p) ? p : 0);
     }
