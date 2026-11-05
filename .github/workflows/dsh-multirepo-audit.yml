@@ -33,6 +33,7 @@ jobs:
           echo "SERVICE_USER=$(systemctl show dsh-superagent -p User --value)"
           echo "TIMER_STATE=$(systemctl is-active superagent-capability.timer || true)"
           echo "TIMER_ENABLED=$(systemctl is-enabled superagent-capability.timer 2>/dev/null || true)"
+          echo "HEARTBEAT_SERVICE=$(systemctl show superagent-capability.service -p Result --value 2>/dev/null || true)"
           for script in superagent-prepare-worktree.sh superagent-terminal-relay.sh superagent-capability-heartbeat.sh superagent-configure-prompts.mjs; do
             if test -f "/srv/dsh-agent/.local/bin/$script"; then echo "SCRIPT_${script}=present"; else echo "SCRIPT_${script}=absent"; fi
           done
