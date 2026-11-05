@@ -135,6 +135,21 @@ export function createSuperagent(D) {
         'Задание не отправлено в очередь.');
       return true;
     }
+    if (target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase()) {
+      try {
+        const access = await gh().getRepoCollaboratorPermission(target.full_name, AGENT_ACCOUNT);
+        if (!['write', 'maintain', 'admin'].includes(String(access?.permission ?? '').toLowerCase())) {
+          await out.sendHtml(chatId, '⚠️ У аккаунта агента <code>' + AGENT_ACCOUNT +
+            '</code> нет права Write в <code>' + escapeHtml(target.full_name) +
+            '</code>. Добавь его как соавтора с доступом на запись. Задание не отправлено.');
+          return true;
+        }
+      } catch {
+        await out.sendHtml(chatId, '⚠️ Не удалось проверить права аккаунта агента на <code>' +
+          escapeHtml(target.full_name) + '</code>. Задание не отправлено.');
+        return true;
+      }
+    }
     if (findSecrets(text).length) {
       await out.sendHtml(chatId, '🔒 В задании обнаружен ключ или токен. Не отправляю его в публичный GitHub Issue. Убери секрет и повтори.');
       return true;
