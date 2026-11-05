@@ -72,9 +72,20 @@ test('callback delivers only final comment by the exact agent and does not dupli
   assert.match(w.last(OWNER).text, /уже выполнена/);
 });
 
+test('non-default repository stays blocked until the server prepare hook is enabled', async () => {
+  const w = await createWorld();
+  setup(w);
+  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  assert.equal(w.gh.issues.length, 0);
+  assert.match(w.last(OWNER).text, /ещё не активирована/);
+  await w.say('/agent multirepo status');
+  assert.match(w.last(OWNER).text, /выключена/);
+});
+
 test('explicit BookingBot task is queued centrally but targets booking_bot for agent checkout and PR', async () => {
   const w = await createWorld();
   setup(w);
+  await w.say('/agent multirepo on');
   await w.say('/agent Проверь и исправь в github.com/grunvald91/booking_bot форму записи');
   assert.equal(w.gh.issues.length, 1);
   assert.equal(w.gh.issues[0].repo, AGENT_REPO);
@@ -87,6 +98,7 @@ test('explicit BookingBot task is queued centrally but targets booking_bot for a
 test('repo selection persists and explicit target overrides it for one task', async () => {
   const w = await createWorld();
   setup(w);
+  await w.say('/agent multirepo on');
   await w.say('/agent repo grunvald91/booking_bot');
   assert.match(w.last(OWNER).text, /будет работать/);
   await w.say('/agent Проверь код');
