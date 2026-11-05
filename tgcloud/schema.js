@@ -181,3 +181,20 @@ export const stops = table('stops', {
   key: text('key').primaryKey(),
   ts: integer('ts').notNull().default(0),
 });
+
+// Generic interactive cards. All mutable state lives on the server, never in
+// Telegram message markup. The same data can later be rendered as HTMLBubbles.
+export const uiCards = table(
+  'ui_cards',
+  {
+    id: text('id').primaryKey(),
+    chatId: integer('chat_id').notNull(),
+    ownerId: integer('owner_id').notNull(),
+    kind: text('kind').notNull(),
+    data: text('data').notNull().default('{}'),
+    version: integer('version').notNull().default(1),
+    createdAt: integer('created_at').notNull().default(0),
+    updatedAt: integer('updated_at').notNull().default(0),
+  },
+  (t) => ({ byOwner: index('idx_ui_cards_owner').on(t.ownerId, t.chatId) }),
+);
