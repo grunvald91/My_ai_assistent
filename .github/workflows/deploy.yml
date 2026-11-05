@@ -28,6 +28,8 @@ jobs:
         run: |
           bash -n scripts/superagent-prepare-worktree.sh scripts/superagent-terminal-relay.sh scripts/superagent-capability-heartbeat.sh
           node --check scripts/superagent-configure-prompts.mjs
+          node --check scripts/superagent-pr-watch-core.mjs
+          node --check scripts/superagent-external-pr-monitor.mjs
           bash test/superagent-terminal-relay.test.sh
 
   deploy:
