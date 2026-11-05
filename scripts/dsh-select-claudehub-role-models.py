@@ -23,8 +23,8 @@ models=api("GET","models")
 def available(provider,model):
     return any(x.get("id")==provider and any(y.get("id")==model for y in x.get("models",[]))
                for x in models.get("groups",[]))
-router={"provider":"claudehub-anthropic","model":"claude-haiku-4.5"}
-executor={"provider":"claudehub-openai","model":"deepseek-v4-flash"}
+router={"provider":"claudehub-openai","model":"deepseek-v4.1-flash"}
+executor={"provider":"claudehub-anthropic","model":"claude-opus-5-5"}
 for role,route in (("router",router),("worker",executor)):
     if route["provider"] not in models.get("routableProviders",[]) or not available(**route):
         raise RuntimeError(f"{role} model not available in current DSH catalog")
