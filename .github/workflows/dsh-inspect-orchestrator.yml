@@ -1,0 +1,50 @@
+name: DSH inspect persisted orchestrator session metadata
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-inspect-orchestrator.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - name: Read only session file names and safe model metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          K=$(mktemp); H=$(mktemp)
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          [ "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U' ]
+          ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" root@157.22.203.28 'python3 -' <<'PY'
+          import json, pathlib, collections
+          root=pathlib.Path('/srv/dsh-agent/.dsh/sessions')
+          sessions=list(root.glob('*/orchestrator-*'))
+          print('ORCHESTRATOR_SESSION_DIRS',len(sessions))
+          for folder in sessions:
+              files=sorted((x for x in folder.rglob('*') if x.is_file()),key=lambda x:str(x))
+              print('SESSION_FILE_COUNT',len(files))
+              for path in files[:35]:
+                  print('SESSION_FILE',str(path.relative_to(folder)),'bytes',path.stat().st_size)
+                  if path.suffix in ('.jsonl','.json') and path.stat().st_size<60000000:
+                      counts=collections.Counter()
+                      for line in path.open(errors='replace'):
+                          try: data=json.loads(line)
+                          except (ValueError,TypeError): continue
+                          if not isinstance(data,dict): continue
+                          event=data.get('event') if isinstance(data.get('event'),dict) else data
+                          if not isinstance(event,dict): continue
+                          t=event.get('type')
+                          if isinstance(t,str): counts[t]+=1
+                          if t in ('model/selection','request/header'):
+                              payload=event.get('data') or {}
+                              if isinstance(payload,dict):
+                                  print('SESSION_MODEL_EVENT',t,'provider',payload.get('provider'),'model',payload.get('model'))
+                      print('SESSION_EVENT_TYPES',counts.most_common(12))
+          PY
