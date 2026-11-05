@@ -1,4 +1,4 @@
-name: DSH select ClaudeHub router and worker models
+name: DSH activate DeepSeek V4.1 primary and Opus 5.5 executor
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
