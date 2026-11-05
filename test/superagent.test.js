@@ -5,7 +5,7 @@ import { parseAgentRequest, agentTaskType, AGENT_REPO, requestedAgentRepository 
 function setup(w) {
   w.gh.repos['grunvald91/Ai_growth_os'] = { default_branch: 'main', files: { 'README.md': 'hello' } };
   w.gh.repos['grunvald91/booking_bot'] = { default_branch: 'main', files: { 'README.md': 'hello' } };
-  w.gh.repos['grunvald91/SMENA'] = { default_branch: 'main', files: {} };
+  w.gh.repos['grunvald91/SMENA'] = { default_branch: 'main', agentPermission: 'read', files: {} };
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: {} };
 }
 
@@ -110,6 +110,15 @@ test('repo selection persists and explicit target overrides it for one task', as
   await w.say('/agent repo default');
   await w.say('/agent Проверь README');
   assert.match(w.gh.issues[3].body, /superagent-route:v1 repo=grunvald91\/Ai_growth_os/);
+});
+
+test('read-only agent collaborator cannot submit cross-repository task', async () => {
+  const w = await createWorld();
+  setup(w);
+  await w.say('/agent multirepo on');
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
+  assert.equal(w.gh.issues.length, 0);
+  assert.match(w.last(OWNER).text, /нет права Write/);
 });
 
 test('multi-target and unauthorized repositories fail closed without creating Issues', async () => {
