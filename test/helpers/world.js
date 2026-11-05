@@ -139,6 +139,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
     },
     failures: new Map(), // method → очередь ошибок BotApiError
     nextMessageId: 100,
+    widgetApiSupported: false,
     modelFetches: 0,
     gh: { calls: [], repos: {}, prs: [], refs: [], commits: [], blobs: [], putFiles: [], dispatches: [], reruns: [], issues: [], comments: [] }, // заглушка GitHub (см. ниже)
     files: new Map(), // file_id → байты для api.getFileContent
@@ -156,6 +157,9 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
     switch (method) {
       case 'getMe':
         return { id: BOT_ID, is_bot: true, username: BOT_NAME, first_name: 'Test' };
+      case 'sendWidget':
+        if (!w.widgetApiSupported) return true; // older SDK: no verified Message result
+        return { message_id: ++w.nextMessageId, chat: { id: params.chat_id }, widget: { chat_data: params.chat_data } };
       case 'sendMessage':
       case 'sendPhoto':
       case 'sendDocument':
