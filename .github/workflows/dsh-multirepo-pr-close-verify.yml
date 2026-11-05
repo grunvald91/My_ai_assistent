@@ -1,0 +1,61 @@
+name: DSH external PR close tracking validation (one-off)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-multirepo-pr-close-verify.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - name: Check closed test PR status and no duplicate comments
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_KEY_157:-}"
+          umask 077
+          K="$(mktemp)"; H="$(mktemp)"
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          unset SSH_KEY_157
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          test "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
+          ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          export HOME=/srv/dsh-agent
+          export PATH=/srv/dsh-agent/.local/bin:/opt/dsh-toolchain/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin
+          cli="$(python3 - <<'PY'
+          import urllib.request,json
+          req=urllib.request.Request('http://127.0.0.1:3082/orchestrator/api/settings',headers={'x-orchestrator-request':'1'})
+          with urllib.request.urlopen(req,timeout=10) as r: data=json.load(r)
+          matches=[x['value']['config']['cli'] for x in data['sources'] if x['kind']=='github' and x['value']['enabled'] and x['value']['config']['repository']=='grunvald91/Ai_growth_os']
+          assert len(matches)==1
+          print(matches[0])
+          PY
+          )"
+          agentgh() { runuser -u dsh-agent -- env HOME=/srv/dsh-agent PATH="$PATH" "$cli" api "$@"; }
+          test "$(agentgh "repos/grunvald91/booking_bot/pulls/139" --jq .state)" = closed
+          test "$(agentgh "repos/grunvald91/booking_bot/pulls/139" --jq .merged)" = false
+          test "$(systemctl is-active superagent-capability.timer)" = active
+          test "$(systemctl is-active dsh-superagent)" = active
+          latest() {
+            agentgh "repos/grunvald91/Ai_growth_os/issues/295/comments?per_page=100" --jq '[.[] | select(.user.login == "Grunvald1991" and (.body | contains("superagent-prwatch:v1 issue=295"))) | .body] | last // ""'
+          }
+          count() {
+            agentgh "repos/grunvald91/Ai_growth_os/issues/295/comments?per_page=100" --jq length
+          }
+          systemctl start superagent-capability.service
+          test "$(systemctl show superagent-capability.service -p Result --value)" = success
+          summary="$(latest)"
+          printf '%s' "$summary" | grep -q 'Состояние:\*\* закрыт без слияния'
+          echo 'AUTOMATIC_PR_CLOSURE_TRACKED=1'
+          before="$(count)"
+          systemctl start superagent-capability.service
+          test "$(count)" = "$before"
+          echo 'PR_CLOSURE_COMMENT_IDEMPOTENT=1'
+          echo "DSH_STILL_ACTIVE=$(systemctl is-active dsh-superagent)"
+          REMOTE
