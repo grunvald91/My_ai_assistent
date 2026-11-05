@@ -89,6 +89,11 @@ export function createApp(base) {
         return onMessage(p);
       case 'callback_query':
         return onCallback(p);
+      case 'widget_query':
+        return D.cards.widgetQuery(p);
+      case 'shared_widget_query':
+        // These private widgets are deliberately not shared; never mutate on a forward.
+        return p?.id ? out.call('answerWidgetQuery', { widget_query_id: p.id }) : undefined;
       case 'business_connection':
         return business.onConnection(p);
       case 'business_message':

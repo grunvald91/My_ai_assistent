@@ -51,6 +51,7 @@ export const DEFAULTS = {
   updateRunLockSec: 120, // столько секунд апдейт считается «в работе» (защита от дублей)
   // Платформа Telegram убивает вызов бота примерно через 30 с (по журналу: самый долгий успешный — 29 с, дальше апдейты зависают «в работе»).
   // Ответ ИИ останавливаем на этой секунде вызова и отдаём написанное с кнопкой «Продолжить», чтобы не потерять его целиком.
+  widgetsEnabled: true, // HTMLBubbles Bot API 10.4; automatically falls back if method is unavailable
   richMessages: true, // ответы владельцу — Rich-сообщениями Telegram (Bot API 10.1+): таблицы, цитаты, код, до 32768 символов; при отказе — обычным HTML
   // Проверено на ClaudeHub (scripts/probe-media.mjs): какие модели читают PDF (формат Anthropic) и уверенно видят картинки
   // Быстрые модели для /auto (первая живая из списка, если дешевле выбранной)
@@ -65,10 +66,11 @@ export const DEFAULTS = {
 };
 
 // Меню команд владельца. Менять список — поднимай COMMANDS_VERSION: бот сам обновит меню.
-export const COMMANDS_VERSION = 12;
+export const COMMANDS_VERSION = 13;
 export const OWNER_COMMANDS = [
   ['start', 'Начало и справка'],
   ['panel', 'Интерактивная панель'],
+  ['panel_text', 'Панель обычными кнопками'], 
   ['tasks', 'Мои задачи'],
   ['task', 'Добавить задачу: /task add текст'],
   ['model', 'Выбрать модель ИИ'],
