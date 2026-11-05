@@ -88,6 +88,7 @@ export function createGithub({ fetch, token, base = 'https://api.github.com' }) 
     listRepos: () => req('GET', '/user/repos?sort=pushed&per_page=10&affiliation=owner,collaborator,organization_member'),
     listAllRepos: () => req('GET', '/user/repos?sort=pushed&per_page=100&affiliation=owner,collaborator,organization_member'),
     getRepo: (full) => req('GET', repoPath(full)),
+    getRepoCollaboratorPermission: (full, login) => req('GET', `${repoPath(full)}/collaborators/${encodeURIComponent(login)}/permission`),
 
     /** Дерево файлов ветки. Пустой репозиторий → { empty: true, files: [] }. */
     async getTree(full, branch) {
