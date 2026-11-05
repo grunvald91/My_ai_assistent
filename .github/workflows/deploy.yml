@@ -22,6 +22,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Superagent server-side prepare tests (offline)
+        run: bash test/superagent-prepare.test.sh
 
   deploy:
     if: github.event_name != 'pull_request'
