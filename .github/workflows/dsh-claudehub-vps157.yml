@@ -1,4 +1,4 @@
-name: DSH ClaudeHub profile staging (no agent start)
+name: DSH ClaudeHub profile staging (idempotent retry)
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
