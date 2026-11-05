@@ -1,0 +1,77 @@
+name: DSH external PR monitor install (one-off)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-multirepo-install-pr-monitor.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 92579cd485c252b548937957b656b15fae766300
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate bundled monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/superagent-pr-watch-core.mjs
+          node --check scripts/superagent-external-pr-monitor.mjs
+          bash -n scripts/superagent-capability-heartbeat.sh
+          node --test test/superagent-pr-watch.test.js
+      - name: Install isolated scripts and validate live heartbeat
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SSH_KEY_157:-}"
+          umask 077
+          K="$(mktemp)"; H="$(mktemp)"
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          unset SSH_KEY_157
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          test "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U'
+          SSH=(ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" -o ConnectTimeout=10 root@157.22.203.28)
+          STAGE=/srv/dsh-agent/config/multirepo-pr-watch-92579cd485c252b548937957b656b15fae766300
+          "${SSH[@]}" "install -d -m 0700 -o root -g root '$STAGE'"
+          tar -cf - scripts/superagent-pr-watch-core.mjs scripts/superagent-external-pr-monitor.mjs scripts/superagent-capability-heartbeat.sh | "${SSH[@]}" "tar -C '$STAGE' -xf -"
+          "${SSH[@]}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          STAGE=/srv/dsh-agent/config/multirepo-pr-watch-92579cd485c252b548937957b656b15fae766300
+          BIN=/srv/dsh-agent/.local/bin
+          test "$(systemctl is-active dsh-superagent)" = active
+          test "$(systemctl is-active superagent-capability.timer)" = active
+          test "$(systemctl show dsh-superagent -p User --value)" = dsh-agent
+          test -x /opt/dsh-toolchain/bin/node
+          test -w /srv/dsh-agent/state/superagent-multirepo || {
+            runuser -u dsh-agent -- test -w /srv/dsh-agent/state/superagent-multirepo
+          }
+          for file in superagent-pr-watch-core.mjs superagent-external-pr-monitor.mjs superagent-capability-heartbeat.sh; do
+            test -r "$STAGE/scripts/$file"
+            case "$file" in *.sh) bash -n "$STAGE/scripts/$file";; *.mjs) /opt/dsh-toolchain/bin/node --check "$STAGE/scripts/$file";; esac
+            if test -e "$BIN/$file"; then cp -p "$BIN/$file" "$STAGE/$file.before"; fi
+            install -o dsh-agent -g dsh-agent -m 0755 "$STAGE/scripts/$file" "$BIN/$file"
+            cmp "$STAGE/scripts/$file" "$BIN/$file"
+          done
+          echo 'MONITOR_SCRIPTS_INSTALLED=1'
+          if ! systemctl start superagent-capability.service; then
+            echo "MONITOR_HEARTBEAT_EXIT=$(systemctl show superagent-capability.service -p ExecMainStatus --value)"
+            journalctl -u superagent-capability.service -n 18 -o cat --no-pager | \
+              grep -Ei 'error|failed|refused|missing|permission|status|cannot|denied|invalid|monitor|jq' | \
+              sed -E 's/(ghp_|github_pat_|sk-)[A-Za-z0-9_-]{12,}/[REDACTED]/g; s/(token|password|secret|authorization)([=: ][^ ]+)/\\1=[REDACTED]/Ig' | \
+              cut -c1-190 | tail -12 || true
+            exit 1
+          fi
+          test "$(systemctl show superagent-capability.service -p Result --value)" = success
+          echo 'MONITOR_HEARTBEAT_SUCCESS=1'
+          echo "TIMER_ACTIVE=$(systemctl is-active superagent-capability.timer)"
+          echo "DSH_ACTIVE=$(systemctl is-active dsh-superagent)"
+          REMOTE
