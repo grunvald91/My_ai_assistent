@@ -42,14 +42,14 @@ for stage in open ended; do
       tag="$(printf '%s' "$ticket:$at:$status" | sha256sum | cut -c1-20)"
       if grep -Fxq "$tag" "$seen"; then continue; fi
 
-      issue_url="$(printf '%s' "$detail" | jq -r '.channels[]? | select(.url? and
-        (.url | test("^https://github.com/grunvald91/Ai_growth_os/issues/[0-9]+$"))) | .url' | head -n1)"
+      issue_url="$(printf '%s' "$detail" | jq -r 'first(.channels[]? | select(.url? and
+        (.url | test("^https://github.com/grunvald91/Ai_growth_os/issues/[0-9]+$"))) | .url) // empty')"
       [[ -n "$issue_url" ]] || continue
       issue="${issue_url##*/}"
       [[ "$issue" =~ ^[1-9][0-9]*$ ]] || continue
       data="$("$cli" api "repos/$hub/issues/$issue")"
       author="$(printf '%s' "$data" | jq -r '.user.login // ""')"
-      first_line="$(printf '%s' "$data" | jq -r '.body // ""' | head -n1)"
+      first_line="$(printf '%s' "$data" | jq -r '(.body // "") | split("\n")[0]')"
       [[ "${author,,}" == grunvald91 ]] || continue
       # The pre-multi-repo bridge did not add a route marker, but it did add this fixed owner-task heading.
       # Continue delivering results for those already accepted tickets as well.
