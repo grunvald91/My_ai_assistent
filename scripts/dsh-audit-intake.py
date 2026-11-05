@@ -116,3 +116,9 @@ if isinstance(model_catalog,dict):
             print("MODEL_CATALOG_LIST",key,"size",len(val),"first_keys",sorted(val[0].keys())[:15] if val and isinstance(val[0],dict) else [])
         elif isinstance(val,dict):
             print("MODEL_CATALOG_OBJECT",key,"top_keys",sorted(val)[:12])
+
+print("MODEL_CATALOG_DEFAULT",model_catalog.get("default"))
+print("MODEL_CATALOG_PROVIDERS",model_catalog.get("routableProviders"))
+for group in model_catalog.get("groups",[]):
+    print("MODEL_GROUP",group.get("id"),"model_count",len(group.get("models",[])),
+          "model_ids",[x.get("id") for x in group.get("models",[])[:8] if isinstance(x,dict)])
