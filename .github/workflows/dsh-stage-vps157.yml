@@ -1,0 +1,88 @@
+name: DSH Stage on VPS157 (no service start)
+on:
+  push:
+    branches: [ops/dsh-vps157-preflight-20261103]
+    paths: [.github/workflows/dsh-stage-vps157.yml]
+permissions:
+  contents: read
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SSH_KEY_157: ${{ secrets.SSH_KEY_157 }}
+      DSH_UPSTREAM_SHA: 8c32a9dc5d72c033816c6a8110b37f40cf94fba4
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build official research prototype outside the production VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g --no-audit --no-fund pnpm@11.7.0 @deepseek-ai/dsh@0.2.1-rc.3
+          node --version; pnpm --version; dsh --version
+          git clone --quiet https://github.com/deepseek-ai/dsh-superagent-prototype.git "$RUNNER_TEMP/dsh-superagent"
+          git -C "$RUNNER_TEMP/dsh-superagent" checkout --quiet --detach "$DSH_UPSTREAM_SHA"
+          cd "$RUNNER_TEMP/dsh-superagent"
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm typecheck
+      - name: Stage isolated runtime and compiled source via verified SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          K="$(mktemp)"; H="$(mktemp)"
+          trap 'rm -f "$K" "$H"' EXIT
+          printf '%s\n' "$SSH_KEY_157" | tr -d '\r' > "$K"
+          ssh-keyscan -T 8 -t ed25519 157.22.203.28 2>/dev/null > "$H"
+          [ "$(ssh-keygen -lf "$H" | awk '{print $2}')" = 'SHA256:rqV4WQmGpDXUI5mcxFuE4L++gnMbIXlnpS/pqkHMw8U' ]
+          s=(-i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o UserKnownHostsFile="$H" -o StrictHostKeyChecking=yes -o ConnectTimeout=10)
+          ssh "${s[@]}" root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          docker ps --format '{{.Names}}' | grep -qx 'eunoia-postgres-1'
+          docker ps --format '{{.Names}}' | grep -qx 'eunoia-web-1'
+          id dsh-agent >/dev/null
+          avail="$(df -Pm / | awk 'NR==2{print $4}')"
+          [ "$avail" -gt 2300 ] || { echo "Insufficient disk headroom: ${avail}MiB"; exit 71; }
+          install -d -m 0755 /opt/dsh-toolchain
+          install -d -m 0700 -o dsh-agent -g dsh-agent /srv/dsh-agent/repos/dsh-superagent /srv/dsh-agent/.local/bin /srv/dsh-agent/.config/gh-agent
+          echo "VPS_PREFLIGHT_OK availableMiB=$avail"
+          REMOTE
+          NODE_ROOT="$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")"
+          echo "Runner toolchain footprint:"
+          du -sh "$NODE_ROOT" "$RUNNER_TEMP/dsh-superagent"
+          echo "Transferring runtime; no app services will be stopped."
+          tar -C "$NODE_ROOT" -czf - bin lib include share |
+            ssh "${s[@]}" root@157.22.203.28 'tar -xzf - -C /opt/dsh-toolchain'
+          install_source="$RUNNER_TEMP/dsh-superagent"
+          tar -C "$install_source" --exclude=.git -czf - . |
+            ssh "${s[@]}" root@157.22.203.28 'tar -xzf - -C /srv/dsh-agent/repos/dsh-superagent'
+          scp "${s[@]}" "$(command -v gh)" root@157.22.203.28:/opt/dsh-toolchain/bin/gh
+          ssh "${s[@]}" root@157.22.203.28 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux >/dev/null
+          chown -R dsh-agent:dsh-agent /srv/dsh-agent/repos/dsh-superagent
+          cat > /srv/dsh-agent/.local/bin/gh-agent <<'WRAPPER'
+          #!/bin/sh
+          export GH_CONFIG_DIR=/srv/dsh-agent/.config/gh-agent
+          exec /opt/dsh-toolchain/bin/gh "$@"
+          WRAPPER
+          chmod 0700 /srv/dsh-agent/.local/bin/gh-agent
+          chown dsh-agent:dsh-agent /srv/dsh-agent/.local/bin/gh-agent
+          echo '=== SOFTWARE READY ==='
+          /opt/dsh-toolchain/bin/node --version
+          /opt/dsh-toolchain/bin/pnpm --version
+          /opt/dsh-toolchain/bin/dsh --version
+          /opt/dsh-toolchain/bin/gh --version | head -1
+          tmux -V
+          echo '=== AGENT IDENTITY ==='
+          runuser -u dsh-agent -- env HOME=/srv/dsh-agent PATH=/opt/dsh-toolchain/bin:/usr/local/bin:/usr/bin:/bin /opt/dsh-toolchain/bin/dsh --version
+          echo '=== CURRENT DISK ==='
+          df -hP /
+          echo '=== SERVICE STATUS ==='
+          docker ps --format '{{.Names}} {{.Status}}'
+          echo 'DSH_PACKAGES_STAGED_NO_AGENT_SERVICE_STARTED'
+          REMOTE
