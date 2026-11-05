@@ -31,6 +31,8 @@ jobs:
           set -euo pipefail
           ROOT=/srv/dsh-agent
           BIN="$ROOT/.local/bin"
+          install -d -o dsh-agent -g dsh-agent -m 0700 "$ROOT/state/superagent-multirepo"
+          runuser -u dsh-agent -- test -w "$ROOT/state/superagent-multirepo"
           test "$(systemctl show dsh-superagent -p User --value)" = dsh-agent
           test "$(systemctl is-active dsh-superagent)" = active
           for file in superagent-prepare-worktree.sh superagent-terminal-relay.sh superagent-capability-heartbeat.sh; do
@@ -73,6 +75,7 @@ jobs:
           Environment=DSH_SUPERAGENT_URL=http://127.0.0.1:3082
           Environment=DSH_MULTI_REPO_PREPARE=/srv/dsh-agent/.local/bin/superagent-prepare-worktree.sh
           Environment=DSH_MULTI_REPO_RELAY=/srv/dsh-agent/.local/bin/superagent-terminal-relay.sh
+          Environment=DSH_MULTI_REPO_STATE_DIR=/srv/dsh-agent/state/superagent-multirepo
           ExecStart=/usr/bin/env bash /srv/dsh-agent/.local/bin/superagent-capability-heartbeat.sh
           NoNewPrivileges=true
           ProtectSystem=strict
