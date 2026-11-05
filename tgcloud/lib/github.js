@@ -118,6 +118,10 @@ export function createGithub({ fetch, token, base = 'https://api.github.com' }) 
     },
     createPr: (full, { title, head, base, body }) => req('POST', `${repoPath(full)}/pulls`, { title, head, base, body }),
 
+    // ── Очередь Superagent (Issues)
+    createIssue: (full, { title, body }) => req('POST', `${repoPath(full)}/issues`, { title, body }),
+    listIssueComments: (full, number) => req('GET', `${repoPath(full)}/issues/${encodeURIComponent(number)}/comments?per_page=100`),
+
     // ── GitHub Actions
     listWorkflows: (full) => req('GET', `${repoPath(full)}/actions/workflows?per_page=30`),
     /** Запуск workflow_dispatch («Run workflow»). Ответ 204 без тела. */
