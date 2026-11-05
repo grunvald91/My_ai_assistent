@@ -1,4 +1,4 @@
-name: DSH audit GitHub repository event streams
+name: DSH audit trigger evaluation after first accepted Issue
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
