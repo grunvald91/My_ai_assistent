@@ -446,6 +446,30 @@ export async function pruneStops(before) {
   await db.delete(T.stops).where(lt(T.stops.ts, before)).run();
 }
 
+// ───────────── интерактивные карточки ─────────────
+
+export async function getUiCard(id) {
+  return one(await db.select().from(T.uiCards).where(eq(T.uiCards.id, id)).get());
+}
+
+/** Create only once; other concurrent handler calls may open the same board. */
+export async function ensureUiCard({ id, ownerId, chatId, kind, data, now }) {
+  await db.insert(T.uiCards)
+    .values({ id, ownerId, chatId, kind, data, createdAt: now, updatedAt: now })
+    .onConflictDoNothing({ target: T.uiCards.id })
+    .run();
+  return getUiCard(id);
+}
+
+/** Compare-and-swap: stale callbacks and concurrent writes cannot overwrite newer data. */
+export async function updateUiCard(id, version, data, now) {
+  const r = await db.update(T.uiCards)
+    .set({ data, version: version + 1, updatedAt: now })
+    .where(and(eq(T.uiCards.id, id), eq(T.uiCards.version, version)))
+    .run();
+  return Number(r?.rowsAffected ?? 0) > 0;
+}
+
 // ───────────── экспорт ─────────────
 
 export async function exportAll() {
@@ -454,6 +478,7 @@ export async function exportAll() {
     data[name] = await db.select().from(t).limit(limit).all();
   };
   await dump('chats', T.chats);
+  await dump('ui_cards', T.uiCards);
   await dump('messages', T.messages);
   await dump('memories', T.memories);
   await dump('channels', T.channels);
