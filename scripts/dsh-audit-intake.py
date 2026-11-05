@@ -46,3 +46,24 @@ if result.returncode==0:
               "updated_at",n.get("updated_at"))
 else:
     print("AGENT_NOTIFICATIONS_API_ERROR_CATEGORY", "403" if "403" in result.stderr else "401" if "401" in result.stderr else "other")
+
+from datetime import datetime,timezone
+print("VPS_CURRENT_UTC",datetime.now(timezone.utc).isoformat(timespec="seconds"))
+settings=read("settings")
+for source in settings.get("sources",[]):
+    if source.get("id")=="github":
+        config=(source.get("value") or {}).get("config") or {}
+        print("GITHUB_OBSERVE_FLAGS", {k:config.get(k) for k in ("observeIssues","observeComments","pollSeconds")})
+for source in read("sources"):
+    if source.get("id")=="github":
+        print("SOURCE_RECEIVED_STATS",source.get("stats"))
+for since in ("2026-11-05T10:50:00Z","2026-11-05T10:58:00Z"):
+    cmd=command.copy()
+    cmd[-1]="notifications?all=true&per_page=100&since="+since
+    result=subprocess.run(cmd,capture_output=True,text=True,timeout=20)
+    if result.returncode==0:
+        arr=json.loads(result.stdout)
+        matching=[x for x in arr if (x.get("repository") or {}).get("full_name","").lower()=="grunvald91/ai_growth_os"]
+        print("NOTIFICATION_SINCE",since,"repo_count",len(matching),"match278",any(str((x.get("subject") or {}).get("url","")).endswith("/278") for x in matching))
+    else:
+        print("NOTIFICATION_SINCE_ERROR",since,result.returncode)
