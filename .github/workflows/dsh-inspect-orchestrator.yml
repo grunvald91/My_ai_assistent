@@ -1,4 +1,4 @@
-name: DSH inspect persisted orchestrator session metadata
+name: DSH inspect active orchestrator compressed model selection
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
@@ -48,3 +48,25 @@ jobs:
                                   print('SESSION_MODEL_EVENT',t,'provider',payload.get('provider'),'model',payload.get('model'))
                       print('SESSION_EVENT_TYPES',counts.most_common(12))
           PY
+          ssh -i "$K" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$H" root@157.22.203.28 '/opt/dsh-toolchain/bin/node -' <<'NODE'
+          const fs=require('node:fs'),zlib=require('node:zlib'),path=require('node:path');
+          const root='/srv/dsh-agent/.dsh/sessions';
+          const dirs=fs.readdirSync(root).flatMap(p=>fs.readdirSync(path.join(root,p)).filter(x=>x.startsWith('orchestrator-')).map(x=>path.join(root,p,x)));
+          for(const d of dirs){
+            const file=path.join(d,'session.v4.jsonl.zstd');
+            if(!fs.existsSync(file))continue;
+            if(typeof zlib.zstdDecompressSync!=='function'){console.log('NODE_ZSTD_NOT_SUPPORTED');continue;}
+            let raw;try{raw=zlib.zstdDecompressSync(fs.readFileSync(file)).toString('utf8');}catch(e){console.log('ZSTD_DECOMPRESSION_FAILED',e.name);continue;}
+            const counts={};let parsed=0;
+            for(const line of raw.split('\n')){
+              let o;try{o=JSON.parse(line)}catch(e){continue}
+              parsed++;const e=o.event&&typeof o.event==='object'?o.event:o;
+              const t=e.type||e.kind||'unknown';counts[t]=(counts[t]||0)+1;
+              if(['model/selection','request/header'].includes(t)){
+                const x=e.data||e.payload||{};
+                console.log('SESSION_MODEL_EVENT',t,'provider',x.provider||x.modelSelection?.provider||null,'model',x.model||x.modelSelection?.model||null);
+              }
+            }
+            console.log('SESSION_PARSED_RECORDS',parsed,'EVENT_TYPES',JSON.stringify(counts).slice(0,800));
+          }
+          NODE
