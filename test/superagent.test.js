@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { createWorld, assert, OWNER } from './helpers/world.js';
-import { parseAgentRequest, agentTaskType, AGENT_REPO } from '../tgcloud/lib/superagent.js';
+import { parseAgentRequest, agentTaskType, AGENT_REPO, isBookingTask, BOOKING_MODULE_PATH } from '../tgcloud/lib/superagent.js';
 
 function setup(w) {
   w.gh.repos['grunvald91/Ai_growth_os'] = { default_branch: 'main', files: { 'README.md': 'hello' } };
@@ -73,9 +73,9 @@ test('callback delivers only final comment by the exact agent and does not dupli
 test('agent does not leak recognized tokens or route work to an unsupported repository', async () => {
   const w = await createWorld();
   setup(w);
-  await w.say('/agent Проверь github.com/grunvald91/booking_bot');
+  await w.say('/agent Проверь github.com/grunvald91/My_ai_assistent');
   assert.equal(w.gh.issues.length, 0);
-  assert.match(w.last(OWNER).text, /только для/);
+  assert.match(w.last(OWNER).text, /Другой репозиторий/);
   await w.say('/agent Используй токен ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQR');
   assert.equal(w.gh.issues.length, 0);
   assert.match(w.last(OWNER).text, /ключ или токен/);
@@ -98,4 +98,24 @@ test('agent intent classifier accepts explicit requests, but not unrelated text'
   assert.equal(parseAgentRequest('Просто поговорим об агенте'), null);
   assert.equal(agentTaskType('Проверь стили'), 'report-only');
   assert.equal(agentTaskType('Проверь и исправь стили'), 'code-change');
+});
+
+test('BookingBot task goes into Ai_growth_os Issue, not the original BookingBot repository', async () => {
+  const w = await createWorld();
+  setup(w);
+  await w.say('Поручи агенту проверить https://github.com/grunvald91/booking_bot и описание записи клиентов');
+  assert.equal(w.gh.issues.length, 1);
+  assert.equal(w.gh.issues[0].repo.toLowerCase(), AGENT_REPO.toLowerCase());
+  assert.match(w.gh.issues[0].body, /services\/booking_bot\//);
+  assert.match(w.gh.issues[0].body, /Исходный репозиторий booking_bot и production не трогай/);
+  assert.match(w.last(OWNER).text, /ServGo \/ BookingBot/);
+  assert.equal(w.gh.dispatches[0].workflow, 'superagent-watch.yml');
+});
+
+test('BookingBot alias supports Russian natural language and old repository links', () => {
+  assert.equal(BOOKING_MODULE_PATH, 'services/booking_bot/');
+  assert.equal(isBookingTask('Исправь BookingBot'), true);
+  assert.equal(isBookingTask('Проверь букинг бота'), true);
+  assert.equal(isBookingTask('github.com/grunvald91/booking_bot'), true);
+  assert.equal(isBookingTask('Проверь маркетинг Growth'), false);
 });
