@@ -82,3 +82,19 @@ for label,route in [
         print(label,"count",len(arr),"test_issue_numbers",
               sorted({x.get("number") for x in arr if x.get("number") in (278,279)}) if label=="ISSUE_STREAM" else
               sorted({str(x.get("issue_url","")).rsplit("/",1)[-1] for x in arr if str(x.get("issue_url","")).endswith(("/278","/279"))}))
+
+import urllib.parse
+d=read("threads?filter=recent&limit=12")
+for row in d.get("items",[]):
+    print("THREAD_SUMMARY", {k:str(v)[:120] for k,v in row.items() if k in ("key","title","evaluating","awaitingEval","lastAt","stage","status","pending","triggerCount")})
+    if row.get("key"):
+        detail=read("threads/"+urllib.parse.quote(row["key"],safe=""))
+        print("THREAD_DETAIL",row["key"],"decision_count",len(detail.get("decisions",[])),
+              "ticket_count",len(detail.get("tickets",[])),
+              "timeline_events",len(detail.get("timeline",[])))
+        for ev in detail.get("timeline",[])[:5]:
+            print("TRIGGER_STATE",{k:str(v)[:110] for k,v in ev.items() if k in ("id","at","actor","disposition","evaluation","decision","stage")})
+o=read("overview")
+print("OVERVIEW_KEYS",sorted(o.keys()))
+print("HEALTH_STATE_KEYS", sorted((state.get("health") or {}).keys()))
+print("MASTER_SESSION_SET",bool(state.get("masterId")))
