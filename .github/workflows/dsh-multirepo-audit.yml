@@ -33,6 +33,10 @@ jobs:
             if test -x "$candidate"; then echo "JQ_AVAILABLE_AT=$candidate"; fi
           done
           echo 'AUDIT_REV=3'
+          echo "JQ_FILE_KIND=$(file -b /srv/dsh-agent/.local/bin/jq 2>/dev/null | cut -c1-95)"
+          echo "JQ_SELFTEST_RESULT=$(printf '{\"foo\":1}' | /srv/dsh-agent/.local/bin/jq -r .foo 2>/dev/null || echo ERROR)"
+          echo "JQ_SELFTEST_E_RESULT=$(printf '{\"foo\":1}' | /srv/dsh-agent/.local/bin/jq -e .foo 2>/dev/null || echo ERROR)"
+          echo "JQ_SELFTEST_ARG_RESULT=$(printf '{\"foo\":1}' | /srv/dsh-agent/.local/bin/jq --arg x foo -r '.[$x]' 2>/dev/null || echo ERROR)"
           echo "SERVICE_STATE=$(systemctl is-active dsh-superagent || true)"
           echo "SERVICE_USER=$(systemctl show dsh-superagent -p User --value)"
           echo "TIMER_STATE=$(systemctl is-active superagent-capability.timer || true)"
@@ -44,6 +48,10 @@ jobs:
             grep -Ei 'error|failed|refused|missing|permission|status|not|cannot|denied|Traceback|BLOCKED' | \
             sed -E 's/(ghp_|github_pat_|sk-)[A-Za-z0-9_-]{12,}/[REDACTED]/g; s/(token|password|secret|authorization)([=: ][^ ]+)/\\1=[REDACTED]/Ig' | \
             cut -c 1-180 | tail -15 || true
+          echo 'HEARTBEAT_JOURNAL_LAST_REDACTED:'
+          journalctl -u superagent-capability.service --no-pager -o cat -n 15 2>/dev/null | \
+            sed -E 's/(ghp_|github_pat_|sk-)[A-Za-z0-9_-]{12,}/[REDACTED]/g; s/([A-Za-z0-9_.+-]+@[A-Za-z0-9.-]+)/(email-redacted)/g; s/(token|password|secret|authorization)([=: ][^ ]+)/\\1=[REDACTED]/Ig' | \
+            grep -Ev 'body=|summary=|https?://[^ ]+/issues/[0-9]+' | cut -c1-190 | tail -12 || true
           for script in superagent-prepare-worktree.sh superagent-terminal-relay.sh superagent-capability-heartbeat.sh superagent-configure-prompts.mjs; do
             if test -f "/srv/dsh-agent/.local/bin/$script"; then echo "SCRIPT_${script}=present"; else echo "SCRIPT_${script}=absent"; fi
           done
