@@ -49,7 +49,7 @@ for stage in open ended; do
       author="$(printf '%s' "$entry" | jq -r '.user.login // ""')"
       line="$(printf '%s' "$entry" | jq -r '.body // ""' | head -n1)"
       [[ "${author,,}" == grunvald91 ]] || continue
-      [[ "$line" =~ ^'<!-- superagent-route:v1 repo='([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)' -->'$ ]] || continue
+      [[ "$line" =~ ^'<!-- superagent-route:v1 repo='([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)'( mode='(read|write)')?' -->'$ ]] || continue
 
       # Avoid a duplicate comment if the process crashed after GitHub accepted POST.
       existing="$(gh api "repos/$HUB/issues/$issue/comments?per_page=100" --paginate --jq '.[].body' || true)"
