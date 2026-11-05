@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prepare isolated DeepSeek Harness + ClaudeHub custom providers without starting the service.
 set -euo pipefail
-export PATH=/opt/dsh-toolchain/bin:/usr/local/bin:/usr/bin:/bin
+export PATH=/opt/dsh-toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/srv/dsh-agent
 export DSH_HOME=/srv/dsh-agent/.dsh
 node --version
