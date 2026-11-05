@@ -1,4 +1,4 @@
-name: DSH inspect ClaudeHub routing catalog and intake health
+name: DSH inspect selected default provider for pending ticket
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
