@@ -67,3 +67,18 @@ for since in ("2026-11-05T10:50:00Z","2026-11-05T10:58:00Z"):
         print("NOTIFICATION_SINCE",since,"repo_count",len(matching),"match278",any(str((x.get("subject") or {}).get("url","")).endswith("/278") for x in matching))
     else:
         print("NOTIFICATION_SINCE_ERROR",since,result.returncode)
+
+for label,route in [
+ ("ISSUE_STREAM","repos/grunvald91/Ai_growth_os/issues?state=all&sort=updated&direction=asc&per_page=100&since=2026-11-05T10:58:00Z"),
+ ("COMMENT_STREAM","repos/grunvald91/Ai_growth_os/issues/comments?sort=updated&direction=asc&per_page=100&since=2026-11-05T10:58:00Z"),
+]:
+    cmd=command.copy()
+    cmd[-1]=route
+    result=subprocess.run(cmd,capture_output=True,text=True,timeout=22)
+    if result.returncode:
+        print(label,"API_FAILED",result.returncode)
+    else:
+        arr=json.loads(result.stdout)
+        print(label,"count",len(arr),"test_issue_numbers",
+              sorted({x.get("number") for x in arr if x.get("number") in (278,279)}) if label=="ISSUE_STREAM" else
+              sorted({str(x.get("issue_url","")).rsplit("/",1)[-1] for x in arr if str(x.get("issue_url","")).endswith(("/278","/279"))}))
