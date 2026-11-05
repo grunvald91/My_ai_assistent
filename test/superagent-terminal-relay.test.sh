@@ -17,7 +17,7 @@ case "$url" in
  *'tickets?state=open&limit=100&offset=0') echo '{"items":[{"id":"abc123","stage":"person"}]}' ;;
  *'tickets?state=open&limit=100&offset=1') echo '{"items":[]}' ;;
  *'tickets?state=ended&limit=100&offset=0') echo '{"items":[]}' ;;
- *'/tickets/abc123') echo '{"channels":[{"url":"https://github.com/grunvald91/Ai_growth_os/issues/300"}],"assignments":[{"report":{"state":"ready","summary":"PR: https://github.com/grunvald91/booking_bot/pull/17","at":"2026-11-05T15:00:00Z"}}]}' ;;
+ *'/tickets/abc123') echo '{"stage":"person","channels":[{"url":"https://github.com/grunvald91/Ai_growth_os/issues/300"}],"assignments":[{"report":{"state":"ready","summary":"PR: https://github.com/grunvald91/booking_bot/pull/17","at":"2026-11-05T15:00:00Z"}}]}' ;;
  *) echo "Unexpected API $url" >&2; exit 4 ;;
 esac
 MOCK
