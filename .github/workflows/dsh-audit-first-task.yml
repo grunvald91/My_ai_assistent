@@ -1,4 +1,4 @@
-name: DSH audit model and assessment first-ticket status
+name: DSH inspect ClaudeHub routing catalog and intake health
 on:
   push:
     branches: [ops/dsh-vps157-preflight-20261103]
