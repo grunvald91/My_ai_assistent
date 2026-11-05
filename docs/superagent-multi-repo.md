@@ -10,7 +10,7 @@ Upstream `deepseek-ai/dsh-superagent-prototype` имеет один GitHub Sourc
 ## Маршрут
 
 1. Владелец отправляет `/agent repo grunvald91/booking_bot`, затем `/agent проверь код`; или указывает `https://github.com/grunvald91/booking_bot` в самом поручении.
-2. Бот проверяет, существует ли целевой репозиторий и доступен ли он его токену. Он создаёт **один Issue** в `grunvald91/Ai_growth_os` с первой строкой:
+2. Бот проверяет существование репозитория, доступность своему токену и право Write аккаунта агента `Grunvald1991` на цели, отличные от очереди. Он создаёт **один Issue** в `grunvald91/Ai_growth_os` с первой строкой:
    `<!-- superagent-route:v1 repo=grunvald91/booking_bot -->`
 3. DSH принимает уведомление в своём единственном GitHub Source и создаёт Ticket.
 4. Команда подготовки [`scripts/superagent-prepare-worktree.sh`](../scripts/superagent-prepare-worktree.sh) читает **только первую строку** Issue, проверяет разрешённый владелец/репозиторий и **права записи самого аккаунта агента**, затем создаёт независимый git checkout в `DSH_SUPERAGENT_DIR`.
