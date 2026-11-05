@@ -78,9 +78,9 @@ test('explicit BookingBot task is queued centrally but targets booking_bot for a
   await w.say('/agent Проверь и исправь в github.com/grunvald91/booking_bot форму записи');
   assert.equal(w.gh.issues.length, 1);
   assert.equal(w.gh.issues[0].repo, AGENT_REPO);
-  assert.match(w.gh.issues[0].body.split('\\n')[0], /^<!-- superagent-route:v1 repo=grunvald91\\/booking_bot -->$/);
+  assert.match(w.gh.issues[0].body.split('\n')[0], /^<!-- superagent-route:v1 repo=grunvald91\/booking_bot -->$/);
   assert.match(w.gh.issues[0].body, /Pull Request именно в него/);
-  assert.match(w.last(OWNER).text, /grunvald91\\/booking_bot/);
+  assert.match(w.last(OWNER).text, /grunvald91\/booking_bot/);
   assert.equal(w.gh.dispatches.length, 1);
 });
 
@@ -90,14 +90,14 @@ test('repo selection persists and explicit target overrides it for one task', as
   await w.say('/agent repo grunvald91/booking_bot');
   assert.match(w.last(OWNER).text, /будет работать/);
   await w.say('/agent Проверь код');
-  assert.match(w.gh.issues[0].body, /superagent-route:v1 repo=grunvald91\\/booking_bot/);
+  assert.match(w.gh.issues[0].body, /superagent-route:v1 repo=grunvald91\/booking_bot/);
   await w.say('/agent Проверь github.com/grunvald91/Ai_growth_os');
-  assert.match(w.gh.issues[1].body, /superagent-route:v1 repo=grunvald91\\/Ai_growth_os/);
+  assert.match(w.gh.issues[1].body, /superagent-route:v1 repo=grunvald91\/Ai_growth_os/);
   await w.say('/agent Проверь код ещё раз');
-  assert.match(w.gh.issues[2].body, /superagent-route:v1 repo=grunvald91\\/booking_bot/);
+  assert.match(w.gh.issues[2].body, /superagent-route:v1 repo=grunvald91\/booking_bot/);
   await w.say('/agent repo default');
   await w.say('/agent Проверь README');
-  assert.match(w.gh.issues[3].body, /superagent-route:v1 repo=grunvald91\\/Ai_growth_os/);
+  assert.match(w.gh.issues[3].body, /superagent-route:v1 repo=grunvald91\/Ai_growth_os/);
 });
 
 test('multi-target and unauthorized repositories fail closed without creating Issues', async () => {
