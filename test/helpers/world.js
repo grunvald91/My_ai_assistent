@@ -324,6 +324,7 @@ function fakeGithub(w, path, opts) {
   const repo = g.repos[key];
   const rest = m[3] ?? '';
   if (rest === '') return res(200, { full_name: repo.canonical ?? key, private: !!repo.private, default_branch: repo.default_branch ?? 'main' });
+  if (/^\/collaborators\/[^/]+\/permission$/.test(rest)) return res(200, { permission: repo.agentPermission ?? 'write' });
   const filesOf = (branch) => repo.branchFiles?.[branch] ?? repo.files;
   if (rest.startsWith('/git/trees/')) {
     if (repo.empty) return res(409, { message: 'Git Repository is empty.' });
