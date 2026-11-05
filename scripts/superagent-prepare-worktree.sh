@@ -24,12 +24,14 @@ if [[ -n "$issue" && -z "$pr_head" ]]; then
   issue_author="$(gh api "repos/$source_repo/issues/$issue" --jq '.user.login')"
   is_pr="$(gh api "repos/$source_repo/issues/$issue" --jq '.pull_request != null')"
   body="$(gh api "repos/$source_repo/issues/$issue" --jq '.body // ""')"
-  first_line="${body%%
+  first_line="$(printf '%s\n' "$body" | head -n 1)"
+  route_re='^<!-- superagent-route:v1 repo=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) mode=(read|write) -->$'
+  legacy_route_re='^<!-- superagent-route:v1 repo=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) -->$'
   if [[ "$first_line" == '<!-- superagent-route:'* ]]; then
-    if [[ "$first_line" =~ ^'<!-- superagent-route:v1 repo='([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)' mode='(read|write)' -->'$ ]]; then
+    if [[ "$first_line" =~ $route_re ]]; then
       target_repo="${BASH_REMATCH[1]}"
       permission_mode="${BASH_REMATCH[2]}"
-    elif [[ "$first_line" =~ ^'<!-- superagent-route:v1 repo='([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)' -->'$ ]]; then
+    elif [[ "$first_line" =~ $legacy_route_re ]]; then
       # Legacy v1 marker without mode is treated as write-only for safety.
       target_repo="${BASH_REMATCH[1]}"
       permission_mode="write"
