@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { createWorld, assert, OWNER } from './helpers/world.js';
 import { parseAgentRequest, agentTaskType, AGENT_REPO, BOOKING_MODULE_PATH, isBookingTask, requestedAgentRepository, extractTargetPull } from '../tgcloud/lib/superagent.js';
-import { finalAgentComment, parseTerminalResult } from '../tgcloud/lib/superagent-result.js';
+import { finalAgentComment, parseTerminalResult, latestExternalPrUpdate } from '../tgcloud/lib/superagent-result.js';
 
 function serverReady(w, overrides = {}) {
   w.gh.repos[AGENT_REPO].statuses = [{
@@ -255,4 +255,29 @@ test('BookingBot natural-language aliases remain supported after imported-monore
   assert.equal(isBookingTask('Проверь букинг бота'), true);
   assert.equal(isBookingTask('github.com/grunvald91/booking_bot'), true);
   assert.equal(isBookingTask('Проверь маркетинг Growth'), false);
+});
+
+test('live external PR monitoring appears in Telegram status without trusting foreign comments', async () => {
+  const w = await createWorld();
+  setup(w);
+  serverReady(w);
+  await w.say('/agent Исправь github.com/grunvald91/Sushef');
+  w.clear();
+  w.gh.comments.push({
+    issue: 300, id: 800, user: { login: 'Grunvald1991' },
+    body: 'External PR https://github.com/grunvald91/Sushef/pull/44\n<!-- superagent-relay:v1 report=0123456789abcdef0123 -->\n<!-- superagent-result:v1 issue=300 state=ready -->',
+  });
+  assert.equal(await w.app.superagent.deliver({ issue:300 }), true);
+  const statusComment = {
+    issue: 300, id: 801, user: { login: 'Grunvald1991' },
+    body: '### Автоматическое наблюдение за внешним PR\n**Состояние:** черновик\n**CI:** есть ошибки (1 checks, 0 commit statuses)\n**Ревью:** запрошены изменения @reviewer\n**Комментарии к коду:** 1\n<!-- superagent-prwatch:v1 issue=300 fp=0123456789abcdef01234567 -->',
+  };
+  w.gh.comments.push(statusComment);
+  assert.equal(latestExternalPrUpdate(w.gh.comments, 300),statusComment);
+  w.gh.repos['grunvald91/Sushef'].pullStatuses = {44:{state:'open',draft:true,merged:false}};
+  await w.say('/agent статус');
+  assert.match(w.last(OWNER).text, /есть ошибки/);
+  assert.match(w.last(OWNER).text, /запрошены изменения/);
+  assert.match(w.last(OWNER).text, /PR:/);
+  assert.equal(latestExternalPrUpdate([{...statusComment,user:{login:'attacker'}}],300),null);
 });
