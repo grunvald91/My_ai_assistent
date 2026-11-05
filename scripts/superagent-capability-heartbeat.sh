@@ -24,6 +24,12 @@ for command in curl jq gh git; do command -v "$command" >/dev/null || { echo "Mi
 api="${DSH_SUPERAGENT_URL%/}/orchestrator/api"
 settings="$(curl --fail --silent --show-error --max-time 8 -H 'x-orchestrator-request: 1' "$api/settings")"
 state="$(curl --fail --silent --show-error --max-time 8 -H 'x-orchestrator-request: 1' "$api/state")"
+# Use the same GitHub CLI wrapper as the DSH Source, not an unrelated login of the OS user.
+agent_cli="$(printf '%s' "$settings" | jq -r --arg source "$HUB" '
+  .sources[] | select(.kind == "github" and .value.enabled == true and .value.config.repository == $source) | .value.config.cli' | head -n1)"
+[[ -n "$agent_cli" && "$agent_cli" != null ]] || { echo "DSH agent CLI is not configured" >&2; exit 40; }
+command -v "$agent_cli" >/dev/null || { echo "DSH agent CLI cannot execute: $agent_cli" >&2; exit 41; }
+export DSH_AGENT_GH_CLI="$agent_cli"
 expected="bash $DSH_MULTI_REPO_PREPARE"
 prompts="$(curl --fail --silent --show-error --max-time 8 -H 'x-orchestrator-request: 1' "$api/prompts")"
 printf '%s' "$settings" | jq -e --arg source "$HUB" --arg expected "$expected" '
@@ -36,15 +42,15 @@ printf '%s' "$prompts" | jq -e '.current.config.delivery | contains("superagent-
   { echo "DSH team delivery instructions are missing the external PR integration rule" >&2; exit 39; }
 
 # The agent identity behind gh must be the same one DSH uses.
-account="$(gh api user --jq .login)"
+account="$("$agent_cli" api user --jq .login)"
 [[ "${account,,}" == "$AGENT" ]] || { echo "gh is not authenticated as Grunvald1991" >&2; exit 36; }
-push="$(gh api "repos/$HUB" --jq '.permissions.push')"
+push="$("$agent_cli" api "repos/$HUB" --jq '.permissions.push')"
 [[ "$push" == true ]] || { echo "Agent cannot write to hub" >&2; exit 37; }
 # Relay terminal reports BEFORE signalling readiness. If this fails, no fresh capability is published.
 bash "$DSH_MULTI_REPO_RELAY"
-sha="$(gh api "repos/$HUB/commits/main" --jq '.sha')"
+sha="$("$agent_cli" api "repos/$HUB/commits/main" --jq '.sha')"
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid hub commit SHA" >&2; exit 38; }
-gh api "repos/$HUB/statuses/$sha" --method POST \
+"$agent_cli" api "repos/$HUB/statuses/$sha" --method POST \
   -f state=success -f context="$STATUS_CONTEXT" -f description="$STATUS_DESCRIPTION" \
   >/dev/null
 echo "DSH multi-repo capability refreshed at $(date -u +%FT%TZ)"
