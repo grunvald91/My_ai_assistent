@@ -10,15 +10,19 @@ STATUS_DESCRIPTION="superagent-multirepo-v2"
 : "${DSH_SUPERAGENT_URL:?Set local DSH Superagent URL, e.g. http://127.0.0.1:PORT}"
 : "${DSH_MULTI_REPO_PREPARE:?Set absolute path to superagent-prepare-worktree.sh}"
 : "${DSH_MULTI_REPO_RELAY:?Set absolute path to superagent-terminal-relay.sh}"
+DSH_MULTI_REPO_MONITOR="${DSH_MULTI_REPO_MONITOR:-$(dirname "$DSH_MULTI_REPO_RELAY")/superagent-external-pr-monitor.mjs}"
+export DSH_MULTI_REPO_MONITOR
 
 case "$DSH_SUPERAGENT_URL" in
   http://127.0.0.1:*|http://localhost:*) ;;
   *) echo "DSH health check must use loopback, not a public URL" >&2; exit 31 ;;
 esac
 [[ -f "$DSH_MULTI_REPO_PREPARE" && -f "$DSH_MULTI_REPO_RELAY" ]] || { echo "Prepare or relay script absent" >&2; exit 32; }
+[[ -f "$DSH_MULTI_REPO_MONITOR" && -f "$(dirname "$DSH_MULTI_REPO_MONITOR")/superagent-pr-watch-core.mjs" ]] || { echo "External PR monitor absent" >&2; exit 42; }
+node --check "$DSH_MULTI_REPO_MONITOR"
 bash -n "$DSH_MULTI_REPO_PREPARE"
 bash -n "$DSH_MULTI_REPO_RELAY"
-for command in curl jq gh git; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 33; }; done
+for command in curl jq gh git node; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 33; }; done
 
 # This endpoint is bound to loopback and requires the host's special header.
 api="${DSH_SUPERAGENT_URL%/}/orchestrator/api"
@@ -48,6 +52,7 @@ push="$("$agent_cli" api "repos/$HUB" --jq '.permissions.push')"
 [[ "$push" == true ]] || { echo "Agent cannot write to hub" >&2; exit 37; }
 # Relay terminal reports BEFORE signalling readiness. If this fails, no fresh capability is published.
 bash "$DSH_MULTI_REPO_RELAY"
+node "$DSH_MULTI_REPO_MONITOR"
 sha="$("$agent_cli" api "repos/$HUB/commits/main" --jq '.sha')"
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid hub commit SHA" >&2; exit 38; }
 "$agent_cli" api "repos/$HUB/statuses/$sha" --method POST \

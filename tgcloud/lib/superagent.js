@@ -3,7 +3,7 @@
 // Центральная очередь Issue остаётся в Ai_growth_os; рабочий репозиторий выбирается для каждого задания.
 import { escapeHtml, truncate } from './util.js';
 import { findSecrets } from './codeparse.js';
-import { finalAgentComment, parseTerminalResult } from './superagent-result.js';
+import { finalAgentComment, parseTerminalResult, latestExternalPrUpdate } from './superagent-result.js';
 
 export const AGENT_REPO = 'grunvald91/Ai_growth_os';
 export const BOOKING_SOURCE_REPO = 'grunvald91/booking_bot';
@@ -330,10 +330,24 @@ export function createSuperagent(D) {
             saved.pull.number + '">#' + saved.pull.number + '</a> — ' + stage;
         } catch { prStatus = '\n⚠️ Не удалось проверить состояние внешнего PR в GitHub.'; }
       }
+      let prMonitor = '';
+      if (saved.pull?.repo && gh()) {
+        try {
+          const allComments = await gh().listIssueComments(AGENT_REPO, last);
+          const latest = latestExternalPrUpdate(allComments, last, AGENT_ACCOUNT);
+          if (latest) {
+            const lines = String(latest.body ?? '').split('\n')
+              .filter(line => /^\*\*(?:Состояние|Последний commit|CI|Ревью|Запрошенные ревьюеры|Комментарии к коду):\*\*/.test(line))
+              .map(line => line.replace(/\*\*/g, '').replace(/`/g, ''));
+            if (lines.length) prMonitor = '\n\n📊 <b>Автоматическое отслеживание PR:</b>\n' +
+              escapeHtml(truncate(lines.join('\n'), 850));
+          }
+        } catch { prMonitor = '\n⚠️ Не удалось прочитать последнее наблюдение за PR.'; }
+      }
       const kind = saved.resultState === 'ready' ? 'выполнена' : 'завершилась со статусом ' + escapeHtml(saved.resultState ?? 'неизвестно');
       await out.sendHtml(chatId, 'ℹ️ <b>Задача #' + last + ' ' + kind +
         '.</b>\nПроект: <code>' + escapeHtml(saved.repo ?? AGENT_REPO) + '</code>' + prStatus +
-        '\n<a href="' + urlFor(last) + '">Прочитать отчёт</a>');
+        prMonitor + '\n<a href="' + urlFor(last) + '">Прочитать отчёт</a>');
       return true;
     }
     try {
