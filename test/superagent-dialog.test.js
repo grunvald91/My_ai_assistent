@@ -113,7 +113,22 @@ test('code intent does not hijack ordinary chat', async () => {
   assert.equal(isNaturalCodeTask('Сделай ревью Mnebyvpn'), true);
   assert.equal(agentTaskType('Сделай ревью Mnebyvpn'), 'report-only');
   assert.equal(agentFollowup('Исправляй'), 'fix');
+  assert.equal(agentFollowup('Исправь найденные ошибки'), 'fix');
+  assert.equal(agentFollowup('Сливай и выкатывай'), 'release');
   await w.say('Расскажи, что такое GitHub');
   assert.equal(w.gh.issues.length, 0);
   assert.ok(w.llmCalls.length > 0);
+});
+
+test('explicit release request is linked to the previous successful PR report', async () => {
+  const w = await createWorld();
+  prepare(w);
+  await w.say('/repo grunvald91/Mnebyvpn');
+  await w.say('Сделай ревью');
+  w.gh.comments.push(terminal(300, 'Ревью успешно. PR https://github.com/grunvald91/Mnebyvpn/pull/12 готов.'));
+  await w.say('Сливай и выкатывай');
+  assert.equal(w.gh.issues.length, 2);
+  assert.match(w.gh.issues[1].body, /Владелец ЯВНО поручил релиз/);
+  assert.match(w.gh.issues[1].body, /успешного CI/);
+  assert.equal(w.gh.commits.length, 0, 'Telegram bot must not merge or deploy');
 });
