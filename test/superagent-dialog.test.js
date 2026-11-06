@@ -1,6 +1,6 @@
 import test from 'node:test';
 import { createWorld, assert, OWNER } from './helpers/world.js';
-import { AGENT_REPO, isNaturalCodeTask, agentTaskType, agentFollowup } from '../tgcloud/lib/superagent.js';
+import { AGENT_REPO, isNaturalCodeTask, agentTaskType, agentFollowup, cleanDeveloperPhrase } from '../tgcloud/lib/superagent.js';
 
 function prepare(w) {
   w.gh.repos[AGENT_REPO] = {
@@ -67,7 +67,7 @@ test('short followup uses latest verified report in the same project', async () 
   await w.say('/repo grunvald91/Mnebyvpn');
   await w.say('Сделай ревью');
   w.gh.comments.push(terminal(300, 'Найдено: ошибка в login.js, требуется исправление.'));
-  await w.say('Исправляй');
+  await w.say('Ну, давай исправляй');
   assert.equal(w.gh.issues.length, 2);
   assert.match(w.gh.issues[1].body, /Результат задачи #300/);
   assert.match(w.gh.issues[1].body, /ошибка в login.js/);
@@ -112,6 +112,7 @@ test('code intent does not hijack ordinary chat', async () => {
   assert.equal(isNaturalCodeTask('Создай ветку feature/new в проекте'), true);
   assert.equal(isNaturalCodeTask('Сделай ревью Mnebyvpn'), true);
   assert.equal(agentTaskType('Сделай ревью Mnebyvpn'), 'report-only');
+  assert.equal(cleanDeveloperPhrase('Ну, давай исправляй'), 'исправляй');
   assert.equal(agentFollowup('Исправляй'), 'fix');
   assert.equal(agentFollowup('Исправь найденные ошибки'), 'fix');
   assert.equal(agentFollowup('Сливай и выкатывай'), 'release');
@@ -131,4 +132,14 @@ test('explicit release request is linked to the previous successful PR report', 
   assert.match(w.gh.issues[1].body, /Владелец ЯВНО поручил релиз/);
   assert.match(w.gh.issues[1].body, /успешного CI/);
   assert.equal(w.gh.commits.length, 0, 'Telegram bot must not merge or deploy');
+});
+
+test('conversational status question checks the last issue without calling LLM', async () => {
+  const w = await createWorld();
+  prepare(w);
+  await w.say('Сделай ревью');
+  w.clear();
+  await w.say('Ну что там?');
+  assert.equal(w.llmCalls.length, 0);
+  assert.match(w.last(OWNER).text, /Задача #300 в работе/);
 });
