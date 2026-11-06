@@ -99,7 +99,7 @@ test('panel shows actual project, task and actions in bubble state and fallback 
   assert.equal(data.agent.issue, 300);
   await w.say('/panel_text');
   await w.press('ui:agent');
-  const card = w.last(OWNER);
+  const card = w.calls('editMessageText').at(-1); // inline panel is edited, not sent anew
   assert.match(card.text, /Mnebyvpn/);
   assert.match(card.text, /#300/);
   assert.ok(card.reply_markup.inline_keyboard.flat().some(b => b.callback_data === 'ui:agent_action:review'));
