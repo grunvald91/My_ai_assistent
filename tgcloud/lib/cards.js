@@ -27,6 +27,8 @@ function taskItems(board) {
 
 export function createCards(D) {
   const { store, out } = D;
+  let deliveryCheckedAt = -Infinity;
+  let deliveryAvailable = false;
 
   async function board(chatId) {
     return store.ensureUiCard({
@@ -152,7 +154,7 @@ export function createCards(D) {
     const saved = await board(chatId);
     const items = taskItems(saved);
     const done = items.filter((x) => x.done).length;
-    const state = { k: kind, n: items.length, d: done };
+    const state = { k: kind, v: saved.version, n: items.length, d: done };
     if (kind === 'home') {
       state.m = (await store.listMemories(['owner'])).length;
     } else if (kind === 'tasks') {
@@ -190,8 +192,32 @@ export function createCards(D) {
     return json;
   }
 
-  async function trySendWidget(chatId, kind, page) {
+  /** A supported sendWidget method is not enough: the webhook must also
+   * receive widget_query, otherwise all controls time out. Fail closed.
+   */
+  async function widgetDeliveryReady(chatId) {
     if (D.cfg?.widgetsEnabled === false) return false;
+    if (D.now() - deliveryCheckedAt < 60) return deliveryAvailable;
+    deliveryCheckedAt = D.now();
+    deliveryAvailable = false;
+    try {
+      const info = await out.call('getWebhookInfo', {});
+      const updates = info?.allowed_updates;
+      deliveryAvailable = Array.isArray(updates) &&
+        ['widget_query', 'shared_widget_query'].every((name) => updates.includes(name));
+      if (!deliveryAvailable) await D.log('widget_webhook_not_ready', chatId, {
+        allowed: Array.isArray(updates) ? updates.filter((x) => /widget_query/.test(x)) : null,
+      });
+    } catch (e) {
+      await D.log('widget_webhook_probe_failed', chatId, {
+        reason: String(e?.description ?? e?.message ?? e).slice(0, 160),
+      });
+    }
+    return deliveryAvailable;
+  }
+
+  async function trySendWidget(chatId, kind, page) {
+    if (!(await widgetDeliveryReady(chatId))) return false;
     try {
       const sent = await out.call('sendWidget', {
         chat_id: chatId, html: ASSISTANT_WIDGET_HTML,
