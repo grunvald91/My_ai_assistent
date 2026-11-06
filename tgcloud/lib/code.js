@@ -78,7 +78,7 @@ export function createCode(D) {
         await out.sendHtml(chatId, '🚫 Репозиторий самого бота трогать нельзя — свой код я не переписываю. Выбери другой.');
         return;
       }
-      await store.setSetting('gh_repo', repo.full_name);
+      await D.superagent.setSelectedRepo(chatId, repo.full_name);
       await out.sendHtml(
         chatId,
         `✅ Репозиторий: <code>${escapeHtml(repo.full_name)}</code> (${repo.private ? 'приватный' : 'публичный'}, ветка <code>${escapeHtml(repo.default_branch)}</code>).\nТеперь: <code>/code задание</code>`,
@@ -533,7 +533,7 @@ export function createCode(D) {
           await out.sendHtml(chatId, '🚫 Репозиторий самого бота трогать нельзя — свой код я не переписываю. Назови другой.');
           return true;
         }
-        if ((await store.getSetting('gh_repo')) !== repo.full_name) await store.setSetting('gh_repo', repo.full_name);
+        if ((await store.getSetting('gh_repo')) !== repo.full_name) await D.superagent.setSelectedRepo(chatId, repo.full_name);
       }
       if (!(await store.getSetting('gh_repo'))) {
         await out.sendHtml(chatId, 'Это задача для кода, но я не понял, в каком репозитории. Выбери: /gh или <code>/repo владелец/имя</code> — и повтори просьбу.');
