@@ -7,6 +7,7 @@
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { verifyWidgetWebhookReport } from './verify-widget-webhook.mjs';
 
 const CLI = ['npx', '--no-install', 'tgcloud'];
 
@@ -50,7 +51,14 @@ if (mig.status !== 0) {
   process.exit(mig.status ?? 1);
 }
 
-// 3. webhook должен соответствовать задеплоенным обработчикам
-run(['webhook', 'sync']);
-run(['webhook']);
-console.log('\n✅ Деплой завершён.');
+// 3. Confirm that the deployed handlers are subscribed.
+const sync = run(['webhook', 'sync'], { capture: true });
+if (sync.status !== 0) process.exit(sync.status ?? 1);
+const webhook = run(['webhook'], { capture: true });
+if (webhook.status !== 0) process.exit(webhook.status ?? 1);
+const result = verifyWidgetWebhookReport((webhook.stdout ?? '') + '\n' + (webhook.stderr ?? ''));
+if (!result.ok) {
+  console.error('Webhook verification failed:', result.reason);
+  process.exit(1);
+}
+console.log('Deployment verified: HTMLBubbles update types subscribed.');
