@@ -27,6 +27,17 @@ const REPO_REFERENCE = /(?:^|[^\w./-])(grunvald91\/[A-Za-z0-9._-]+)(?=[^\w./-]|$
 const REPO_NAME = /^grunvald91\/[A-Za-z0-9._-]+$/i;
 const WORK_VERBS = /исправ|поправ|добав|внес[иь]|созда|сдела|реализ|передела|перепиш|измени|изменит|обнов|сверста|настрой|интегрир|подготов[ьи]|закоммит|открой\s+(?:pr|pull request)|сделай\s+(?:pr|pull request)/i;
 
+// Allow natural spoken/chat fillers, without stripping meaningful task content.
+export function cleanDeveloperPhrase(text) {
+  let s = String(text ?? '').trim();
+  for (let i = 0; i < 4; i++) {
+    const next = s.replace(/^(?:ну|давай|а теперь|теперь|окей|хорошо|ладно)[,\s]+/i, '').trim();
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+}
+
 export function parseAgentRequest(text) {
   const source = String(text ?? '').trim();
   let m = /^(?:поручи|передай|отправь|дай)\s+(?:(?:это|такую|новую)\s+)?(?:(?:задачу|задание|работу)\s+)?(?:моему\s+)?(?:код(?:овому)?\s+)?(?:агенту|суперагенту|deepseek(?:[-\s]?агенту)?|superagent)\s*[,.:—–-]?\s*/i.exec(source);
@@ -459,8 +470,16 @@ export function createSuperagent(D) {
   }
 
   async function maybeAutoTask(chat, text) {
-    const explicit = parseAgentRequest(text);
-    const content = explicit === null ? (isNaturalCodeTask(text) ? String(text).trim() : null) : explicit;
+    const cleaned = cleanDeveloperPhrase(text);
+    if (/^(?:что там|какой статус|на каком этапе|что с ревью|как дела с задачей)[?.!\s]*$/i.test(cleaned)) {
+      if (Number(await store.getSetting('agent:last:' + chat.chatId)) > 0) {
+        await status(chat.chatId);
+        return true;
+      }
+      return false;
+    }
+    const explicit = parseAgentRequest(cleaned);
+    const content = explicit === null ? (isNaturalCodeTask(cleaned) ? cleaned : null) : explicit;
     if (content === null) return false;
     await task(chat.chatId, content);
     return true;
