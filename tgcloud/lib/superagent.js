@@ -50,7 +50,7 @@ export function isNaturalCodeTask(text) {
   if (/^(?:в|для)\s+[\w.-]+\s+(?:сделай|проведи|исправь|проверь)\s+(?:ревью|аудит|код|тест|ошибк)/i.test(s)) return true;
   if (/^проверь\s+и\s+исправь(?:\s|$)/i.test(s)) return true;
   if (/^(?:проверь|перепроверь|протестируй|запусти)\s+(?:ещ[её]\s+раз\s+)?(?:код|реализац|репозитор|проект|тест|ci\b|сборк|pull\s*request|pr\b)/i.test(s)) return true;
-  if (/^(?:исправ(?:ь|ляй|и)|почини|додел(?:ай|ывай)|продолжай|сделай\s+дальше|доведи\s+до\s+конца|создай\s+pr|открой\s+pr|запусти\s+тесты|проверь\s+ещ[её]\s+раз)(?:[\s.!?]|$)/i.test(s)) return true;
+  if (/^(?:исправ(?:ь|ляй|и)|почини|додел(?:ай|ывай)|продолжай|сделай\s+дальше|доведи\s+до\s+конца|создай\s+pr|открой\s+pr|запусти\s+тесты|проверь\s+ещ[её]\s+раз|сливай|слей|смержи)(?:[\s.!?]|$)/i.test(s)) return true;
   if (/^(?:создай|открой|смержи|слей|залей|запушь|выкатывай)\s+(?:ветк\w*|pull\s*request|pr\b|коммит\w*|код\w*|деплой\w*|проект\w*)/i.test(s)) return true;
   if (/^(?:создай|сделай|исправь|добавь|реализуй|настрой|проверь|протестируй|обнови|запусти|переделай|внеси|сверстай|залей)(?:\s|$)/i.test(s) && requestedAgentRepository(s).repo) return true;
   return /^(?:создай|сделай|исправь|добавь|реализуй|настрой|проверь|протестируй|обнови|запусти|переделай|внеси|сверстай|залей)(?:\s|$)/i.test(s) &&
@@ -59,11 +59,12 @@ export function isNaturalCodeTask(text) {
 
 export function agentFollowup(text) {
   const s = String(text ?? '').trim();
-  if (/^(?:исправ(?:ляй|ь|и)(?:\s+(?:найденн\w*|ошибк\w*|замечани\w*|проблем\w*)){0,3}|почини\s+найденн\w*)[.!?]*$/i.test(s)) return 'fix';
+  if (/^(?:исправ(?:ляй|ь|и)(?:\s+(?:найденн[а-яё]*|ошибк[а-яё]*|замечани[а-яё]*|проблем[а-яё]*)){0,3}|почини\s+найденн[а-яё]*)[.!?]*$/i.test(s)) return 'fix';
   if (/^(?:доделывай|доделай|продолжай|делай\s+дальше|доведи\s+до\s+конца)[.!?]*$/i.test(s)) return 'continue';
   if (/^(?:проверь\s+ещ[её]\s+раз|перепроверь|повтори\s+ревью|сделай\s+ревью\s+повторно)[.!?]*$/i.test(s)) return 'review';
   if (/^(?:запусти\s+тесты|прогони\s+тесты)[.!?]*$/i.test(s)) return 'tests';
   if (/^(?:создай|открой|подготовь)\s+(?:pr|pull request)[.!?]*$/i.test(s)) return 'pr';
+  if (/^(?:сливай|слей|смержи)(?:\s+и\s+(?:выкатывай|выкати|задеплой))?[.!?]*$/i.test(s)) return 'release';
   return null;
 }
 
@@ -223,7 +224,7 @@ export function createSuperagent(D) {
       (declaredTarget.toLowerCase() === AGENT_REPO.toLowerCase() && !requested.repo && isBookingTask(text));
     const targetName = bookingTask ? AGENT_REPO : declaredTarget;
     const followup = agentFollowup(text);
-    const type = followup && ['fix', 'continue', 'pr'].includes(followup) ? 'code-change' : agentTaskType(text);
+    const type = followup && ['fix', 'continue', 'pr', 'release'].includes(followup) ? 'code-change' : agentTaskType(text);
     const requiredAccess = type === 'report-only' ? ['read', 'triage', 'write', 'maintain', 'admin'] : ['write', 'maintain', 'admin'];
     if (!permittedTarget(targetName)) {
       await out.sendHtml(chatId, '⚠️ Репозиторий недопустим. Укажи <code>grunvald91/имя</code>, кроме репозитория самого бота.');
@@ -319,9 +320,11 @@ export function createSuperagent(D) {
       '',
       '## Правила исполнения',
       '',
-      type === 'report-only'
-        ? 'Только чтение, анализ и отчёт комментарием в этом Issue. Не менять код или файлы, не создавать PR, не запускать деплой.'
-        : 'Разрешены изменения файлов только в отдельной ветке целевого репозитория ' + target.full_name + ' с Pull Request именно в него. Не изменять код репозитория-очереди ' + AGENT_REPO + ' (если он не целевой). Не сливать PR в main, не запускать деплой, не менять production, секреты и пользовательские данные. Отправить ссылку на PR в этом Issue.',
+      followup === 'release'
+        ? 'Владелец ЯВНО поручил релиз. Разрешается слияние только ранее созданного PR в ' + target.full_name + ' после проверки статуса, отсутствия блокирующих ревью и успешного CI. После слияния разрешён предусмотренный проектом production-деплой. Если PR не найден или проверки не прошли — остановись и отчитайся, ничего не обходи. Не изменять другие проекты, секреты и пользовательские данные.'
+        : type === 'report-only'
+          ? 'Только чтение, анализ и отчёт комментарием в этом Issue. Не менять код или файлы, не создавать PR, не запускать деплой.'
+          : 'Разрешены изменения файлов только в отдельной ветке целевого репозитория ' + target.full_name + ' с Pull Request именно в него. Не изменять код репозитория-очереди ' + AGENT_REPO + ' (если он не целевой). Не сливать PR в main, не запускать деплой, не менять production, секреты и пользовательские данные. Отправить ссылку на PR в этом Issue.',
       '',
       'Задача передана автоматически из личного Telegram-чата владельца.',
     ].join('\n');
