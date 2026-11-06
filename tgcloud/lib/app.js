@@ -47,6 +47,7 @@ export function createApp(base) {
   const business = createBusiness(D);
   const replies = createReplies(D);
   const code = createCode(D);
+  D.code = code;
   D.superagent = createSuperagent(D);
   D.bg = createBg(D, chatMod); // тяжёлые модели в фоне (GitHub Actions)
   D.repoContext = code.repoContext; // чат читает репозиторий по просьбе владельца
@@ -233,7 +234,6 @@ export function createApp(base) {
       }
 
       if (await D.superagent.maybeAutoTask(chat, said)) return; // поручение отдельному агенту без ручных Actions
-      if (await code.maybeAutoTask(chat, said)) return; // «создай ветку и залей код» без /code
       if (rc.items.length) return chatMod.answerMedia(chatId, rc.prefix + said, rc.items); // ответ на сообщение с фото/файлом
       await chatMod.answerOwner(msg, chat, rc.prefix + said);
     } finally {
@@ -246,7 +246,7 @@ export function createApp(base) {
     if (OWN_STATE.test(st)) return posts.onState(msg, chat);
     if (st.startsWith('biz_')) return business.onState(msg, chat);
     if (st.startsWith('draft_rev:')) return replies.onState(msg, chat);
-    if (st === 'code_task') return code.onState(msg, chat);
+    if (st === 'code_task') return D.superagent.onState(msg, chat); // previous /code prompts now delegate
     if (st === 'agent_task') return D.superagent.onState(msg, chat);
     if (st === 'ui_add_task') return D.cards.onState(msg);
     await store.setState(chat.chatId, null); // неизвестное состояние — сбрасываем
