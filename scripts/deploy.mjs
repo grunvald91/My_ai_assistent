@@ -5,6 +5,7 @@
 // Код на сервере уже обновлён, но `&&` обрывал цепочку, и миграция не выполнялась. Здесь именно этот сбой
 // терпим (и печатаем, какой модуль его вызвал), любые другие ошибки push по-прежнему валят деплой.
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { verifyWidgetWebhookReport } from './verify-widget-webhook.mjs';
@@ -56,9 +57,19 @@ const sync = run(['webhook', 'sync'], { capture: true });
 if (sync.status !== 0) process.exit(sync.status ?? 1);
 const webhook = run(['webhook'], { capture: true });
 if (webhook.status !== 0) process.exit(webhook.status ?? 1);
-const result = verifyWidgetWebhookReport((webhook.stdout ?? '') + '\n' + (webhook.stderr ?? ''));
+const kinds = ['widget_query', 'shared_widget_query'].map((k) => existsSync('tgcloud/handlers/' + k + '.js'));
+if (kinds[0] !== kinds[1]) {
+  console.error('Both HTMLBubbles update handlers must be deployed together.');
+  process.exit(1);
+}
+const canReceiveWidgets = kinds.every(Boolean);
+const result = verifyWidgetWebhookReport((webhook.stdout ?? '') + '\n' + (webhook.stderr ?? ''), {
+  requireWidgets: canReceiveWidgets,
+});
 if (!result.ok) {
   console.error('Webhook verification failed:', result.reason);
   process.exit(1);
 }
-console.log('Deployment verified: HTMLBubbles update types subscribed.');
+console.log(canReceiveWidgets
+  ? 'Deployment verified: HTMLBubbles webhook types subscribed.'
+  : 'Deployment verified: bot webhook is healthy; HTMLBubbles disabled until tgcloud supports 10.4 updates.');
