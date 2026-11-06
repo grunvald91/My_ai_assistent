@@ -61,7 +61,7 @@ export function createCode(D) {
         chatId,
         `🐙 GitHub: <b>${escapeHtml(me.login)}</b>\nАктивный репозиторий: ${cur ? '<code>' + escapeHtml(cur) + '</code>' : 'не выбран'}\n\n` +
           'Выбери репозиторий ниже (последние по активности) или командой: <code>/repo владелец/имя</code>.\nПотом: <code>/code что нужно сделать</code>.',
-        { reply_markup: kb(names.slice(0, 8).map((n, i) => [{ text: truncate(n, 60), callback_data: 'x:r:' + i }])) },
+        { reply_markup: kb(names.slice(0, 8).reduce((rows, n, i) => { if (i % 2 === 0) rows.push([]); rows[rows.length - 1].push({ text: truncate(n.split('/').pop(), 25), callback_data: 'x:r:' + i }); return rows; }, [])) },
       );
     } catch (e) {
       await fail(chatId, e);
