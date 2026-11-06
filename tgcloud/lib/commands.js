@@ -51,7 +51,7 @@ export function createCommands(D, mods) {
     '/channels — каналы и их стиль\n' +
     '/group — как отвечать в группах: выкл / по запросу / на все\n' +
     '/business — ответы от моего имени в личке (Telegram Business)\n' +
-    '/gh · /repo · /code — писать код и пушить в твои репозитории (кроме бота)\n' +
+    '/gh · /repo — выбрать проект; /code или обычная просьба — задача серверному Superagent\n' +
     '/agent задача — поручить работу Superagent, результат верну сюда\n' +
     '/runs — GitHub Actions: последние запуски и кнопка Run workflow\n\n' +
     '<b>Память</b>\n' +
@@ -158,8 +158,7 @@ export function createCommands(D, mods) {
       case 'agent':
         return D.superagent.command(chatId, arg);
       case 'code':
-        await code.startTask(chat, arg);
-        return true;
+        return D.superagent.command(chatId, arg);
       case 'post':
         await posts.startPost(chat, arg);
         return true;
