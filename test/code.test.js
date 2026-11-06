@@ -51,7 +51,8 @@ test('codeparse: выбор файлов, пути, секреты, slug, base64
   assert.equal(base64Encode(utf8Encode('ab')), 'YWI=');
 });
 
-// ───────── сценарии ─────────
+// ───────── isolated tests for legacy code.js module ─────────
+// Public /code commands now delegate to Superagent; direct module tests remain for coverage.
 
 const SITE = () => ({ default_branch: 'main', private: true, files: { 'index.html': '<h1>Привет</h1>', 'README.md': '# Site', 'package.json': '{}' } });
 const CHANGES = [
@@ -74,7 +75,7 @@ test('без GH_PAT: /gh и /code объясняют, как подключит�
   const w = await createWorld({ github: false });
   await w.say('/gh');
   assert.match(w.last(OWNER).text, /GH_PAT/);
-  await w.say('/code сделай что-нибудь');
+  await w.app.code.startTask({ chatId: OWNER }, 'сделай что-нибудь');
   assert.match(w.last(OWNER).text, /GH_PAT/);
   assert.equal(w.llmCalls.length, 0);
 });
@@ -100,7 +101,7 @@ test('/gh: список репозиториев без репозитория �
   w.gh.repos['grunvald91/My_ai_assistent'] = SITE();
   await w.say('/gh');
   const btns = w.last(OWNER).reply_markup.inline_keyboard.flat();
-  assert.deepEqual(btns.map((b) => b.text), ['me/site', 'me/shop']);
+  assert.deepEqual(btns.map((b) => b.text), ['site', 'shop']);
   await w.press(btns[1].callback_data);
   assert.equal(await w.store.getSetting('gh_repo'), 'me/shop');
 });
@@ -109,7 +110,7 @@ test('/code → предпросмотр без записи → «Ветка + 
   const w = await createWorld();
   await ready(w);
   w.llmReplies.push('index.html\nREADME.md', CHANGES);
-  await w.say('/code добавь форму обратной связи');
+  await w.app.code.startTask({ chatId: OWNER }, 'добавь форму обратной связи');
 
   // модель получила содержимое прочитанного файла
   const user = w.llmCalls[1].messages.at(-1).content;
@@ -149,7 +150,7 @@ test('/code → «Сразу в main»: обновляет основную ве
   const w = await createWorld();
   await ready(w);
   w.llmReplies.push('NONE'.replace('NONE', 'README.md'), CHANGES + '\n@@@ DELETE package.json');
-  await w.say('/code добавь форму и убери package.json');
+  await w.app.code.startTask({ chatId: OWNER }, 'добавь форму и убери package.json');
   const card = w.last(OWNER);
   assert.match(card.text, /🗑 <code>package\.json<\/code>/);
   await w.press(card.reply_markup.inline_keyboard[1][0].callback_data);
@@ -163,10 +164,10 @@ test('/code → «Сразу в main»: обновляет основную ве
 test('/code без описания спрашивает задачу следующим сообщением', async () => {
   const w = await createWorld();
   await ready(w);
-  await w.say('/code');
+  await w.app.code.startTask({ chatId: OWNER }, '');
   assert.match(w.last(OWNER).text, /Опиши задачу/);
   w.llmReplies.push('index.html', CHANGES);
-  await w.say('добавь форму');
+  await w.app.code.onState({ text: 'добавь форму', chat: { id: OWNER } }, { chatId: OWNER, state: 'code_task' });
   assert.match(w.last(OWNER).text, /Ничего не отправлено/);
 });
 
@@ -174,7 +175,7 @@ test('секреты в сгенерированном коде блокирую
   const w = await createWorld();
   await ready(w);
   w.llmReplies.push('index.html', '@@@ COMMIT: x\n@@@ SUMMARY: y\n@@@ FILE create config.js\nexport const KEY = "sk-hub-abcdefgh12345678";\n@@@ END');
-  await w.say('/code добавь конфиг');
+  await w.app.code.startTask({ chatId: OWNER }, 'добавь конфиг');
   assert.match(w.last(OWNER).text, /нашлись секреты/);
   assert.equal(w.gh.calls.filter((c) => c.method !== 'GET').length, 0);
 });
@@ -188,7 +189,7 @@ test('небезопасные пути и удаление несуществу
     '@@@ FILE create .github/workflows/ci.yml', 'name: ci', '@@@ END',
     '@@@ DELETE nope.txt',
   ].join('\n'));
-  await w.say('/code ci');
+  await w.app.code.startTask({ chatId: OWNER }, 'ci');
   const card = w.last(OWNER);
   assert.doesNotMatch(card.text, /<code>\.\.\/evil/, 'небезопасный файл в список изменений не попал');
   assert.match(card.text, /небезопасный путь/);
@@ -200,7 +201,7 @@ test('оборванный ответ модели: последний файл 
   const w = await createWorld();
   await ready(w);
   w.llmReplies.push('index.html', '@@@ COMMIT: x\n@@@ SUMMARY: y\n@@@ FILE create a.js\nok\n@@@ END\n@@@ FILE create b.js\nобрыв');
-  await w.say('/code два файла');
+  await w.app.code.startTask({ chatId: OWNER }, 'два файла');
   const card = w.last(OWNER);
   assert.match(card.text, /a\.js/);
   assert.doesNotMatch(card.text, /<code>b\.js/);
@@ -211,7 +212,7 @@ test('нет изменений: показывает пояснение мод�
   const w = await createWorld();
   await ready(w);
   w.llmReplies.push('NONE', '@@@ SUMMARY: Задача неясна: какой именно сайт?');
-  await w.say('/code сделай хорошо');
+  await w.app.code.startTask({ chatId: OWNER }, 'сделай хорошо');
   assert.match(w.last(OWNER).text, /Задача неясна/);
   assert.equal((await w.store.recentJournal(10)).filter((j) => j.type === 'code_draft').length, 0);
 });
@@ -220,7 +221,7 @@ test('пустой репозиторий: файлы создаются чер�
   const w = await createWorld();
   await ready(w, { 'me/site': { default_branch: 'main', empty: true, files: {} } });
   w.llmReplies.push('@@@ COMMIT: Init\n@@@ SUMMARY: Каркас.\n@@@ FILE create index.html\n<h1>Привет, мир</h1>\n@@@ END');
-  await w.say('/code каркас сайта');
+  await w.app.code.startTask({ chatId: OWNER }, 'каркас сайта');
   assert.equal(w.llmCalls.length, 1, 'читать нечего — шаг выбора файлов пропущен');
   const card = w.last(OWNER);
   assert.equal(card.reply_markup.inline_keyboard[0].length, 1);
@@ -235,7 +236,7 @@ test('защита на этапе применения: репозиторий 
   const w = await createWorld();
   await ready(w);
   w.llmReplies.push('index.html', CHANGES);
-  await w.say('/code форма');
+  await w.app.code.startTask({ chatId: OWNER }, 'форма');
   const card = w.last(OWNER);
   w.gh.repos['me/site'].canonical = 'grunvald91/My_ai_assistent'; // GitHub теперь отдаёт каноническое имя бота
   await w.press(card.reply_markup.inline_keyboard[0][0].callback_data);
@@ -247,7 +248,7 @@ test('ошибка GitHub при записи: изменения сохраня
   const w = await createWorld();
   await ready(w);
   w.llmReplies.push('index.html', CHANGES);
-  await w.say('/code форма');
+  await w.app.code.startTask({ chatId: OWNER }, 'форма');
   const card = w.last(OWNER);
   w.gh.repos['me/site'].prFails = true;
   await w.press(card.reply_markup.inline_keyboard[0][0].callback_data);
@@ -259,7 +260,7 @@ test('«Показать код» присылает файлы документ
   const w = await createWorld();
   await ready(w);
   w.llmReplies.push('index.html', CHANGES);
-  await w.say('/code форма');
+  await w.app.code.startTask({ chatId: OWNER }, 'форма');
   const rows = w.last(OWNER).reply_markup.inline_keyboard;
   await w.press(rows[2][0].callback_data);
   const docs = w.calls('sendDocument');

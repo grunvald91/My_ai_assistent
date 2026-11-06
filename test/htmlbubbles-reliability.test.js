@@ -2,7 +2,7 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createWorld, assert, OWNER } from './helpers/world.js';
 import { ASSISTANT_WIDGET_HTML } from '../tgcloud/lib/widget-html.js';
-import { verifyWidgetWebhookReport } from '../scripts/verify-widget-webhook.mjs';
+import { verifyWidgetWebhookReport, verifyBasicWebhookReport } from '../scripts/verify-widget-webhook.mjs';
 
 const query = (id, data) => ({ id, data, from: { id: OWNER }, chat: { id: OWNER, type: 'private' }, message_id: 44 });
 
@@ -136,4 +136,12 @@ test('HTML UI refreshes stale state on activation and ignores older state events
   tw.chatData = JSON.stringify({ k: 'home', v: 1, n: 0, d: 0, m: 0 });
   handlers.chatDataChanged();
   assert.match(flatten(root), /Задачи: 1\/2/);
+});
+
+test('CLI fallback accepts only a synchronized standard webhook, never false HTMLBubble support', () => {
+  assert.equal(verifyBasicWebhookReport('Allowed updates: message, callback_query\nIn sync: yes').ok, true);
+  assert.equal(verifyBasicWebhookReport('Allowed updates: callback_query\nIn sync: yes').ok, false);
+  assert.equal(verifyBasicWebhookReport('Allowed updates: message\nIn sync: no').ok, false);
+  assert.equal(verifyBasicWebhookReport('No webhook info').ok, false);
+  assert.equal(verifyWidgetWebhookReport('Allowed updates: message, callback_query\nIn sync: yes').ok, false);
 });

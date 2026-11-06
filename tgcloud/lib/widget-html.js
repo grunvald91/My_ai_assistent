@@ -78,6 +78,13 @@ put(root,'p','muted','Сохранено фактов: '+current.m);
 (current.facts||[]).forEach(function(x){put(root,'div','fact',x)});
 put(root,'p','notice','Добавить: /remember текст. Удалить: /forget номер');
 nav(root,'w:memory');
+}else if(current.k==='agent'){
+var a=current.agent||{};
+put(root,'p','muted','Активный проект');
+put(root,'div','fact',a.repo||'Не выбран');
+put(root,'div','status',a.issue?'Задача #'+a.issue+' · '+(a.status||'в работе'):'Нет поручений для проекта');
+buttons(root,[['▣ Проекты','w:agent_action:pick'],['⌕ Ревью','w:agent_action:review'],['⚒ Исправить','w:agent_action:fix'],['↻ Статус','w:agent_action:status']],'tiles');
+nav(root,'w:agent');
 }else{
 put(root,'p','notice',current.info||'Раздел ещё не подключён');
 nav(root,'w:'+current.k);

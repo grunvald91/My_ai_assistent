@@ -204,7 +204,7 @@ test('/code использует /think и максимум модели', async
   await w.say('/think высокий');
   w.clear();
   w.llmReplies.push('NONE', '@@@ COMMIT: x\n@@@ SUMMARY: y\n@@@ FILE create b.js\nconsole.log(1)\n@@@ END');
-  await w.say('/code добавь b.js');
+  await w.app.code.startTask({ chatId: OWNER }, 'добавь b.js');
   assert.deepEqual(w.llmPaths, ['/v1/chat/completions', '/v1/messages']);
   assert.equal(w.llmCalls[0].max_tokens, 400, 'выбор файлов — короткий вызов без размышлений');
   assert.equal(w.llmCalls[1].max_tokens, 128000);
@@ -611,7 +611,7 @@ test('просьба «создай ветку и залей код» без /co
   w.gh.repos['me/servgo'] = { default_branch: 'main', private: true, canonical: 'me/ServGo', files: { 'index.html': '<h1>x</h1>' } };
   w.clear();
   w.llmReplies.push('NONE', FEATURE);
-  await w.say('Создай ветку feature/ai-chat в me/servgo и добавь туда чат с ИИ');
+  await w.app.code.maybeAutoTask({ chatId: OWNER }, 'Создай ветку feature/ai-chat в me/servgo и добавь туда чат с ИИ');
   assert.equal(await w.store.getSetting('gh_repo'), 'me/ServGo');
   assert.match(w.llmCalls[0].messages[0].content, /Выбор файлов|файл/i);
   const card = w.last(OWNER);
@@ -627,17 +627,17 @@ test('репозиторий можно назвать просто словом
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: {} };
   w.clear();
   w.llmReplies.push('NONE', FEATURE);
-  await w.say('Залей в ServGo новую ветку с чатом');
+  await w.app.code.maybeAutoTask({ chatId: OWNER }, 'Залей в ServGo новую ветку с чатом');
   assert.equal(await w.store.getSetting('gh_repo'), 'me/ServGo');
   assert.match(w.last(OWNER).text, /Add AI chat/);
 
-  await w.say('Создай ветку в my_ai_assistent с чатом');
+  await w.app.code.maybeAutoTask({ chatId: OWNER }, 'Создай ветку в my_ai_assistent с чатом');
   assert.match(w.last(OWNER).text, /самого бота трогать нельзя/);
 });
 
 test('просьба про код без выбранного репозитория: объясняем, что выбрать; обычные сообщения в код не уходят', async () => {
   const w = await createWorld();
-  await w.say('Создай ветку feature/x и залей код');
+  await w.app.code.maybeAutoTask({ chatId: OWNER }, 'Создай ветку feature/x и залей код');
   assert.match(w.last(OWNER).text, /не понял, в каком репозитории/);
   assert.equal(w.llmCalls.length, 0);
 
@@ -662,7 +662,7 @@ test('длинная задача: ветка и глагол далеко др�
   await w.say('/repo me/Sushef'); // выбран другой репозиторий — но в задаче назван ai growth os
   w.clear();
   w.llmReplies.push('NONE', FEATURE);
-  await w.say(
+  await w.app.code.maybeAutoTask({ chatId: OWNER },
     'Создай страницу AI-чата в стиле Claude/ChatGPT в проекте ai growth os. Сначала определи стек. Функции: текст, фото, файлы до 1 МБ, история, ' +
       'повтор отправки при сбое, копирование сообщений, диалоги (новый, удаление, переименование), лимит длины. Дизайн как у админ-панели. Работай в новой ветке feature/ai-chat и открой Pull Request.',
   );

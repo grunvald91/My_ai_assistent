@@ -142,10 +142,20 @@ export function createCards(D) {
       lines: ['Поиск поездок доступен через обычный запрос боту. Сохранение маршрутов в этой панели пока не подключено.', 'Пример: Как добраться из Сочи в Адлер завтра?'],
       actions: [[{ text: '⬅️ Панель', callback_data: 'ui:home' }]],
     };
+    const agent = await D.superagent.taskSummary(chatId);
     return {
-      kind: 'agent', title: '🤖 ИИ-агент',
-      lines: ['Задачи агенту сейчас выдаются текстовой командой:', '/agent задание', 'Отслеживание всех поручений в одной карточке появится после подключения хранилища заданий.'],
-      actions: [[{ text: '⬅️ Панель', callback_data: 'ui:home' }]],
+      kind: 'agent', title: '🤖 Серверный Superagent',
+      lines: [
+        'Проект: ' + agent.repo,
+        agent.issue ? 'Последняя задача: #' + agent.issue + ' · ' + agent.status : 'По этому проекту ещё нет поручений.',
+        'Можно писать: «Сделай ревью», «Исправляй», «Запусти тесты».',
+      ],
+      actions: [
+        [{ text: '📁 Сменить проект', callback_data: 'ui:agent_action:pick' }],
+        [{ text: '🔎 Ревью', callback_data: 'ui:agent_action:review' }, { text: '🛠 Исправить', callback_data: 'ui:agent_action:fix' }],
+        [{ text: '📊 Статус', callback_data: 'ui:agent_action:status' }, { text: '⬅️ Панель', callback_data: 'ui:home' }],
+        ...(agent.issue ? [[{ text: '📋 GitHub Issue #' + agent.issue, url: 'https://github.com/grunvald91/Ai_growth_os/issues/' + agent.issue }]] : []),
+      ],
     };
   }
 
@@ -170,6 +180,9 @@ export function createCards(D) {
       const facts = await store.listMemories(['owner', 'biz']);
       state.m = facts.length;
       state.facts = facts.slice(-4).map((f) => f.id + '. ' + truncate(f.text, 65));
+    } else if (kind === 'agent') {
+      const task = await D.superagent.taskSummary(chatId);
+      state.agent = { repo: truncate(task.repo.split('/').pop(), 40), issue: task.issue ?? 0, status: truncate(task.status, 32) };
     } else {
       state.info = kind === 'calendar'
         ? 'Google Calendar ещё не подключён. Действия и события не выдумываются.'
@@ -264,6 +277,7 @@ export function createCards(D) {
     let page = 0;
     let note = '';
     let addPrompt = false;
+    let agentAction = null;
     const parts = String(q.data ?? '').split(':');
     try {
       if (parts[0] !== 'w') return safeAnswer();
@@ -278,6 +292,10 @@ export function createCards(D) {
         /^\d{1,3}$/.test(parts[3])) {
         kind = parts[2];
         page = Number(parts[3]);
+      } else if (action === 'agent_action' && parts.length === 3 && ['pick', 'review', 'fix', 'status'].includes(parts[2])) {
+        kind = 'agent';
+        agentAction = parts[2];
+        note = 'Команда принята, подробности придут сообщением в чат.';
       } else if (action === 'add' && parts.length === 2) {
         kind = 'tasks';
         await store.setState(chatId, 'ui_add_task');
@@ -314,6 +332,10 @@ export function createCards(D) {
           await D.log('widget_edit_fail', chatId, { code: e?.code ?? null,
             reason: String(e?.description ?? e?.message ?? e).slice(0, 140) });
         }
+      }
+      if (agentAction) {
+        try { await agentOperation(chatId, agentAction); }
+        catch (e) { await D.log('widget_agent_action_failed', chatId, { action: agentAction, reason: String(e?.message ?? e).slice(0, 120) }); }
       }
       if (addPrompt) {
         try {
@@ -365,6 +387,14 @@ export function createCards(D) {
     return addTask(chatId, msg.text ?? '');
   }
 
+  async function agentOperation(chatId, action) {
+    if (action === 'pick') return D.code.showGh(chatId);
+    if (action === 'review') return D.superagent.command(chatId, 'Сделай ревью кода');
+    if (action === 'fix') return D.superagent.command(chatId, 'Исправляй');
+    if (action === 'status') return D.superagent.status(chatId);
+    return false;
+  }
+
   async function callback(cq, parts) {
     const chatId = cq.message.chat.id;
     if (cq.message.chat.type !== 'private' || cq.from?.id !== chatId) {
@@ -373,6 +403,12 @@ export function createCards(D) {
     }
     const [action, revision, index, page] = parts;
     const id = cq.message.message_id;
+    if (action === 'agent_action') {
+      await out.answerCb(cq.id);
+      if (!['pick', 'review', 'fix', 'status'].includes(revision)) return true;
+      await agentOperation(chatId, revision);
+      return true;
+    }
     if (action === 'add') {
       await store.setState(chatId, 'ui_add_task');
       await out.answerCb(cq.id);

@@ -32,3 +32,24 @@ export function verifyWidgetWebhookReport(raw) {
   if (!aligned) return { ok: false, reason: 'Could not confirm In sync: yes' };
   return { ok: true, reason: 'Widget update types subscribed and webhook in sync' };
 }
+
+// When the Telegram Serverless CLI does not yet recognize the Bot API 10.4
+// handler names, the deployer temporarily omits ONLY those handlers.
+// The runtime widget readiness gate will then fall back to regular buttons.
+export function verifyBasicWebhookReport(raw) {
+  const text = String(raw ?? '').replace(/\x1b\[[0-9;]*m/g, '').replace(/\r/g, '');
+  const lines = text.split('\n').map(x => x.trim()).filter(Boolean);
+  const allowed = lines.find(x => /\ballowed[\s_-]*updates?\b/i.test(x)) ?? '';
+  if (!allowed) return { ok: false, reason: 'Webhook does not list allowed_updates' };
+  if (!/(?:^|[^a-z_])message(?:$|[^a-z_])/i.test(allowed) &&
+      !lines.some(x => /^[-*]\s*message\s*$/i.test(x))) {
+    return { ok: false, reason: 'Webhook is missing normal message updates' };
+  }
+  if (/out[\s_-]*of[\s_-]*sync|not[\s_-]*in[\s_-]*sync|in[\s_-]*sync\s*[:=]\s*(?:false|no|off|✗|❌)/i.test(text)) {
+    return { ok: false, reason: 'Webhook reports out-of-sync' };
+  }
+  if (!lines.some(x => /in[\s_-]*sync\s*[:=]\s*(?:yes|true|on|✓|✅)|(?:✓|✅)\s*in[\s_-]*sync|in[\s_-]*sync\s+with\b/i.test(x))) {
+    return { ok: false, reason: 'Could not confirm webhook sync' };
+  }
+  return { ok: true, reason: 'Normal Telegram updates subscribed; HTMLBubbles not available in this CLI' };
+}
