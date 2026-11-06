@@ -150,7 +150,7 @@ test('force_reply: вопрос «опиши задачу» открывает �
   w.gh.repos['me/sushef'] = { default_branch: 'main', files: { 'README.md': '# x' } };
   await w.say('/repo me/sushef');
   w.clear();
-  await w.say('/code');
+  await w.app.code.startTask({ chatId: OWNER }, '');
   const q = w.last(OWNER);
   assert.equal(q.reply_markup.force_reply, true);
   const cancel = q.reply_markup.inline_keyboard.flat().find((b) => b.callback_data === 'r:x');
@@ -176,7 +176,7 @@ test('/code идёт шагами: кусок кода оборвали по с�
   await w.say('/repo me/site');
   w.clear();
   w.llmReplies.push('NONE', { stall: '@@@ COMMIT: add b\n@@@ SUMMARY: делаю\n@@@ FILE create b.js\nconsole.log(1)\n' });
-  await w.say('/code добавь b.js');
+  await w.app.code.startTask({ chatId: OWNER }, 'добавь b.js');
   const m = w.last(OWNER);
   assert.match(m.text, /Шаг 1/);
   const cont = m.reply_markup.inline_keyboard.flat().find((b) => b.callback_data === 'x:cj');
@@ -202,7 +202,7 @@ test('/code: ошибка модели на втором шаге не теря�
   w.gh.repos['me/site'] = { default_branch: 'main', files: { 'a.js': 'x' } };
   await w.say('/repo me/site');
   w.llmReplies.push('NONE', { stall: '@@@ FILE create b.js\nчасть' });
-  await w.say('/code добавь b.js');
+  await w.app.code.startTask({ chatId: OWNER }, 'добавь b.js');
   w.clear();
   w.llmReplies.push({ status: 400, body: { error: { message: 'bad' } } });
   await w.press('x:cj');
@@ -217,7 +217,7 @@ test('/code через GitHub Actions: бот запускает codejob.yml, р
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
   await w.say('/repo me/site');
   w.clear();
-  await w.say('/code добавь b.js');
+  await w.app.code.startTask({ chatId: OWNER }, 'добавь b.js');
   assert.equal(w.llmCalls.length, 0, 'модель в боте не вызывалась: всё делает Actions');
   const d = w.gh.dispatches.find((x) => x.workflow === 'codejob.yml');
   assert.ok(d, 'workflow codejob.yml запущен');
@@ -252,7 +252,7 @@ test('/code через Actions: ошибка из Actions доходит до в
   w.gh.repos['me/site'] = { default_branch: 'main', files: { 'a.js': 'x' } };
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: {} };
   await w.say('/repo me/site');
-  await w.say('/code задача');
+  await w.app.code.startTask({ chatId: OWNER }, 'задача');
   const job = w.gh.dispatches.at(-1).inputs.job;
   await w.app.code.finishJob({ job, n: 0, error: 'модель недоступна' });
   assert.match(w.last(OWNER).text, /Задача в GitHub Actions не удалась: модель недоступна/);
@@ -261,7 +261,7 @@ test('/code через Actions: ошибка из Actions доходит до в
   w.gh.repos['grunvald91/my_ai_assistent'].actionsDenied = true;
   w.clear();
   w.llmReplies.push('NONE', '@@@ COMMIT: x\n@@@ SUMMARY: y\n@@@ FILE create b.js\nconsole.log(1)\n@@@ END');
-  await w.say('/code ещё задача');
+  await w.app.code.startTask({ chatId: OWNER }, 'ещё задача');
   assert.ok(w.sent(OWNER).some((m) => /запустить не вышло/.test(m.text) && /Actions/.test(m.text)));
   assert.ok(w.last(OWNER).reply_markup.inline_keyboard.flat().some((b) => b.callback_data?.startsWith('x:pr:')), 'запасной путь довёл до предпросмотра');
 });
@@ -271,7 +271,7 @@ test('/code: повтор после сбоя, когда ветка и PR уж�
   w.gh.repos['me/site'] = { default_branch: 'main', private: true, files: { 'a.js': 'x' } };
   w.gh.repos['grunvald91/my_ai_assistent'] = { default_branch: 'main', files: { 'README.md': 'bot' } };
   await w.say('/repo me/site');
-  await w.say('/code добавь b.js');
+  await w.app.code.startTask({ chatId: OWNER }, 'добавь b.js');
   const job = w.gh.dispatches.find((x) => x.workflow === 'codejob.yml').inputs.job;
   const raw = '@@@ COMMIT: add b\n@@@ SUMMARY: готово\n@@@ FILE create b.js\nconsole.log(1)\n@@@ END';
   await w.app.code.receiveJobPart(job, 0, raw);
