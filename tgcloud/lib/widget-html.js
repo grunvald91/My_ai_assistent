@@ -28,14 +28,19 @@ button.primary{background:var(--tg-theme-button-color);color:var(--tg-theme-butt
 </style></head><body><div id="app"></div>
 <script>
 (function(){
-var tw=window.TelegramWidget,root=document.getElementById('app'),current=null,busy=false,error='';
+var tw=window.TelegramWidget,root=document.getElementById('app'),current=null,busy=false,error='',syncing=false,lastSync=0;
 function parse(s){try{var x=JSON.parse(s);return x&&typeof x==='object'?x:null}catch(e){return null}}
+function apply(next){
+if(!next)return false;
+if(current&&typeof current.v==='number'&&typeof next.v==='number'&&next.v<current.v)return false;
+current=next;return true
+}
 function el(tag,cls,txt){var x=document.createElement(tag);if(cls)x.className=cls;if(txt!==undefined)x.textContent=String(txt);return x}
 function put(parent,tag,cls,txt){var x=el(tag,cls,txt);parent.appendChild(x);return x}
 function action(label,cmd,style){var b=el('button',style||'',label);b.disabled=busy||!cmd;b.addEventListener('click',function(){
-if(busy)return;busy=true;error='';paint();
+if(busy||syncing)return;busy=true;error='';paint();
 tw.request(cmd).then(function(ans){
-var next=parse(ans.result);if(next)current=next;else error='Не удалось обновить карточку';
+var next=parse(ans.result);if(next)apply(next);else error='Не удалось обновить карточку';
 busy=false;paint();
 },function(e){busy=false;error='Ошибка связи: '+(e.code||'повтори действие');paint()});
 });return b}
@@ -61,8 +66,8 @@ var b=el('button','task'+(t.d?' done':''));
 var square=el('span','tick',t.d?'✓':'');
 b.appendChild(square);b.appendChild(el('span','',t.t));
 b.disabled=busy;b.addEventListener('click',function(){
-if(busy)return;busy=true;error='';paint();
-tw.request('w:toggle:'+current.rev+':'+t.i+':'+current.page).then(function(ans){current=parse(ans.result)||current;busy=false;paint()},function(e){busy=false;error='Ошибка: '+(e.code||'повтори');paint()});
+if(busy||syncing)return;busy=true;error='';paint();
+tw.request('w:toggle:'+current.rev+':'+t.i+':'+current.page).then(function(ans){apply(parse(ans.result));busy=false;paint()},function(e){busy=false;error='Ошибка: '+(e.code||'повтори');paint()});
 });
 root.appendChild(b)});
 if(current.pages>1)buttons(root,[['←',current.page>0?'w:tasks:'+(current.page-1):null],[(current.page+1)+'/'+current.pages,'w:tasks:'+current.page],['→',current.page+1<current.pages?'w:tasks:'+(current.page+1):null]],'row');
@@ -81,7 +86,22 @@ if(current.note)put(root,'p','status',current.note);
 if(error)put(root,'p','status',error);
 }
 current=parse(tw.chatData);
-tw.onEvent('chatDataChanged',function(){current=parse(tw.chatData)||current;paint()});
+tw.onEvent('chatDataChanged',function(){if(apply(parse(tw.chatData)))paint()});
+// A second copy of this panel may be stale. On becoming visible, ask for
+// server state when the Telegram client permits background requests. Older
+// clients can always tap "↻ Обновить" instead.
+function syncOnActivated(){
+if(!current||busy||syncing||tw.isForward||tw.chatType!=='private')return;
+var now=Date.now();if(now-lastSync<8000)return;lastSync=now;
+syncing=true;
+var kind=current.k||'home',page=current.page||0;
+tw.request('w:sync:'+kind+':'+page).then(
+function(ans){if(apply(parse(ans.result)))paint()},
+function(){} // NOT_ALLOWED on clients without background queries
+).then(function(){syncing=false},function(){syncing=false});
+}
+tw.onEvent('activated',syncOnActivated);
 paint();tw.ready();
+if(tw.isActive)syncOnActivated();
 })();
 </script></body></html>`;
