@@ -402,8 +402,9 @@ export function createSuperagent(D) {
   }
 
   async function status(chatId) {
-    const active = await selectedRepo(chatId);
-    const last = await previousIssue(chatId, active);
+    // Status is about the most recently issued task, even if it targeted another repo.
+    // Project-scoped history remains available to natural followups and the panel.
+    const last = Number(await store.getSetting('agent:last:' + chatId));
     if (!last) {
       await out.sendHtml(chatId, 'Пока нет отправленных задач. Напиши <code>/agent задача</code> или «Поручи агенту ...».');
       return true;
