@@ -244,29 +244,44 @@ export function createCards(D) {
       if (data !== undefined) args.data = data;
       return out.call('answerWidgetQuery', args);
     };
+    const safeAnswer = async (data) => {
+      try { await answer(data); }
+      catch (e) {
+        await D.log('widget_answer_failed', q.chat?.id ?? null, {
+          code: e?.code ?? null,
+          reason: String(e?.description ?? e?.message ?? e).slice(0, 150),
+        });
+      }
+    };
     if (!q.chat || q.chat.type !== 'private' ||
         !Number.isSafeInteger(q.message_id) ||
         q.chat.id !== q.from?.id || !D.isOwner(q.from?.id)) {
-      return answer();
+      return safeAnswer();
     }
 
     const chatId = q.chat.id;
     let kind = 'home';
     let page = 0;
     let note = '';
+    let addPrompt = false;
     const parts = String(q.data ?? '').split(':');
     try {
-      if (parts[0] !== 'w') return answer();
+      if (parts[0] !== 'w') return safeAnswer();
       const action = parts[1];
       if (['home', 'memory', 'calendar', 'routes', 'agent'].includes(action) && parts.length === 2) {
         kind = action;
       } else if (action === 'tasks' && parts.length === 3 && /^\d{1,3}$/.test(parts[2])) {
         kind = 'tasks';
         page = Number(parts[2]);
+      } else if (action === 'sync' && parts.length === 4 &&
+        ['home', 'tasks', 'memory', 'calendar', 'routes', 'agent'].includes(parts[2]) &&
+        /^\d{1,3}$/.test(parts[3])) {
+        kind = parts[2];
+        page = Number(parts[3]);
       } else if (action === 'add' && parts.length === 2) {
         kind = 'tasks';
         await store.setState(chatId, 'ui_add_task');
-        await out.sendHtml(chatId, '➕ Напиши название задачи следующим сообщением. Отмена: /cancel');
+        addPrompt = true;
         note = 'Жду название задачи отдельным сообщением.';
       } else if (action === 'toggle' && parts.length === 5 &&
         /^\d{1,10}$/.test(parts[2]) && /^\d{1,3}$/.test(parts[3]) && /^\d{1,3}$/.test(parts[4])) {
@@ -284,9 +299,12 @@ export function createCards(D) {
           }, revision);
           if (!changed.ok) note = 'Карточка обновилась — попробуй ещё раз.';
         }
-      } else return answer();
+      } else return safeAnswer();
 
       const data = await widgetState(chatId, kind, page, note);
+      // Resolve the short-lived widget query first. Message-state edits are
+      // separately best-effort and must not make a successful mutation timeout.
+      await safeAnswer(data);
       try {
         await out.call('editMessageWidgetData', {
           chat_id: chatId, message_id: q.message_id, chat_data: data,
@@ -297,10 +315,16 @@ export function createCards(D) {
             reason: String(e?.description ?? e?.message ?? e).slice(0, 140) });
         }
       }
-      return answer(data); // Immediate visible state even before edit propagation.
+      if (addPrompt) {
+        try {
+          await out.sendHtml(chatId, '➕ Напиши название задачи следующим сообщением. Отмена: /cancel');
+        } catch (e) {
+          await D.log('widget_add_prompt_fail', chatId, { reason: String(e?.message ?? e).slice(0, 140) });
+        }
+      }
     } catch (e) {
       await D.log('widget_query_fail', chatId, { reason: String(e?.message ?? e).slice(0, 150) });
-      return answer(); // Always resolve the 15-second widget request.
+      return safeAnswer(); // Never leave a valid query waiting for 15 seconds.
     }
   }
 
