@@ -112,7 +112,7 @@ test('repo selection persists and explicit target overrides it for one task', as
   serverReady(w);
   await w.say('/agent multirepo on');
   await w.say('/agent repo grunvald91/SMENA');
-  assert.match(w.last(OWNER).text, /будет работать/);
+  assert.match(w.last(OWNER).text, /Активный проект/);
   await w.say('/agent Проверь код');
   assert.match(w.gh.issues[0].body, /repo=grunvald91\/SMENA mode=read/);
   await w.say('/agent Проверь github.com/grunvald91/Ai_growth_os');
