@@ -66,7 +66,7 @@ export const DEFAULTS = {
 };
 
 // Меню команд владельца. Менять список — поднимай COMMANDS_VERSION: бот сам обновит меню.
-export const COMMANDS_VERSION = 13;
+export const COMMANDS_VERSION = 14;
 export const OWNER_COMMANDS = [
   ['start', 'Начало и справка'],
   ['panel', 'Интерактивная панель'],
@@ -91,8 +91,8 @@ export const OWNER_COMMANDS = [
   ['draft', 'Черновик ответа за меня (в группе)'],
   ['business', 'Ответы от моего имени (Business)'],
   ['gh', 'GitHub: подключение и репозитории'],
-  ['repo', 'Выбрать репозиторий для кода'],
-  ['code', 'Написать код и запушить в репозиторий'],
+  ['repo', 'Выбрать активный проект'],
+  ['code', 'Передать задачу серверному Superagent'],
   ['agent', 'Задача DeepSeek Superagent из Telegram'],
   ['runs', 'GitHub Actions: запуски и Run workflow'],
   ['usage', 'Расход и баланс'],
