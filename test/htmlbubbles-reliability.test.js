@@ -89,6 +89,13 @@ test('add-task action is acknowledged before any auxiliary chat message', async 
   assert.equal((await w.store.getChat(OWNER)).state, 'ui_add_task');
 });
 
+test('tgcloud 0.2 baseline webhook without 10.4 events is accepted only in compatibility mode', () => {
+  const output = 'Allowed updates: message, callback_query, my_chat_member\nIn sync: yes';
+  assert.equal(verifyWidgetWebhookReport(output).ok, false);
+  assert.equal(verifyWidgetWebhookReport(output, { requireWidgets: false }).ok, true);
+  assert.equal(verifyWidgetWebhookReport('Allowed updates: message\nIn sync: yes', { requireWidgets: false }).ok, false);
+});
+
 test('webhook output parser rejects missing update types, failures and unknown output', () => {
   assert.equal(verifyWidgetWebhookReport(
     'URL: https://example.invalid\nAllowed updates: message, callback_query, widget_query, shared_widget_query\nIn sync: yes\n'
