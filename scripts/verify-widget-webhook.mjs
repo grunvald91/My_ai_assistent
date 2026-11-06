@@ -2,7 +2,7 @@
 // Never assert deployment success when the output cannot establish the
 // subscription of the HTMLBubble handlers. The runtime also independently
 // checks Bot API getWebhookInfo before sending widgets.
-export function verifyWidgetWebhookReport(raw) {
+export function verifyWidgetWebhookReport(raw, { requireWidgets = true } = {}) {
   const text = String(raw ?? '').replace(/\x1b\[[0-9;]*m/g, '').replace(/\r/g, '');
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
   const ix = lines.findIndex((line) => /\ballowed[\s_-]*updates?\b/i.test(line));
@@ -18,7 +18,7 @@ export function verifyWidgetWebhookReport(raw) {
     section.push(line);
   }
   const subscribed = section.join(' ');
-  for (const kind of ['widget_query', 'shared_widget_query']) {
+  for (const kind of (requireWidgets ? ['widget_query', 'shared_widget_query'] : ['message', 'callback_query'])) {
     if (!new RegExp('(?:^|[^a-z_])' + kind + '(?:$|[^a-z_])', 'i').test(subscribed)) {
       return { ok: false, reason: 'allowed_updates is missing ' + kind };
     }
@@ -30,5 +30,5 @@ export function verifyWidgetWebhookReport(raw) {
   const aligned = lines.some((line) =>
     /in[\s_-]*sync\s*[:=]\s*(?:yes|true|on|✓|✅)|(?:✓|✅)\s*in[\s_-]*sync|in[\s_-]*sync\s+with\b/i.test(line));
   if (!aligned) return { ok: false, reason: 'Could not confirm In sync: yes' };
-  return { ok: true, reason: 'Widget update types subscribed and webhook in sync' };
+  return { ok: true, reason: requireWidgets ? 'Widget updates subscribed' : 'Base updates subscribed; widgets unavailable' };
 }
