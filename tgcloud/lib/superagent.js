@@ -36,6 +36,7 @@ export function parseAgentRequest(text) {
 }
 
 export function agentTaskType(text) {
+  if (/^(?:сделай|проведи|выполни|повтори)\s+(?:полное\s+|повторное\s+)?(?:ревью|аудит)(?:\s|$)/i.test(String(text ?? '').trim())) return 'report-only';
   return WORK_VERBS.test(text) || /^(?:доделывай|продолжай|создай\s+pr|открой\s+pr|подготовь\s+pr)/i.test(String(text ?? '').trim())
     ? 'code-change' : 'report-only';
 }
@@ -46,15 +47,17 @@ export function isNaturalCodeTask(text) {
   const s = String(text ?? '').trim();
   if (!s || /^[?]|^(?:что|как|почему|зачем|объясни|расскажи|посоветуй|предложи)\b/i.test(s)) return false;
   if (/^(?:сделай|проведи|выполни)\s+(?:полное\s+|повторное\s+)?(?:ревью|аудит)(?:\s|$)/i.test(s)) return true;
+  if (/^(?:в|для)\s+[\w.-]+\s+(?:сделай|проведи|исправь|проверь)\s+(?:ревью|аудит|код|тест|ошибк)/i.test(s)) return true;
+  if (/^проверь\s+и\s+исправь(?:\s|$)/i.test(s)) return true;
   if (/^(?:проверь|перепроверь|протестируй|запусти)\s+(?:ещ[её]\s+раз\s+)?(?:код|реализац|репозитор|проект|тест|ci\b|сборк|pull\s*request|pr\b)/i.test(s)) return true;
   if (/^(?:исправ(?:ь|ляй|и)|почини|додел(?:ай|ывай)|продолжай|сделай\s+дальше|доведи\s+до\s+конца|создай\s+pr|открой\s+pr|запусти\s+тесты|проверь\s+ещ[её]\s+раз)(?:[\s.!?]|$)/i.test(s)) return true;
-  return /^(?:сделай|исправь|добавь|реализуй|настрой|проверь|протестируй|обнови|запусти|переделай)\b/i.test(s) &&
+  return /^(?:сделай|исправь|добавь|реализуй|настрой|проверь|протестируй|обнови|запусти|переделай)(?:\s|$)/i.test(s) &&
     /(?:код\w*|репозитор\w*|github|гитхаб|\bpr\b|pull\s*request|\bci\b|тест\w*|деплой\w*|коммит\w*|ветк\w*|модул\w*|api\b|баг\w*)/i.test(s);
 }
 
 export function agentFollowup(text) {
   const s = String(text ?? '').trim();
-  if (/^(?:исправ(?:ляй|ь|и)(?:\s+(?:найденн\w*|ошибк\w*|замечани\w*|проблем\w*))?|почини\s+найденн\w*)[.!?]*$/i.test(s)) return 'fix';
+  if (/^(?:исправ(?:ляй|ь|и)(?:\s+(?:найденн\w*|ошибк\w*|замечани\w*|проблем\w*)){0,3}|почини\s+найденн\w*)[.!?]*$/i.test(s)) return 'fix';
   if (/^(?:доделывай|доделай|продолжай|делай\s+дальше|доведи\s+до\s+конца)[.!?]*$/i.test(s)) return 'continue';
   if (/^(?:проверь\s+ещ[её]\s+раз|перепроверь|повтори\s+ревью|сделай\s+ревью\s+повторно)[.!?]*$/i.test(s)) return 'review';
   if (/^(?:запусти\s+тесты|прогони\s+тесты)[.!?]*$/i.test(s)) return 'tests';
@@ -394,7 +397,8 @@ export function createSuperagent(D) {
   }
 
   async function status(chatId) {
-    const last = Number(await store.getSetting('agent:last:' + chatId));
+    const active = await selectedRepo(chatId);
+    const last = await previousIssue(chatId, active);
     if (!last) {
       await out.sendHtml(chatId, 'Пока нет отправленных задач. Напиши <code>/agent задача</code> или «Поручи агенту ...».');
       return true;
