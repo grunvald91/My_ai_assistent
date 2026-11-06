@@ -96,6 +96,7 @@ test('private widget rejects foreign and group requests without leaking state', 
 
 test('widget rejected -> original Telegram buttons still work; explicit /panel_text bypasses widget', async () => {
   const w = await createWorld();
+  w.widgetApiSupported = true;
   w.fail('sendWidget', 404, 'Not Found: method not found');
   await w.say('/panel');
   assert.match(w.last(OWNER).text, /Моя панель/);
