@@ -91,7 +91,7 @@ function sseAnthropic(text, usage, { thinking = false, stop = 'end_turn' } = {})
 }
 const jsonRes = (status, obj) => ({ ok: status < 400, status, headers: { get: () => null }, json: async () => obj, text: async () => JSON.stringify(obj) });
 
-export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true, exaKey = '', yandexRaspKey = '' } = {}) {
+export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true, exaKey = '', yandexRaspKey = '', widgetWebhookVerified = false } = {}) {
   await resetDb();
   const w = {
     now: 1_800_000_000, // 2027-01-15, фиксированное «сейчас»
@@ -259,6 +259,7 @@ export async function createWorld({ ownerIds = [OWNER], cfg = {}, github = true,
     yandexRaspKey,
     pulse: store.ping,
     ownerIds,
+    widgetWebhookVerified,
   });
   w.app = app;
   w.store = store;

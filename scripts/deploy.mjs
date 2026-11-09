@@ -7,7 +7,7 @@
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { mkdtempSync, renameSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, renameSync, existsSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { verifyWidgetWebhookReport, verifyBasicWebhookReport } from './verify-widget-webhook.mjs';
 
 const CLI = ['npx', '--no-install', 'tgcloud'];
@@ -94,6 +94,41 @@ if (!result.ok) {
   console.error('Webhook verification failed:', result.reason);
   process.exit(1);
 }
+if (!widgetHandlersSkipped) {
+  // The Serverless SDK may forbid getWebhookInfo from a user handler even
+  // though tgcloud's management API has verified the subscriptions. Attest
+  // that successful verification by publishing one minimal library constant.
+  // The repository always starts with false, so a broken first pass remains
+  // fail-closed. Never publish this attestation if webhook sync failed.
+  const flagPath = resolve('tgcloud/lib/widget-readiness.js');
+  const original = readFileSync(flagPath, 'utf8');
+  if (!original.includes('WIDGET_WEBHOOK_VERIFIED = false')) {
+    console.error('Unexpected widget-readiness.js: refusing to activate an unverified widget.');
+    process.exit(1);
+  }
+  writeFileSync(flagPath, original.replace(
+    'WIDGET_WEBHOOK_VERIFIED = false', 'WIDGET_WEBHOOK_VERIFIED = true'));
+  const activated = run(['push', 'tgcloud/lib/widget-readiness.js', '--force'], { capture: true });
+  if (activated.status !== 0) {
+    const out = (activated.stdout ?? '') + (activated.stderr ?? '');
+    const acceptedSnapshotBug = /Deploying \d+ changes/.test(out) &&
+      /✓ tgcloud\//.test(out) &&
+      out.includes('core/snapshot.js') && out.includes('ERR_INVALID_ARG_TYPE');
+    if (!acceptedSnapshotBug) {
+      console.error('Widget attestation deployment failed. UI cannot be marked active.');
+      process.exit(activated.status ?? 1);
+    }
+    console.warn('CLI snapshot write failed after uploading widget readiness. Checking remote state.');
+  }
+  // Confirm that the second push did not disturb the webhook.
+  const confirmed = run(['webhook'], { capture: true });
+  if (confirmed.status !== 0) process.exit(confirmed.status ?? 1);
+  const last = verifyWidgetWebhookReport((confirmed.stdout ?? '') + '\n' + (confirmed.stderr ?? ''));
+  if (!last.ok) {
+    console.error('Widget readiness was uploaded, but final webhook verification failed:', last.reason);
+    process.exit(1);
+  }
+}
 console.log(widgetHandlersSkipped
-  ? 'Deployment verified: standard Telegram callbacks active; HTMLBubbles unavailable in current Serverless CLI (runtime fallback enabled).'
-  : 'Deployment verified: HTMLBubbles update types subscribed.');
+  ? 'Deployment verified: standard callbacks active; HTMLBubbles disabled until Serverless accepts 10.4 handlers.'
+  : 'Deployment verified: HTMLBubbles handlers subscribed; widget readiness attested.');
