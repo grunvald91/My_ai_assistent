@@ -111,8 +111,8 @@ if (!widgetHandlersSkipped) {
   const activated = run(['push', 'tgcloud/lib/widget-readiness.js', '--force'], { capture: true });
   if (activated.status !== 0) {
     const out = (activated.stdout ?? '') + (activated.stderr ?? '');
-    const acceptedSnapshotBug = /Deploying \\d+ changes/.test(out) &&
-      /✓ tgcloud\\//.test(out) &&
+    const acceptedSnapshotBug = /Deploying \d+ changes/.test(out) &&
+      /✓ tgcloud\//.test(out) &&
       out.includes('core/snapshot.js') && out.includes('ERR_INVALID_ARG_TYPE');
     if (!acceptedSnapshotBug) {
       console.error('Widget attestation deployment failed. UI cannot be marked active.');
@@ -123,7 +123,7 @@ if (!widgetHandlersSkipped) {
   // Confirm that the second push did not disturb the webhook.
   const confirmed = run(['webhook'], { capture: true });
   if (confirmed.status !== 0) process.exit(confirmed.status ?? 1);
-  const last = verifyWidgetWebhookReport((confirmed.stdout ?? '') + '\\n' + (confirmed.stderr ?? ''));
+  const last = verifyWidgetWebhookReport((confirmed.stdout ?? '') + '\n' + (confirmed.stderr ?? ''));
   if (!last.ok) {
     console.error('Widget readiness was uploaded, but final webhook verification failed:', last.reason);
     process.exit(1);
