@@ -3,6 +3,7 @@
 // can be added later without migrating persistent state or guessing an API.
 import { escapeHtml, safeJson, truncate, utf8Encode } from './util.js';
 import { ASSISTANT_WIDGET_HTML } from './widget-html.js';
+import { WIDGET_WEBHOOK_VERIFIED } from './widget-readiness.js';
 
 const MAX_TASKS = 40;
 const PAGE_SIZE = 8;
@@ -213,19 +214,28 @@ export function createCards(D) {
     if (D.now() - deliveryCheckedAt < 60) return deliveryAvailable;
     deliveryCheckedAt = D.now();
     deliveryAvailable = false;
+    // Telegram Serverless owns the webhook and can forbid getWebhookInfo.
+    // A deploy-time attestation is written only AFTER the cloud confirms
+    // registration of BOTH widget update handlers. Never embed cloud tokens.
+    const verifiedByDeploy = D.widgetWebhookVerified === true || WIDGET_WEBHOOK_VERIFIED;
     try {
       const info = await out.call('getWebhookInfo', {});
       const updates = info?.allowed_updates;
-      deliveryAvailable = Array.isArray(updates) &&
-        ['widget_query', 'shared_widget_query'].every((name) => updates.includes(name));
-      if (!deliveryAvailable) await D.log('widget_webhook_not_ready', chatId, {
-        allowed: Array.isArray(updates) ? updates.filter((x) => /widget_query/.test(x)) : null,
-      });
+      if (Array.isArray(updates)) {
+        deliveryAvailable = ['widget_query', 'shared_widget_query']
+          .every((name) => updates.includes(name));
+      } else {
+        deliveryAvailable = verifiedByDeploy;
+      }
     } catch (e) {
-      await D.log('widget_webhook_probe_failed', chatId, {
+      deliveryAvailable = verifiedByDeploy;
+      if (!verifiedByDeploy) await D.log('widget_webhook_probe_failed', chatId, {
         reason: String(e?.description ?? e?.message ?? e).slice(0, 160),
       });
     }
+    if (!deliveryAvailable) await D.log('widget_webhook_not_ready', chatId, {
+      verifiedByDeploy,
+    });
     return deliveryAvailable;
   }
 
@@ -234,7 +244,7 @@ export function createCards(D) {
     try {
       const sent = await out.call('sendWidget', {
         chat_id: chatId, html: ASSISTANT_WIDGET_HTML,
-        width: 320, height: 0, allow_queries: true,
+        width: 320, allow_queries: true,
         chat_data: await widgetState(chatId, kind, page),
         caption: 'My AI Assistant · Если виджет не виден: /panel_text',
       });
@@ -252,6 +262,11 @@ export function createCards(D) {
   /** Called from the serverless widget_query handler, not callback_query. */
   async function widgetQuery(q) {
     if (!q?.id) return;
+    // 10.4 also defines wallet query variants. Only ordinary button-data
+    // queries may mutate owner tasks or invoke the agent.
+    if (q.type?.type && q.type.type !== 'data') {
+      return out.call('answerWidgetQuery', { widget_query_id: q.id });
+    }
     const answer = async (data) => {
       const args = { widget_query_id: q.id };
       if (data !== undefined) args.data = data;
