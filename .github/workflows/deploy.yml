@@ -21,6 +21,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: node --check scripts/deploy.mjs && node --check tgcloud/lib/widget-readiness.js
       - run: npm test
       - name: Superagent server-side prepare tests (offline)
         run: bash test/superagent-prepare.test.sh
