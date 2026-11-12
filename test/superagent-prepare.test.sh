@@ -93,4 +93,11 @@ export MOCK_ISSUE_BODY='<!-- superagent-route:v1 repo=grunvald91/SMENA mode=read
 export MOCK_PUSH='false'
 run_success
 grep -q 'github.com/grunvald91/SMENA.git' "$GIT_MOCK_LOG"
-echo 'Superagent prepare routing: 8 offline scenarios passed'
+export MOCK_ISSUE_BODY='<!-- superagent-route:v1 repo=grunvald91/My_ai_assistent mode=read -->'
+export MOCK_PUSH='false'
+run_success
+grep -q 'github.com/grunvald91/My_ai_assistent.git' "$GIT_MOCK_LOG"
+export MOCK_ISSUE_BODY='<!-- superagent-route:v1 repo=grunvald91/My_ai_assistent mode=write -->'
+export MOCK_PUSH='true'
+run_fail
+echo 'Superagent prepare routing: 10 offline scenarios passed'
