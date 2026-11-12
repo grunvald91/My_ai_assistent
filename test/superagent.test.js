@@ -218,7 +218,7 @@ test('multi-target and unauthorized repositories fail closed without creating Is
   assert.equal(w.gh.issues.length, 1);
   assert.match(w.last(OWNER).text, /доступно ревью кода без изменений/);
   await w.say('/agent Используй токен ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQR');
-  assert.equal(w.gh.issues.length, 0);
+  assert.equal(w.gh.issues.length, 1);
   assert.match(w.last(OWNER).text, /ключ или токен/);
 });
 
