@@ -5,7 +5,7 @@ set -euo pipefail
 
 HUB="grunvald91/Ai_growth_os"
 AGENT="grunvald1991"
-STATUS_CONTEXT="superagent/multirepo-ready"
+STATUS_CONTEXT_PREFIX="superagent/multirepo-ready"
 STATUS_DESCRIPTION="superagent-multirepo-v2"
 : "${DSH_SUPERAGENT_URL:?Set local DSH Superagent URL, e.g. http://127.0.0.1:PORT}"
 : "${DSH_MULTI_REPO_PREPARE:?Set absolute path to superagent-prepare-worktree.sh}"
@@ -69,7 +69,12 @@ if [[ "$monitor_ok" == true ]]; then
 fi
 sha="$("$agent_cli" api "repos/$HUB/commits/main" --jq '.sha')"
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid hub commit SHA" >&2; exit 38; }
+# GitHub allows at most 1000 statuses per (commit SHA, context). The main commit
+# can remain unchanged for months: rotate only the context each UTC day (288
+# statuses/day at a 5-minute cadence), without touching the branch or CI.
+# Calculate the day immediately before POST so the context matches created_at.
+status_context="$STATUS_CONTEXT_PREFIX/$(date -u +%F)"
 "$agent_cli" api "repos/$HUB/statuses/$sha" --method POST \
-  -f state=success -f context="$STATUS_CONTEXT" -f description="$STATUS_DESCRIPTION" \
+  -f state=success -f context="$status_context" -f description="$STATUS_DESCRIPTION" \
   >/dev/null
-echo "DSH multi-repo capability refreshed at $(date -u +%FT%TZ)"
+echo "DSH multi-repo capability refreshed context=$status_context at $(date -u +%FT%TZ)"
