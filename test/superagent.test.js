@@ -93,6 +93,36 @@ test('non-default repository stays blocked until the server prepare hook is enab
   assert.match(w.last(OWNER).text, /сервер не подтверждён/);
 });
 
+test('Multi-Repo status explains absent, stale and recovered VPS signal', async () => {
+  const w = await createWorld();
+  setup(w);
+  await w.say('/agent multirepo status');
+  assert.match(w.last(OWNER).text, /нет сигналов готовности/);
+  serverReady(w, { created_at: new Date((w.now - 720) * 1000).toISOString() });
+  await w.say('/agent multirepo status');
+  assert.match(w.last(OWNER).text, /Последний сигнал:/);
+  assert.match(w.last(OWNER).text, /12 мин\. назад/);
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
+  assert.equal(w.gh.issues.length, 0);
+  assert.match(w.last(OWNER).text, /12 мин\. назад/);
+  serverReady(w);
+  await w.say('/agent multirepo status');
+  assert.match(w.last(OWNER).text, /сервер подтверждён/);
+});
+
+test('Multi-Repo status distinguishes manual pause from VPS failure', async () => {
+  const w = await createWorld();
+  setup(w);
+  serverReady(w);
+  await w.say('/agent multirepo off');
+  assert.match(w.last(OWNER).text, /приостановлена владельцем/);
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
+  assert.equal(w.gh.issues.length, 0);
+  assert.match(w.last(OWNER).text, /приостановлен вручную/);
+  await w.say('/agent multirepo on');
+  assert.match(w.last(OWNER).text, /сервер подтверждён/);
+});
+
 test('legacy BookingBot links are routed to the imported Ai_growth_os module, never the original source repo', async () => {
   const w = await createWorld();
   setup(w);
@@ -180,11 +210,15 @@ test('multi-target and unauthorized repositories fail closed without creating Is
   await w.say('/agent Проверь github.com/grunvald91/no_such_repo');
   assert.equal(w.gh.issues.length, 0);
   assert.match(w.last(OWNER).text, /Не могу подтвердить доступ/);
+  serverReady(w);
   await w.say('/agent Проверь github.com/grunvald91/My_ai_assistent');
-  assert.equal(w.gh.issues.length, 0);
-  assert.match(w.last(OWNER).text, /Репозиторий недопустим/);
+  assert.equal(w.gh.issues.length, 1);
+  assert.match(w.gh.issues[0].body, /repo=grunvald91\/my_ai_assistent mode=read/i);
+  await w.say('/agent Исправь github.com/grunvald91/My_ai_assistent');
+  assert.equal(w.gh.issues.length, 1);
+  assert.match(w.last(OWNER).text, /доступно ревью кода без изменений/);
   await w.say('/agent Используй токен ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQR');
-  assert.equal(w.gh.issues.length, 0);
+  assert.equal(w.gh.issues.length, 1);
   assert.match(w.last(OWNER).text, /ключ или токен/);
 });
 

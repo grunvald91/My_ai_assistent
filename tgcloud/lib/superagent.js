@@ -112,8 +112,10 @@ export function requestedAgentRepository(text) {
   return { repo: distinct.length === 1 ? distinct[0] : null, ambiguous: distinct.length > 1 };
 }
 
-function permittedTarget(repo) {
-  return REPO_NAME.test(repo) && repo.toLowerCase() !== 'grunvald91/my_ai_assistent';
+function permittedTarget(repo, mode = 'write') {
+  // Reviewing the bot's own source is safe; changing it requires a separate release path.
+  return REPO_NAME.test(repo) &&
+    (repo.toLowerCase() !== 'grunvald91/my_ai_assistent' || mode === 'read');
 }
 
 
@@ -146,18 +148,42 @@ export function createSuperagent(D) {
     try { saved = JSON.parse(await store.getSetting(keyFor(issue)) ?? '{}'); } catch { /* empty */ }
     return { repo, issue, status: saved.status === 'done' ? (saved.resultState ?? 'done') : (saved.status ?? 'sent'), title: saved.title ?? '', pull: saved.pull ?? null };
   }
-  async function remoteReady() {
-    // GitHub status is posted by the VPS itself after verifying DSH live settings.
-    // A static Telegram flag or a stale status is NOT sufficient.
-    const statuses = await gh().listCommitStatuses(AGENT_REPO, 'main');
+  async function remoteHealth() {
+    // Only a live VPS may assert readiness. Return an explanation instead of a silent false.
+    if (!gh()) return { ready: false, reason: 'GitHub не подключён к боту' };
+    let statuses;
+    try {
+      statuses = await gh().listCommitStatuses(AGENT_REPO, 'main');
+    } catch (e) {
+      const problem = e?.kind === 'auth' ? 'ошибка авторизации GitHub'
+        : e?.kind === 'rate' ? 'лимит запросов GitHub'
+          : e?.kind === 'forbidden' ? 'GitHub не разрешил чтение статусов'
+            : 'не удалось получить статусы GitHub';
+      return { ready: false, reason: problem };
+    }
     const latest = (Array.isArray(statuses) ? statuses : [])
       .filter(s => s?.context === STATUS_CONTEXT)
       .sort((a, b) => Date.parse(b?.created_at ?? '') - Date.parse(a?.created_at ?? ''))[0];
-    if (!latest) return false;
-    const age = D.now() - Date.parse(latest?.created_at ?? '') / 1000;
-    return latest.state === 'success' && latest.description === STATUS_DESCRIPTION &&
-      String(latest?.creator?.login ?? '').toLowerCase() === AGENT_ACCOUNT.toLowerCase() &&
-      Number.isFinite(age) && age >= 0 && age <= STATUS_MAX_AGE_S;
+    if (!latest) return { ready: false, reason: 'нет сигналов готовности от VPS на текущем коммите Ai_growth_os' };
+    const ms = Date.parse(latest.created_at ?? '');
+    if (!Number.isFinite(ms)) return { ready: false, reason: 'GitHub вернул некорректное время сигнала' };
+    const at = new Date(ms).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
+    const age = D.now() - ms / 1000;
+    const prefix = { ready: false, at };
+    if (latest.state !== 'success') return { ...prefix, reason: 'последняя серверная проверка неуспешна' };
+    if (latest.description !== STATUS_DESCRIPTION ||
+      String(latest?.creator?.login ?? '').toLowerCase() !== AGENT_ACCOUNT.toLowerCase()) {
+      return { ...prefix, reason: 'источник или версия подтверждения не совпадают' };
+    }
+    if (!Number.isFinite(age) || age < 0) return { ...prefix, reason: 'время сервера не совпадает с GitHub' };
+    if (age > STATUS_MAX_AGE_S) return {
+      ...prefix, reason: 'сервер перестал обновлять проверку (' + Math.floor(age / 60) + ' мин. назад)',
+    };
+    return { ready: true, at, reason: 'серверная конфигурация подтверждена' };
+  }
+  function healthDetails(health) {
+    return (health.at ? '\nПоследний сигнал: <code>' + health.at + '</code>.' : '') +
+      '\nПричина: ' + escapeHtml(health.reason) + '.';
   }
   const urlFor = (issue) => 'https://github.com/' + AGENT_REPO + '/issues/' + issue;
   const gh = () => D.github;
@@ -176,11 +202,13 @@ export function createSuperagent(D) {
       if (action === 'off') await store.setSetting('agent:multi_repo_disabled', '1');
       if (action === 'on') await store.setSetting('agent:multi_repo_disabled', '0');
       const disabled = (await store.getSetting('agent:multi_repo_disabled')) === '1';
-      let ready = false;
-      try { ready = !!gh() && await remoteReady(); } catch { /* server cannot be verified */ }
+      const health = await remoteHealth();
       await out.sendHtml(chatId, 'Многорепозиторная работа: <b>' +
-        (disabled ? 'приостановлена владельцем' : ready ? 'сервер подтверждён' : 'сервер не подтверждён') + '</b>.' +
-        '\nСервер должен сам публиковать свежую проверку конфигурации DSH. Команда on снимает только ручную паузу, но не отключает проверку сервера.');
+        (disabled ? 'приостановлена владельцем' : health.ready ? 'сервер подтверждён' : 'сервер не подтверждён') + '</b>.' +
+        healthDetails(health) +
+        (disabled ? '\nРучная пауза включена; <code>/agent multirepo on</code> снимает её.' : '') +
+        (!health.ready ? '\nПроверить на VPS: <code>systemctl status superagent-capability.timer</code> и журнал <code>journalctl -u superagent-capability.service -n 80</code>.' : '') +
+        '\nКоманда on не подменяет проверку работающего сервера.');
       return true;
     }
     const choose = /^(?:repo|репозиторий)\s+(.+)$/i.exec(text);
@@ -192,8 +220,8 @@ export function createSuperagent(D) {
         await out.sendHtml(chatId, '✅ Репозиторий агента по умолчанию: <code>' + AGENT_REPO + '</code>.');
         return true;
       }
-      if (!permittedTarget(name)) {
-        await out.sendHtml(chatId, '⚠️ Укажи репозиторий в формате <code>grunvald91/имя</code> (кроме репозитория самого бота).');
+      if (!permittedTarget(name, 'read')) {
+        await out.sendHtml(chatId, '⚠️ Укажи репозиторий в формате <code>grunvald91/имя</code>.');
         return true;
       }
       if (!gh()) {
@@ -202,7 +230,7 @@ export function createSuperagent(D) {
       }
       try {
         const selected = await gh().getRepo(name);
-        if (!permittedTarget(selected.full_name)) throw new Error('Target repository is not permitted');
+        if (!permittedTarget(selected.full_name, 'read')) throw new Error('Target repository is not permitted');
         await setSelectedRepo(chatId, selected.full_name);
         await out.sendHtml(chatId, '✅ Активный проект: <code>' + escapeHtml(selected.full_name) + '</code>. Можно сразу писать задачу обычными словами.');
         if (nextTask) return task(chatId, nextTask);
@@ -237,14 +265,14 @@ export function createSuperagent(D) {
     const followup = agentFollowup(text);
     const type = followup && ['fix', 'continue', 'pr', 'release'].includes(followup) ? 'code-change' : agentTaskType(text);
     const requiredAccess = type === 'report-only' ? ['read', 'triage', 'write', 'maintain', 'admin'] : ['write', 'maintain', 'admin'];
-    if (!permittedTarget(targetName)) {
-      await out.sendHtml(chatId, '⚠️ Репозиторий недопустим. Укажи <code>grunvald91/имя</code>, кроме репозитория самого бота.');
+    if (!permittedTarget(targetName, type === 'report-only' ? 'read' : 'write')) {
+      await out.sendHtml(chatId, '⚠️ Для My_ai_assistent доступно ревью кода без изменений. Для записи в сам бот требуется отдельный безопасный процесс обновления.');
       return true;
     }
     let target;
     try {
       target = await gh().getRepo(targetName);
-      if (!permittedTarget(target.full_name)) throw new Error('Invalid canonical repository');
+      if (!permittedTarget(target.full_name, type === 'report-only' ? 'read' : 'write')) throw new Error('Invalid canonical repository');
     } catch {
       await out.sendHtml(chatId, '⚠️ Не могу подтвердить доступ к репозиторию <code>' + escapeHtml(targetName) + '</code>. Задание не отправлено.');
       return true;
@@ -257,11 +285,11 @@ export function createSuperagent(D) {
     }
     if (target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase()) {
       const disabled = (await store.getSetting('agent:multi_repo_disabled')) === '1';
-      let ready = false;
-      try { ready = !disabled && await remoteReady(); } catch { /* fail closed */ }
-      if (!ready) {
-        await out.sendHtml(chatId, '⚠️ Нет свежего подтверждения работающей Multi-Repo конфигурации DSH на сервере. ' +
-          'Задание не отправлено. Проверь сервер и команду <code>/agent multirepo status</code>.');
+      const health = await remoteHealth();
+      if (disabled || !health.ready) {
+        await out.sendHtml(chatId, '⚠️ Нет свежего подтверждения работающей Multi-Repo конфигурации DSH на сервере. Задание не отправлено.' +
+          (disabled ? '\nПричина: Multi-Repo приостановлен вручную.' : healthDetails(health)) +
+          '\nПроверь <code>/agent multirepo status</code> — он покажет время и причину.');
         return true;
       }
     }
