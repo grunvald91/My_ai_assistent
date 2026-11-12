@@ -276,7 +276,7 @@ export function createSuperagent(D) {
     const targetName = bookingTask ? AGENT_REPO : declaredTarget;
     const followup = agentFollowup(text);
     const type = followup && ['fix', 'continue', 'pr', 'release'].includes(followup) ? 'code-change' : agentTaskType(text);
-    const requiredAccess = type === 'report-only' ? ['read', 'triage', 'write', 'maintain', 'admin'] : ['write', 'maintain', 'admin'];
+    const requiredAccess = ['write', 'maintain', 'admin'];
     if (!permittedTarget(targetName, type === 'report-only' ? 'read' : 'write')) {
       await out.sendHtml(chatId, '⚠️ Для My_ai_assistent доступно ревью кода без изменений. Для записи в сам бот требуется отдельный безопасный процесс обновления.');
       return true;
@@ -305,12 +305,14 @@ export function createSuperagent(D) {
         return true;
       }
     }
-    if (target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase()) {
+    // Public repos are readable without collaborator permission. The DSH
+    // prepare hook independently verifies that it can clone the target.
+    if (target.full_name.toLowerCase() !== AGENT_REPO.toLowerCase() && type !== 'report-only') {
       try {
         const access = await gh().getRepoCollaboratorPermission(target.full_name, AGENT_ACCOUNT);
         if (!requiredAccess.includes(String(access?.permission ?? '').toLowerCase())) {
           await out.sendHtml(chatId, '⚠️ У аккаунта агента <code>' + AGENT_ACCOUNT +
-            '</code> нет необходимого доступа (' + (type === 'report-only' ? 'Read' : 'Write') + ') к <code>' + escapeHtml(target.full_name) +
+            '</code> нет необходимого доступа (' + 'Write' + ') к <code>' + escapeHtml(target.full_name) +
             '</code>. Добавь его как соавтора с доступом на запись. Задание не отправлено.');
           return true;
         }
