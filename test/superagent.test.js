@@ -210,6 +210,22 @@ test('read-only access is allowed for analysis, but rejects code-changing tasks'
   assert.match(w.last(OWNER).text, /нет необходимого доступа \(Write\)/);
 });
 
+test('read-only review of a public project works even without explicit collaborator permission', async () => {
+  const w = await createWorld();
+  setup(w);
+  w.gh.repos['grunvald91/PublicTools'] = {
+    default_branch: 'main', agentPermission: 'none', files: { 'README.md': 'public' },
+  };
+  serverReady(w);
+  await w.say('/agent Проверь код https://github.com/grunvald91/PublicTools');
+  assert.equal(w.gh.issues.length, 1);
+  assert.match(w.gh.issues[0].body, /repo=grunvald91\/PublicTools mode=read/);
+  assert.ok(!w.gh.calls.some(c => c.path.includes('/repos/grunvald91/PublicTools/collaborators/')));
+  await w.say('/agent Исправь код https://github.com/grunvald91/PublicTools');
+  assert.equal(w.gh.issues.length, 1);
+  assert.match(w.last(OWNER).text, /нет необходимого доступа \(Write\)/);
+});
+
 test('manual on cannot bypass missing, stale or forged VPS capability', async () => {
   const w = await createWorld();
   setup(w);
