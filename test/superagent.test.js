@@ -155,9 +155,8 @@ test('daily context date must match real GitHub creation day; another date canno
 test('previous UTC day is valid within the 10-minute freshness window across midnight', async () => {
   const w = await createWorld();
   setup(w);
-  w.advance(200);
-  const beforeMidnight = new Date((w.now - 200) * 1000);
-  // The context must match the creation time, not the current date.
+  w.now = Date.UTC(2027, 0, 15, 0, 1, 0) / 1000;
+  // Signal was published shortly before the UTC day changed.
   const created = new Date(w.now * 1000 - 120000);
   w.gh.repos[AGENT_REPO].statuses = [{
     context: 'superagent/multirepo-ready/' + created.toISOString().slice(0, 10),
