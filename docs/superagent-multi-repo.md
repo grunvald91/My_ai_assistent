@@ -12,7 +12,7 @@ Multi-Repo уже установлен на VPS: базовый PR #14 слит,
 
 1. Команда `/agent repo grunvald91/booking_bot` устанавливает проект чата; явная ссылка в задании имеет приоритет.
 2. Бот отвергает чужих владельцев, неоднозначные ссылки, приватные репозитории (очередь публичная) и недоступные проекты. Для анализа достаточно прав `read`; для изменения кода и PR требуются `write`. Исключение: `My_ai_assistent` доступен **только для проверки и отчёта**, но не для изменений через этот канал.
-3. Непосредственно перед созданием Issue бот требует **свежий серверный GitHub commit status** контекста `superagent/multirepo-ready`, написанный аккаунтом `Grunvald1991`. Старые статусы и простое включение флага в Telegram не проходят. `/agent multirepo status` показывает время последнего сигнала (UTC), причину отказа и команды диагностики VPS.
+3. Непосредственно перед созданием Issue бот требует **свежий серверный GitHub commit status** контекста `superagent/multirepo-ready/YYYY-MM-DD` (UTC, на период миграции поддержан также прежний `superagent/multirepo-ready`), написанный аккаунтом `Grunvald1991`. Старые статусы и простое включение флага в Telegram не проходят. `/agent multirepo status` показывает время последнего сигнала (UTC), причину отказа и команды диагностики VPS.
 4. Бот создаёт Issue с первой строкой `<!-- superagent-route:v1 repo=grunvald91/SMENA mode=read -->` (или `mode=write` для изменения кода) и тегом `@Grunvald1991`. Для BookingBot маркер указывает `Ai_growth_os`, а текст задания ограничивает область `services/booking_bot/`.
 5. DSH запускает Ticket. Скрипт `superagent-prepare-worktree.sh` проверяет автора Issue `grunvald91`, корректность маркера и право доступа агентского CLI, прежде чем клонировать целевой проект. `mode=read` не требует права на запись.
 
@@ -63,7 +63,7 @@ sudo systemctl enable --now superagent-capability.timer
 
 ## Если бот сообщает об устаревшем подтверждении DSH
 
-Это **не** ошибка прав GitHub на целевой проект. Telegram получает последнюю запись `superagent/multirepo-ready` с GitHub и проверяет, что запись создана агентским аккаунтом, имеет правильную версию и моложе 10 минут. Если серверная периодическая проверка остановилась, бот честно блокирует новые Multi-Repo задания, но показывает UTC-время последнего успешного сигнала.
+Это **не** ошибка прав GitHub на целевой проект. Telegram получает последнюю запись `superagent/multirepo-ready/YYYY-MM-DD` или старого контекста `superagent/multirepo-ready` с GitHub и проверяет, что запись создана агентским аккаунтом, имеет правильную версию и моложе 10 минут. **Причина остановки 12.11.2026:** GitHub разрешает не более 1000 commit statuses на сочетание SHA+context, а `Ai_growth_os/main` долго не менялся. Исправлено сменой **только** имени status context каждый UTC-день. При интервале 5 минут это 288 записей за сутки; пустые коммиты в `main` не нужны. Если серверная периодическая проверка остановилась, бот честно блокирует новые Multi-Repo задания, но показывает UTC-время последнего успешного сигнала.
 
 На VPS под системным пользователем DSH проверить:
 
@@ -74,7 +74,7 @@ sudo journalctl -u superagent-capability.service -n 80 --no-pager
 sudo systemctl list-timers --all | grep superagent-capability
 ```
 
-Если таймер выключен, включить: `sudo systemctl enable --now superagent-capability.timer`. При необходимости можно запустить одну проверку: `sudo systemctl start superagent-capability.service`. После успешного запуска убедиться, что появился **новый** status в [GitHub Commit Statuses](https://api.github.com/repos/grunvald91/Ai_growth_os/commits/main/statuses), и повторить `/agent multirepo status`. Если служба завершилась ошибкой, журнал укажет конкретный шаг; не подменять GitHub status вручную.
+Если таймер выключен, включить: `sudo systemctl enable --now superagent-capability.timer`. При необходимости можно запустить одну проверку: `sudo systemctl start superagent-capability.service`. После успешного запуска убедиться, что появился **новый** status с сегодняшним UTC-суффиксом в [GitHub Commit Statuses](https://api.github.com/repos/grunvald91/Ai_growth_os/commits/main/statuses), и повторить `/agent multirepo status`. Если служба завершилась ошибкой, журнал укажет конкретный шаг; не подменять GitHub status вручную.
 
 Изменение файла скрипта в GitHub само по себе **не обновляет** копию в `/home/dsh-agent/.local/bin/`: чтобы новый вариант начал работать, надо обновить соответствующий файл на VPS и перезапустить сервис. GitHub Actions `deploy.yml` обновляет Telegram Serverless, но не ставит systemd-файлы DSH.
 

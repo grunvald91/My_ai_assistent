@@ -12,7 +12,19 @@ export const AGENT_ACCOUNT = 'Grunvald1991';
 const WATCH_WORKFLOW = 'superagent-watch.yml';
 // Only explicitly terminal messages may complete Telegram tracking. Native DSH markers occur on EVERY reply.
 const STATUS_CONTEXT = 'superagent/multirepo-ready';
+const STATUS_CONTEXT_DAILY = /^superagent\/multirepo-ready\/(\d{4}-\d{2}-\d{2})$/;
 const STATUS_DESCRIPTION = 'superagent-multirepo-v2';
+
+function isReadinessContext(status) {
+  const context = String(status?.context ?? '');
+  // Legacy statuses remain readable during rollout; the daily context avoids
+  // GitHub's limit of 1000 statuses per SHA + context on a long-lived main.
+  if (context === STATUS_CONTEXT) return true;
+  const match = STATUS_CONTEXT_DAILY.exec(context);
+  if (!match) return false;
+  const created = Date.parse(status?.created_at ?? '');
+  return Number.isFinite(created) && new Date(created).toISOString().slice(0, 10) === match[1];
+}
 const STATUS_MAX_AGE_S = 10 * 60;
 const ROUTE_MARKER = 'superagent-route:v1';
 const AGENT_REPO_ALIASES = {
@@ -162,7 +174,7 @@ export function createSuperagent(D) {
       return { ready: false, reason: problem };
     }
     const latest = (Array.isArray(statuses) ? statuses : [])
-      .filter(s => s?.context === STATUS_CONTEXT)
+      .filter(isReadinessContext)
       .sort((a, b) => Date.parse(b?.created_at ?? '') - Date.parse(a?.created_at ?? ''))[0];
     if (!latest) return { ready: false, reason: 'нет сигналов готовности от VPS на текущем коммите Ai_growth_os' };
     const ms = Date.parse(latest.created_at ?? '');
