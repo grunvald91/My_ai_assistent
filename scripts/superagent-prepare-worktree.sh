@@ -40,7 +40,7 @@ fi
 
 allow_re='^[Gg][Rr][Uu][Nn][Vv][Aa][Ll][Dd]91/[A-Za-z0-9_.-]+$'
 [[ "$target_repo" =~ $allow_re ]] || { echo "Target outside owner allowlist: $target_repo" >&2; exit 22; }
-[[ "${target_repo,,}" != grunvald91/my_ai_assistent ]] || { echo "Telegram bot repo is excluded" >&2; exit 23; }
+[[ "${target_repo,,}" != grunvald91/my_ai_assistent || "$mode" == read ]] || { echo "Bot repository allows read-only review, not code changes" >&2; exit 23; }
 
 canonical="$(gh api "repos/$target_repo" --jq '.full_name // ""')"
 [[ "${canonical,,}" == "${target_repo,,}" ]] || { echo "Agent cannot read target repo" >&2; exit 24; }
