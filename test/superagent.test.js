@@ -123,6 +123,51 @@ test('Multi-Repo status distinguishes manual pause from VPS failure', async () =
   assert.match(w.last(OWNER).text, /сервер подтверждён/);
 });
 
+test('daily UTC readiness context restores multi-repo without changing the hub main SHA', async () => {
+  const w = await createWorld();
+  setup(w);
+  const day = new Date(w.now * 1000).toISOString().slice(0, 10);
+  const expired = new Date((w.now - 720) * 1000).toISOString();
+  w.gh.repos[AGENT_REPO].statuses = [
+    { context: 'superagent/multirepo-ready', description: 'superagent-multirepo-v2',
+      state: 'success', creator: { login: 'Grunvald1991' }, created_at: expired },
+    { context: 'superagent/multirepo-ready/' + day, description: 'superagent-multirepo-v2',
+      state: 'success', creator: { login: 'Grunvald1991' }, created_at: new Date(w.now * 1000).toISOString() },
+  ];
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
+  assert.equal(w.gh.issues.length, 1);
+  assert.match(w.last(OWNER).text, /Передал задачу агенту/);
+});
+
+test('daily context date must match real GitHub creation day; another date cannot signal readiness', async () => {
+  const w = await createWorld();
+  setup(w);
+  w.gh.repos[AGENT_REPO].statuses = [{
+    context: 'superagent/multirepo-ready/2020-01-01', description: 'superagent-multirepo-v2',
+    state: 'success', creator: { login: 'Grunvald1991' },
+    created_at: new Date(w.now * 1000).toISOString(),
+  }];
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
+  assert.equal(w.gh.issues.length, 0);
+  assert.match(w.last(OWNER).text, /нет сигналов готовности/);
+});
+
+test('previous UTC day is valid within the 10-minute freshness window across midnight', async () => {
+  const w = await createWorld();
+  setup(w);
+  w.advance(200);
+  const beforeMidnight = new Date((w.now - 200) * 1000);
+  // The context must match the creation time, not the current date.
+  const created = new Date(w.now * 1000 - 120000);
+  w.gh.repos[AGENT_REPO].statuses = [{
+    context: 'superagent/multirepo-ready/' + created.toISOString().slice(0, 10),
+    description: 'superagent-multirepo-v2', state: 'success',
+    creator: { login: 'Grunvald1991' }, created_at: created.toISOString(),
+  }];
+  await w.say('/agent Проверь github.com/grunvald91/SMENA');
+  assert.equal(w.gh.issues.length, 1);
+});
+
 test('legacy BookingBot links are routed to the imported Ai_growth_os module, never the original source repo', async () => {
   const w = await createWorld();
   setup(w);
